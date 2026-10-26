@@ -1,0 +1,11 @@
+.claude/skills/vas/
+.build/
+.swiftpm/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+.DS_Store
+build/
+package/
+*.ipa
+*.zip
