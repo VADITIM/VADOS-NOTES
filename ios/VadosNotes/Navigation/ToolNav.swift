@@ -74,6 +74,8 @@ enum NavMetrics {
     static let glyphSize: CGFloat = 22 * scale
     static let gripLength: CGFloat = 18 * scale
     static let sizingSlop: CGFloat = 6
+    static let navSizingSlop: CGFloat = 22
+    static let navSizingDominance: CGFloat = 2
     static let layerSpace = "navLayer"
 
     static func itemSize(_ orientation: NavOrientation) -> CGSize {
@@ -126,6 +128,7 @@ private struct Settling {
 private struct SizingDrag {
     let id: String
     let startShare: Double
+    let startTranslation: CGFloat
 }
 
 struct ToolNav<PanelContent: View>: View {
@@ -140,7 +143,7 @@ struct ToolNav<PanelContent: View>: View {
     let isShown: Bool
     let onReorderTools: ([String]) -> Void
     let onReorderSubNavigation: ([String]) -> Void
-    @ViewBuilder var panel: () -> PanelContent
+    @ViewBuilder var panel: (NavOrientation) -> PanelContent
 
     @Namespace private var washSpace
     @StateObject private var navigationMotion = PillMotion()
@@ -153,7 +156,7 @@ struct ToolNav<PanelContent: View>: View {
     @State private var groupSizes: [String: CGSize] = [:]
     @State private var carryPoint: CGPoint?
     @State private var carryGrab: CGSize?
-    @State private var wheelAnchor: CGRect?
+    @State private var panelAnchor: CGRect?
     @State private var swallowUntil = Date.distantPast
     @State private var shownSubNavigationKey: String?
     @State private var toolReordering: Reordering?
@@ -161,6 +164,7 @@ struct ToolNav<PanelContent: View>: View {
     @State private var toolSettling: Settling?
     @State private var groupSettling: Settling?
     @State private var sizingDrag: SizingDrag?
+    @State private var isSizingRejected = false
 
     private enum Entry: Identifiable {
         case item(NavItem)
@@ -242,14 +246,14 @@ struct ToolNav<PanelContent: View>: View {
                 .position(subNavCenter)
                 ZStack {
                     if panelKey != nil, isSubNavigationWanted {
-                        panel()
+                        panel(orientation)
                             .fixedSize()
                             .background(GeometryReader { panelProxy in Color.clear.preference(key: PanelSizeKey.self, value: panelProxy.size) })
                             .id(panelKey)
                             .transition(.popTogether)
                     }
                 }
-                .position(placeBeside(wheelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
+                .position(placeBeside(panelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
                 navBody(layer: layer, center: center)
                     .position(center)
             }
@@ -260,7 +264,7 @@ struct ToolNav<PanelContent: View>: View {
             .onPreferenceChange(SubNavSizeKey.self) { subNavSize = $0 }
             .onPreferenceChange(PanelSizeKey.self) { panelSize = $0 }
             .onPreferenceChange(GroupExtentKey.self) { groupSizes = $0 }
-            .onPreferenceChange(WheelAnchorKey.self) { wheelAnchor = $0 }
+            .onPreferenceChange(PanelAnchorKey.self) { panelAnchor = $0 }
         }
         .onAppear {
             if isShown {
@@ -457,20 +461,27 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private func sizingGesture() -> some Gesture {
-        DragGesture(minimumDistance: NavMetrics.sizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+        DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .onChanged { value in
-                guard toolReordering == nil, carryPoint == nil, let item = sizingItem ?? sizableItem, let sizing = item.sizing else { return }
+                guard !isSizingRejected, toolReordering == nil, carryPoint == nil, let item = sizingItem ?? sizableItem, let sizing = item.sizing else { return }
+                let along = orientation == .horizontal ? value.translation.width : -value.translation.height
                 if sizingDrag == nil {
+                    let across = orientation == .horizontal ? value.translation.height : value.translation.width
+                    guard abs(along) > abs(across) * NavMetrics.navSizingDominance else {
+                        isSizingRejected = true
+                        return
+                    }
                     swallowUntil = .distantFuture
                     Haptics.tick()
-                    sizingDrag = SizingDrag(id: item.id, startShare: sizing.share)
+                    sizingDrag = SizingDrag(id: item.id, startShare: sizing.share, startTranslation: along)
                 }
                 guard let sizingDrag else { return }
-                let delta = orientation == .horizontal ? value.translation.width : -value.translation.height
+                let delta = along - sizingDrag.startTranslation
                 let travel = max(1, NavMetrics.along(navSize, orientation) - NavMetrics.padding * 2 - NavSizeSlider.knob)
                 sizing.onChange(min(1, max(0, sizingDrag.startShare + Double(delta / travel))))
             }
             .onEnded { _ in
+                isSizingRejected = false
                 guard sizingDrag != nil else { return }
                 Haptics.landed()
                 sizingDrag = nil

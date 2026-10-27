@@ -34,6 +34,7 @@ struct CanvasView: UIViewRepresentable {
     let paperStyle: PaperStyle
     let showsGuides: Bool
     let showsDividers: Bool
+    let showsBackdrop: Bool
     let hiddenElementIds: Set<String>
     let isReadOnly: Bool
     let topInset: CGFloat
@@ -58,6 +59,7 @@ struct CanvasView: UIViewRepresentable {
         view.paperStyle = paperStyle
         view.showsGuides = showsGuides
         view.showsDividers = showsDividers
+        view.showsBackdrop = showsBackdrop
         view.hiddenElementIds = hiddenElementIds
         view.isReadOnly = isReadOnly
         view.topInset = topInset

@@ -111,8 +111,10 @@ struct RootView: View {
             ZStack {
                 Palette.ground
                 if preferences.showsAsciiBackground {
-                    AsciiBackground(color: Color(hex: preferences.asciiBackgroundColor), isMoving: preferences.isAsciiBackgroundMoving)
+                    AsciiBackground(color: preferences.asciiBackgroundColor, isMoving: preferences.isAsciiBackgroundMoving)
+                        .ignoresSafeArea()
                         .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
                 screen
                     .id(screenIdentity)
@@ -254,13 +256,23 @@ struct TopBar<Trailing: View>: View {
     var chromeShown: Bool?
     var onBack: (() -> Void)?
     var onRename: ((String) -> Void)?
+    var isBare = false
     @ViewBuilder var trailing: () -> Trailing
 
     @Environment(\.screenInsets) private var insets
 
+    private static let bareTitleSize: CGFloat = 15
+    private static let bareTopGap: CGFloat = 6
+
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            titles
+        HStack(alignment: isBare ? .top : .center, spacing: 14) {
+            Group {
+                if isBare {
+                    bareTitles
+                } else {
+                    titles
+                }
+            }
                 .modifier(ChromePop(isShown: chromeShown ?? true, order: 0))
                 .chromeFrame("title")
             Spacer(minLength: 12)
@@ -284,8 +296,26 @@ struct TopBar<Trailing: View>: View {
             .chromeFrame("controls")
         }
         .padding(.horizontal, 24)
-        .padding(.top, 16 + insets.top)
+        .padding(.top, (isBare ? Self.bareTopGap : 16) + insets.top)
         .background(GeometryReader { proxy in Color.clear.preference(key: TopBarHeightKey.self, value: proxy.frame(in: .global).maxY) })
+    }
+
+    private var bareTitles: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            if let label {
+                MicroLabel(text: label)
+            }
+            if let onRename {
+                InlineTitle(title: title, size: Self.bareTitleSize, onRename: onRename)
+            } else {
+                SweepTitle(text: title, size: Self.bareTitleSize)
+            }
+            if let detail {
+                Text(detail)
+                    .font(Typography.mono(10))
+                    .foregroundColor(Palette.textMuted)
+            }
+        }
     }
 
     private var titles: some View {
@@ -316,18 +346,17 @@ struct TopBar<Trailing: View>: View {
 
 struct InlineTitle: View {
     let title: String
+    var size: CGFloat = 34
     let onRename: (String) -> Void
 
     @State private var isEditing = false
     @State private var text = ""
     @FocusState private var isFocused: Bool
 
-    private static let size: CGFloat = 34
-
     var body: some View {
         if isEditing {
             TextField("", text: $text)
-                .font(Typography.heading(Self.size))
+                .font(Typography.heading(size))
                 .foregroundColor(Palette.textBright)
                 .tint(Palette.accent)
                 .textInputAutocapitalization(.sentences)
@@ -344,7 +373,7 @@ struct InlineTitle: View {
                 }
                 .onAppear { isFocused = true }
         } else {
-            SweepTitle(text: title, size: Self.size)
+            SweepTitle(text: title, size: size)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     text = title

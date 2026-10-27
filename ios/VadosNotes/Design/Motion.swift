@@ -109,7 +109,7 @@ enum Motion {
 
 extension AnyTransition {
     static let pop: AnyTransition = .asymmetric(
-        insertion: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds)),
+        insertion: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds / 2)),
         removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoIn(Motion.navigationSwitchMilliseconds))
     )
 
@@ -193,7 +193,7 @@ struct ElementReveal: ViewModifier {
     @Environment(\.isElementRevealed) private var isRevealed
     @State private var hasAppeared = false
     @State private var isSwitchedIn = false
-    @State private var enterDelay = Int.random(in: 0...Motion.navigationElementMilliseconds)
+    @State private var enterDelay = Int.random(in: 0...Motion.navigationElementMilliseconds / 2)
     @State private var leaveDelay = Int.random(in: 0...Motion.navigationLeaveElementMilliseconds / 2)
 
     private var isShown: Bool { (isRevealed ?? true) && hasAppeared }
@@ -203,7 +203,7 @@ struct ElementReveal: ViewModifier {
             return Motion.powerTwoOut(Motion.navigationElementMilliseconds, delay: enterDelay)
         }
         let spread = enterDelay * Motion.navigationSwitchMilliseconds / 2 / max(1, Motion.navigationElementMilliseconds)
-        return Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds + spread)
+        return Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds / 2 + spread)
     }
 
     @ViewBuilder
@@ -299,7 +299,7 @@ final class PillMotion: ObservableObject {
     private var step = 0
 
     private static var enterMilliseconds: Int {
-        max(Motion.navigationPopMilliseconds, Motion.navigationSpreadDelayMilliseconds + Motion.navigationSpreadMilliseconds)
+        max(Motion.navigationPopMilliseconds, Motion.navigationSpreadDelayMilliseconds + Motion.navigationSpreadMilliseconds / 2)
     }
 
     private func after(_ milliseconds: Int, _ change: @escaping () -> Void) {
@@ -331,7 +331,7 @@ final class PillMotion: ObservableObject {
                 self?.shellSpread = 1
             }
         }
-        after(isMidLeave ? Motion.navigationSpreadMilliseconds : Self.enterMilliseconds) { [weak self] in
+        after(isMidLeave ? Motion.navigationSpreadMilliseconds / 2 : Self.enterMilliseconds) { [weak self] in
             self?.areElementsShown = true
         }
     }

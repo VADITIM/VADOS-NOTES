@@ -67,6 +67,14 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     var showsDividers = true {
         didSet { if showsDividers != oldValue { setNeedsDisplay() } }
     }
+    var showsBackdrop = false {
+        didSet {
+            guard showsBackdrop != oldValue else { return }
+            backgroundColor = showsBackdrop ? .clear : Palette.outside
+            isOpaque = !showsBackdrop
+            setNeedsDisplay()
+        }
+    }
     var hiddenElementIds: Set<String> = [] {
         didSet { if hiddenElementIds != oldValue { setNeedsDisplay() } }
     }
@@ -107,6 +115,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private var isFingerTouch = false
     private var stroke: StrokeSession?
     private var snapLink: CADisplayLink?
+    private var glideLink: CADisplayLink?
+    private var glideVelocity: CGPoint = .zero
+    private var glideLast: CFTimeInterval = 0
     private var snapStart: CFTimeInterval = 0
     private var lastErasePoint: Point?
     private var gestureStart: CGPoint = .zero
@@ -141,6 +152,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private static let selectionPadding: CGFloat = 8
     private static let lassoDash: [NSNumber] = [6, 5]
     private static let selectionScaleRange: ClosedRange<CGFloat> = 0.1...10
+    private static let glideStopSpeed: CGFloat = 12
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -237,6 +249,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext(), var page else { return }
         var options = RenderOptions(showsGuides: showsGuides, showsDividers: showsDividers, paperStyle: paperStyle, hiddenElementIds: hiddenElementIds.union(pendingErased), pixelScale: window?.screen.scale ?? 2)
+        options.fillsOutside = !showsBackdrop
         if let pressedText, isTextLifted {
             options.elementOffsets[pressedText.id] = textOffset
         }
@@ -266,6 +279,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        stopGlide()
         guard activeTouch == nil, let touch = touches.first, let page else { return }
         clearPendingFeedback()
         activeTouch = touch
@@ -509,6 +523,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             return
         }
         guard pinch.state == .began || pinch.state == .changed else { return }
+        stopGlide()
         if activeTouch != nil {
             cancelActiveGesture()
         }
@@ -559,6 +574,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
+        if pan.state == .began {
+            stopGlide()
+        }
+        if pan.state == .ended, selectionScaleAnchor == nil {
+            startGlide(pan.velocity(in: self))
+            return
+        }
         guard pan.state == .began || pan.state == .changed, selectionScaleAnchor == nil else { return }
         if activeTouch != nil {
             cancelActiveGesture()
@@ -568,6 +590,38 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         camera.offset.y += translation.y
         pan.setTranslation(.zero, in: self)
         cameraChanged()
+    }
+
+    private func startGlide(_ velocity: CGPoint) {
+        stopGlide()
+        guard hypot(velocity.x, velocity.y) > Self.glideStopSpeed else { return }
+        glideVelocity = velocity
+        glideLast = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(stepGlide))
+        link.add(to: .main, forMode: .common)
+        glideLink = link
+    }
+
+    private func stopGlide() {
+        glideLink?.invalidate()
+        glideLink = nil
+        glideVelocity = .zero
+    }
+
+    @objc private func stepGlide() {
+        let now = CACurrentMediaTime()
+        let elapsed = CGFloat(now - glideLast)
+        glideLast = now
+        let before = camera.offset
+        camera.offset.x += glideVelocity.x * elapsed
+        camera.offset.y += glideVelocity.y * elapsed
+        cameraChanged()
+        let retained = CGFloat(pow(Motion.shares.panGlideDecay, Double(elapsed * 1000)))
+        glideVelocity.x = camera.offset.x == before.x ? 0 : glideVelocity.x * retained
+        glideVelocity.y = camera.offset.y == before.y ? 0 : glideVelocity.y * retained
+        if hypot(glideVelocity.x, glideVelocity.y) < Self.glideStopSpeed {
+            stopGlide()
+        }
     }
 
     private func cameraChanged() {

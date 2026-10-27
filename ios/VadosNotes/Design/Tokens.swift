@@ -174,6 +174,7 @@ struct Tokens: Decodable {
         let chromeArrival: Double
         let stackStagger: Double
         let flightCornerFade: Double
+        let panGlideDecay: Double
     }
 
     struct MotionTokens: Decodable {

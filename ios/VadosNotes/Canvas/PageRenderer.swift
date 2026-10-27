@@ -158,6 +158,7 @@ struct RenderOptions {
     var elementOffsets: [String: CGVector] = [:]
     var elementTransforms: [String: CGAffineTransform] = [:]
     var pixelScale: CGFloat = 2
+    var fillsOutside = true
 }
 
 enum MarkdownText {
@@ -281,8 +282,12 @@ enum MarkdownText {
 
 enum PageRenderer {
     static func draw(_ page: Page, in context: CGContext, camera: CanvasCamera, visibleRect: CGRect, options: RenderOptions, cache: StrokePathCache) {
-        context.setFillColor(Palette.outside.cgColor)
-        context.fill(visibleRect)
+        if options.fillsOutside {
+            context.setFillColor(Palette.outside.cgColor)
+            context.fill(visibleRect)
+        } else {
+            context.clear(visibleRect)
+        }
 
         let paperRect = CGRect(x: 0, y: 0, width: PaperGeometry.width(of: page.extent), height: PaperGeometry.height(of: page.extent))
         let visiblePage = camera.toPage(visibleRect).intersection(paperRect)

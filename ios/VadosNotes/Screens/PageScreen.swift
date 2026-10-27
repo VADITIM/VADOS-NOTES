@@ -47,6 +47,7 @@ struct PageScreen: View {
     @State private var subNavKey: String?
     @State private var lastSubNavKey: String?
     @State private var panelKey: String?
+    @State private var variationSource: String?
     @State private var isDeleteArmed = false
     @State private var textFocusRequest = 0
     @State private var textDragOrigin: TextBox?
@@ -169,7 +170,8 @@ struct PageScreen: View {
             onRename: { title in
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 library.updatePage(pageId) { $0.title = trimmed.isEmpty ? nil : title }
-            }
+            },
+            isBare: true
         ) {
             if library.isReadOnly(pageId) {
                 MicroLabel(text: "Read only", color: Palette.destructive)
@@ -190,6 +192,7 @@ struct PageScreen: View {
                 paperStyle: preferences.paperStyle,
                 showsGuides: preferences.showsGuides,
                 showsDividers: preferences.showsDividers,
+                showsBackdrop: preferences.showsAsciiBackground,
                 hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
                 isReadOnly: library.isReadOnly(pageId),
                 topInset: topInset,
@@ -372,7 +375,35 @@ struct PageScreen: View {
 
     private func togglePanel() {
         withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
-            panelKey = panelKey == nil ? "wheel-\(subNavKey ?? "")" : nil
+            panelKey = isWheelOpen ? nil : "wheel-\(subNavKey ?? "")"
+        }
+    }
+
+    private var isWheelOpen: Bool {
+        panelKey?.hasPrefix("wheel-") ?? false
+    }
+
+    private static func variationsKey(_ tool: Tool, _ color: String) -> String {
+        "variations-\(tool.rawValue)-\(color.uppercased())"
+    }
+
+    private func chooseColor(_ color: String, for tool: Tool) {
+        preferences.setColor(color, for: tool)
+        let key = Self.variationsKey(tool, color)
+        withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
+            variationSource = color
+            panelKey = panelKey == key ? nil : key
+        }
+    }
+
+    private func pickVariation(_ variation: String, replacing source: String, for tool: Tool) {
+        if variation != source.uppercased() {
+            Haptics.tick()
+            preferences.replaceColorPreset(source, with: variation, for: tool)
+            preferences.setColor(variation, for: tool)
+        }
+        withAnimation(Motion.powerTwoOut(Motion.overlayLeaveMilliseconds)) {
+            panelKey = nil
         }
     }
 
@@ -490,13 +521,17 @@ struct PageScreen: View {
                     preferences.setSubNavigationOrder(order, for: subNavKey)
                 }
             },
-            panel: { panel }
+            panel: { orientation in panel(orientation) }
         )
     }
 
     @ViewBuilder
-    private var panel: some View {
-        if let key = subNavKey {
+    private func panel(_ orientation: NavOrientation) -> some View {
+        if let key = subNavKey, let tool = Tool(rawValue: key), let source = variationSource, panelKey == Self.variationsKey(tool, source) {
+            VariationPanel(source: source, orientation: orientation, display: { Color(hex: Palette.inkOnPaper($0, style: preferences.paperStyle)) }) { variation in
+                pickVariation(variation, replacing: source, for: tool)
+            }
+        } else if let key = subNavKey {
             switch key {
             case "pen", "marker":
                 if let tool = Tool(rawValue: key) {
@@ -584,7 +619,7 @@ struct PageScreen: View {
                 let layout = stack(orientation)
                 layout {
                     ForEach(colors, id: \.self) { color in
-                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), onSelect: { preferences.setColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
+                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: panelKey == Self.variationsKey(tool, color), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
                             .transition(.elementLeave)
                     }
                     NavIconButton(glyph: "plus", isEnabled: !colors.contains(current), orientation: orientation) {
@@ -593,7 +628,7 @@ struct PageScreen: View {
                 }
             },
             group("\(tool.rawValue)-wheel") { orientation in
-                WheelButton(isOpen: panelKey != nil, orientation: orientation, action: togglePanel)
+                WheelButton(isOpen: isWheelOpen, orientation: orientation, action: togglePanel)
             },
         ]
     }
@@ -645,7 +680,7 @@ struct PageScreen: View {
                 }
             },
             group("text-wheel") { orientation in
-                WheelButton(isOpen: panelKey != nil, orientation: orientation, action: togglePanel)
+                WheelButton(isOpen: isWheelOpen, orientation: orientation, action: togglePanel)
             },
         ]
     }

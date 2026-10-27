@@ -185,6 +185,13 @@ final class Preferences: ObservableObject {
         write("\(tool.rawValue)Presets", colorPresets(tool).filter { $0 != color })
     }
 
+    func replaceColorPreset(_ color: String, with replacement: String, for tool: Tool) {
+        let normalized = replacement.uppercased()
+        let presets = colorPresets(tool)
+        guard presets.contains(color), !presets.contains(normalized) else { return }
+        write("\(tool.rawValue)Presets", presets.map { $0 == color ? normalized : $0 })
+    }
+
     var eraserRadius: Double {
         clamp(read("eraserRadius", tokens.tools.eraser.radius), tokens.tools.eraser.radiusRange)
     }

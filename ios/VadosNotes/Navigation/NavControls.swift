@@ -136,6 +136,7 @@ struct SwatchButton: View {
     var caption: String?
     let orientation: NavOrientation
     var ring: (id: String, space: Namespace.ID)?
+    var isPanelAnchor = false
     let onSelect: () -> Void
     var onRemove: (() -> Void)?
 
@@ -203,6 +204,7 @@ struct SwatchButton: View {
         }
         .animation(Motion.selection, value: isSelected)
         .animation(Motion.backOut(Motion.stateMilliseconds), value: isArmed)
+        .reportsPanelAnchor(isPanelAnchor)
         .revealedElement()
     }
 }
@@ -293,15 +295,74 @@ struct WheelButton: View {
         }
         .buttonStyle(PressableStyle())
         .animation(Motion.backOut(Motion.stateMilliseconds), value: isOpen)
-        .background(GeometryReader { proxy in Color.clear.preference(key: WheelAnchorKey.self, value: proxy.frame(in: .named(NavMetrics.layerSpace))) })
+        .reportsPanelAnchor(isOpen)
         .revealedElement()
     }
 }
 
-struct WheelAnchorKey: PreferenceKey {
+struct PanelAnchorKey: PreferenceKey {
     static var defaultValue: CGRect?
     static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
         value = nextValue() ?? value
+    }
+}
+
+extension View {
+    func reportsPanelAnchor(_ isAnchor: Bool) -> some View {
+        background(GeometryReader { proxy in Color.clear.preference(key: PanelAnchorKey.self, value: isAnchor ? proxy.frame(in: .named(NavMetrics.layerSpace)) : nil) })
+    }
+}
+
+enum ColorVariations {
+    static let count = 3
+    static let saturationStep = 0.22
+    static let valueStep = 0.05
+    static let neutralValueStep = 0.18
+    static let neutralSaturation = 0.08
+    static let saturationRange = 0.06...1.0
+    static let valueRange = 0.06...1.0
+    private static let stepOrder = [-1, 1, -2, 2, -3, 3, -4, 4]
+
+    static func around(_ hex: String) -> [String] {
+        let base = HSV(hex: hex)
+        let isNeutral = base.saturation < neutralSaturation
+        let steps = stepOrder.filter { step in
+            isNeutral ? valueRange.contains(base.value + Double(step) * neutralValueStep) : saturationRange.contains(base.saturation + Double(step) * saturationStep)
+        }
+        let chosen = (Array(steps.prefix(count)) + [0]).sorted()
+        return chosen.map { step in
+            guard step != 0 else { return hex.uppercased() }
+            var variation = base
+            if isNeutral {
+                variation.value = base.value + Double(step) * neutralValueStep
+            } else {
+                variation.saturation = base.saturation + Double(step) * saturationStep
+                variation.value = min(valueRange.upperBound, max(valueRange.lowerBound, base.value + Double(step) * valueStep))
+            }
+            return variation.hex.uppercased()
+        }
+    }
+}
+
+struct VariationPanel: View {
+    let source: String
+    let orientation: NavOrientation
+    let display: (String) -> Color
+    let onPick: (String) -> Void
+
+    @Namespace private var ringSpace
+
+    var body: some View {
+        let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
+        layout {
+            ForEach(ColorVariations.around(source), id: \.self) { color in
+                SwatchButton(color: display(color), isSelected: color == source.uppercased(), orientation: orientation, ring: ("variation-ring", ringSpace), onSelect: { onPick(color) })
+            }
+        }
+        .padding(NavMetrics.padding)
+        .background(Capsule().fill(Palette.panelSolid))
+        .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
     }
 }
 
