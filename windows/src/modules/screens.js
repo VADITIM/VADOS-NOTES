@@ -1,12 +1,13 @@
 import { InkCanvas } from "./canvas.js"
-import { create, holdable, microLabel, settingsButton, syncBadge, topBar } from "./components.js"
+import { create, microLabel, roundIconButton, searchField, settingsButton, topBar } from "./components.js"
 import { slotsFromTokens } from "./menu.js"
-import { cellCount, paperHeight, paperWidth } from "./model.js"
+import { cellCount, clampBox, paperHeight, paperWidth } from "./model.js"
 import { tileAppear } from "./motion.js"
-import { fontMetrics, renderThumbnail } from "./renderer.js"
+import { fontMetrics, renderThumbnail, textLayout } from "./renderer.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { PageTools } from "./pageTools.js"
-import { paperStyle } from "./preferences.js"
+import { TileDrag, tileGestures } from "./tileDrag.js"
+import { paperStyle, textFontSize } from "./preferences.js"
 import { folderLook, noteLook } from "./sheets.js"
 import { readSetting, writeSetting } from "./storage.js"
 import { inkOnPaper, tokens } from "./tokens.js"
@@ -57,27 +58,62 @@ export function overlayTopBar(screen, header) {
     new ResizeObserver(() => screen.style.setProperty("--top-bar-height", `${header.offsetHeight}px`)).observe(header)
 }
 
-export function trailingControls(app) {
-    return [
-        syncBadge(app.syncStatus(), () => app.showSheet({ kind: "settings" })),
-        settingsButton(() => app.showSheet({ kind: "settings" })),
-    ]
+function settingsControl(app) {
+    return settingsButton(() => app.showSheet({ kind: "settings" }))
+}
+
+function matches(text, query) {
+    return text.toLocaleLowerCase().includes(query)
 }
 
 class GridScreen {
-    constructor(app) {
+    constructor(app, notebookId) {
         this.app = app
+        this.notebookId = notebookId
         this.element = create("section", "screen grid-screen")
         this.folderTiles = new Map()
         this.noteTiles = new Map()
+        this.resultFolderTiles = new Map()
+        this.resultNoteTiles = new Map()
+        this.query = ""
+        this.drag = null
+        this.keyDown = (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+                event.preventDefault()
+                this.search.input.focus()
+                this.search.input.select()
+            }
+        }
+        window.addEventListener("keydown", this.keyDown)
     }
 
-    mount(header) {
-        this.header = header
+    destroy() {
+        window.removeEventListener("keydown", this.keyDown)
+        this.drag?.end(false)
+    }
+
+    mount({ title, label, onBack }) {
+        this.search = searchField({
+            placeholder: "Search",
+            onChange: (value) => {
+                this.query = value.trim().toLocaleLowerCase()
+                this.update()
+            },
+        })
+        this.header = topBar({ title, label, onBack, trailing: [this.search, settingsControl(this.app)] })
         this.content = create("div", "grid-content")
         this.scroller = create("div", "screen-scroll", this.content)
-        this.element.append(this.scroller, header)
-        overlayTopBar(this.element, header)
+        this.element.append(this.scroller, this.header)
+        overlayTopBar(this.element, this.header)
+        this.browse = create("div", "grid-browse")
+        this.results = create("div", "grid-results")
+        this.resultFolderHeading = create("div", "grid-heading", microLabel("Folders"))
+        this.resultFolderGrid = this.makeGrid("notebook-grid", 230, 320)
+        this.resultNoteHeading = create("div", "grid-heading", microLabel("Notes"))
+        this.resultNoteGrid = this.makeGrid("page-grid", 170, 240)
+        this.resultEmpty = create("div", "empty-notice", microLabel("Nothing found"))
+        this.results.append(this.resultFolderHeading, this.resultFolderGrid, this.resultNoteHeading, this.resultNoteGrid, this.resultEmpty)
+        this.content.append(this.browse, this.results)
     }
 
     makeGrid(className, minimumWidth, maximumWidth) {
@@ -91,13 +127,16 @@ class GridScreen {
         return grid
     }
 
-    syncTiles(grid, tiles, items, makeTile, refreshTile) {
+    syncTiles(grid, tiles, items, makeTile, refreshTile, leading = null) {
+        if (this.drag && grid.contains(this.drag.wrapper)) {
+            return
+        }
         const seen = new Set()
         const ordered = items.map((item, rank) => {
             seen.add(item.id)
             let tile = tiles.get(item.id)
             if (!tile) {
-                tile = makeTile(item, rank)
+                tile = makeTile(item, rank + (leading ? 1 : 0))
                 tiles.set(item.id, tile)
             }
             refreshTile(tile, item, rank)
@@ -108,14 +147,65 @@ class GridScreen {
                 tiles.delete(key)
             }
         }
-        grid.replaceChildren(...ordered)
+        grid.replaceChildren(...(leading ? [leading] : []), ...ordered)
     }
 
-    refreshFolderTile(tile, notebook) {
+    update() {
+        const isSearching = this.query.length > 0
+        this.browse.style.display = isSearching ? "none" : "block"
+        this.results.style.display = isSearching ? "block" : "none"
+        this.app.nav.hide()
+        if (isSearching) {
+            this.updateResults()
+        } else {
+            this.updateBrowse()
+        }
+    }
+
+    updateResults() {
+        const library = this.app.library
+        const folders = library.liveNotebooks().filter((notebook) => matches(notebook.title, this.query))
+        const notes = library.liveNotebooks().flatMap((notebook) => library.pages(notebook.id)).filter((page) => matches(noteTitle(library, page), this.query))
+        this.resultFolderHeading.style.display = folders.length ? "flex" : "none"
+        this.resultFolderGrid.style.display = folders.length ? "grid" : "none"
+        this.resultNoteHeading.style.display = notes.length ? "flex" : "none"
+        this.resultNoteGrid.style.display = notes.length ? "grid" : "none"
+        this.resultEmpty.style.display = folders.length || notes.length ? "none" : "flex"
+        this.syncTiles(this.resultFolderGrid, this.resultFolderTiles, folders, (notebook, rank) => this.folderTile(notebook, rank, false), (tile, notebook) => this.refreshFolderTile(tile, notebook, true))
+        this.syncTiles(this.resultNoteGrid, this.resultNoteTiles, notes, (page, rank) => this.pageTile(page, rank, false), (tile, page) => this.refreshPageTile(tile, page, true))
+    }
+
+    folderPath(notebookId) {
+        const library = this.app.library
+        const names = []
+        let current = notebookId
+        const visited = new Set()
+        while (current && !visited.has(current)) {
+            visited.add(current)
+            names.unshift(library.notebook(current)?.title ?? "")
+            current = library.parentOf(current)
+        }
+        return names.join(" / ")
+    }
+
+    addTile({ glyphName, title, aspect, className, action }) {
+        const frame = create("div", "add-tile-frame", glyph(glyphName, { size: 34, color: tokens.semantic.create }))
+        frame.style.aspectRatio = aspect
+        const caption = create("div", "add-tile-caption", glyph("plus", { size: 16, color: tokens.semantic.create }), create("span", "add-tile-title", title))
+        const button = create("button", `add-tile ${className} pressable-soft`, frame, caption)
+        button.type = "button"
+        button.setAttribute("aria-label", title)
+        button.addEventListener("click", action)
+        const wrapper = create("div", "tile-wrapper add-tile-wrapper", button)
+        tileAppear(wrapper, 0)
+        return wrapper
+    }
+
+    refreshFolderTile(tile, notebook, isResult = false) {
         const library = this.app.library
         const look = folderLook(notebook)
         tile.titleElement.textContent = notebook.title
-        tile.countElement.textContent = folderSummary(library, notebook.id)
+        tile.countElement.textContent = isResult && library.parentOf(notebook.id) ? this.folderPath(library.parentOf(notebook.id)) : folderSummary(library, notebook.id)
         tile.iconElement.replaceChildren(glyph(look.icon, { size: 22, color: look.color }))
         const pages = library.pages(notebook.id)
         tile.preview.replaceChildren()
@@ -131,7 +221,7 @@ class GridScreen {
         }
     }
 
-    folderTile(notebook, rank) {
+    folderTile(notebook, rank, isDraggable = true) {
         const notebookId = notebook.id
         const preview = create("div", "notebook-preview")
         const previewFrame = create("div", "notebook-preview-frame", preview)
@@ -143,17 +233,150 @@ class GridScreen {
         const button = create("button", "notebook-tile pressable-soft", previewFrame, caption)
         button.type = "button"
         squircle(button, { radius: squircleRadius.panel, fill: tokens.palette.panel_solid, border: tokens.palette.border })
-        holdable(button, {
-            action: () => this.app.go({ kind: "notebook", notebookId }),
-            onHold: (rect) => this.showFolderMenu(notebookId, rect),
-        })
         const wrapper = create("div", "tile-wrapper", button)
+        wrapper.dataset.kind = "folder"
+        wrapper.dataset.identifier = notebookId
+        this.tileGestures(wrapper, button, {
+            onTap: () => this.app.go({ kind: "notebook", notebookId }),
+            onMenu: (rect) => this.showFolderMenu(notebookId, rect),
+            isDraggable,
+        })
         wrapper.preview = preview
         wrapper.titleElement = titleElement
         wrapper.countElement = countElement
         wrapper.iconElement = iconElement
         tileAppear(wrapper, rank)
         return wrapper
+    }
+
+    refreshPageTile(tile, page, isResult = false) {
+        const look = noteLook(page)
+        tile.titleElement.textContent = noteTitle(this.app.library, page)
+        tile.iconElement.replaceChildren(glyph(look.icon, { size: 16, color: look.color }))
+        tile.extentElement.textContent = isResult ? this.folderPath(page.notebook) : cellCount(page.extent) > 1 ? `${page.extent.cols}×${page.extent.rows}` : ""
+        tile.thumbnailFrame.style.aspectRatio = `${paperWidth(page.extent)} / ${paperHeight(page.extent)}`
+        tile.thumbnail.page = page
+        requestAnimationFrame(() => tile.thumbnail.refresh(page))
+    }
+
+    pageTile(page, index, isDraggable = true) {
+        const pageId = page.id
+        const pageThumbnail = thumbnail(page)
+        const thumbnailFrame = create("div", "page-thumbnail-frame", pageThumbnail)
+        squircle(thumbnailFrame, { radius: 6, clip: true })
+        const iconElement = create("span", "page-caption-icon")
+        const titleElement = create("span", "page-caption-title")
+        const extentElement = microLabel("")
+        const caption = create("div", "page-caption", iconElement, titleElement, extentElement)
+        const button = create("button", "page-tile pressable-soft", thumbnailFrame, caption)
+        button.type = "button"
+        squircle(button, { radius: squircleRadius.tile, fill: tokens.palette.panel_solid, border: tokens.palette.border })
+        const wrapper = create("div", "tile-wrapper", button)
+        wrapper.dataset.kind = "note"
+        wrapper.dataset.identifier = pageId
+        this.tileGestures(wrapper, button, {
+            onTap: () => {
+                const current = this.app.library.page(pageId)
+                if (current) {
+                    this.app.go({ kind: "page", notebookId: current.notebook, pageId })
+                }
+            },
+            onMenu: (rect) => this.showNoteMenu(pageId, rect),
+            isDraggable,
+        })
+        wrapper.thumbnail = pageThumbnail
+        wrapper.thumbnailFrame = thumbnailFrame
+        wrapper.titleElement = titleElement
+        wrapper.iconElement = iconElement
+        wrapper.extentElement = extentElement
+        tileAppear(wrapper, index)
+        return wrapper
+    }
+
+    tileGestures(wrapper, button, { onTap, onMenu, isDraggable }) {
+        tileGestures(button, {
+            onTap,
+            onMenu,
+            onDrag: (event) => {
+                if (!isDraggable || this.drag) {
+                    return
+                }
+                this.app.menu.dismiss()
+                this.startDrag(wrapper, button, event)
+            },
+        })
+    }
+
+    startDrag(wrapper, button, event) {
+        const kind = wrapper.dataset.kind
+        const identifier = wrapper.dataset.identifier
+        this.drag = new TileDrag({
+            wrapper,
+            handle: button,
+            event,
+            scroller: this.scroller,
+            resolve: (clientX, clientY) => this.dropTarget(kind, identifier, wrapper, clientX, clientY),
+            onDrop: (target) => {
+                this.drag = null
+                this.drop(kind, identifier, wrapper, target)
+            },
+        })
+    }
+
+    dropTarget(kind, identifier, source, clientX, clientY) {
+        const library = this.app.library
+        const hit = document.elementFromPoint(clientX, clientY)
+        if (!hit) {
+            return null
+        }
+        const back = this.header.backButton
+        if (back && back.contains(hit) && this.notebookId) {
+            const parentId = library.parentOf(this.notebookId)
+            if (kind === "folder" || parentId) {
+                return { kind: "up", element: back, notebookId: parentId }
+            }
+            return null
+        }
+        const wrapper = hit.closest(".tile-wrapper")
+        if (!wrapper || wrapper === source || !this.browse.contains(wrapper) || wrapper.classList.contains("add-tile-wrapper")) {
+            return null
+        }
+        const rect = wrapper.getBoundingClientRect()
+        const isFolder = wrapper.dataset.kind === "folder"
+        const horizontalShare = (clientX - rect.left) / rect.width
+        if (isFolder && (kind === "note" || (horizontalShare > dropEdgeShare && horizontalShare < 1 - dropEdgeShare))) {
+            if (kind === "folder" && !library.canMoveNotebook(identifier, wrapper.dataset.identifier)) {
+                return null
+            }
+            return { kind: "into", element: wrapper, notebookId: wrapper.dataset.identifier }
+        }
+        if (wrapper.dataset.kind !== kind || wrapper.parentElement !== source.parentElement) {
+            return null
+        }
+        return { kind: horizontalShare < 0.5 ? "before" : "after", element: wrapper }
+    }
+
+    drop(kind, identifier, wrapper, target) {
+        const library = this.app.library
+        if (!target) {
+            this.update()
+            return
+        }
+        if (target.kind === "into" || target.kind === "up") {
+            if (kind === "folder") {
+                library.moveNotebook(identifier, target.notebookId)
+            } else if (target.notebookId) {
+                library.movePage(identifier, target.notebookId)
+            }
+            return
+        }
+        const identifiers = [...wrapper.parentElement.children].filter((child) => child.dataset.kind === kind).map((child) => child.dataset.identifier)
+        if (kind === "folder") {
+            library.arrangeFolders(identifiers)
+        } else {
+            library.arrangePages(identifiers)
+        }
+        this.update()
     }
 
     showFolderMenu(notebookId, rect) {
@@ -178,114 +401,6 @@ class GridScreen {
             },
         })
         this.app.menu.present(slots, { around: rect, title: notebook.title, columns: tileMenuColumns })
-    }
-}
-
-const tileMenuTitles = { rename: "Rename", appearance: "Icon & colour", move: "Move", delete_notebook: "Delete", delete_page: "Delete" }
-
-export class LibraryScreen extends GridScreen {
-    constructor(app) {
-        super(app)
-        this.grid = this.makeGrid("notebook-grid", 230, 320)
-        this.emptyNotice = create("div", "empty-notice", microLabel("No folders yet"))
-        this.mount(topBar({ title: "Folders", label: "", trailing: trailingControls(app) }))
-        this.content.append(this.grid, this.emptyNotice)
-        this.update()
-    }
-
-    update() {
-        const library = this.app.library
-        const folders = library.folders(null)
-        this.header.update({ label: plural(folders.length, "folder"), trailing: trailingControls(this.app) })
-        this.app.nav.show("library", [[{ id: "new-folder", glyph: "folder_add", label: "New folder", tint: tokens.semantic.create, isTinted: true, action: () => this.app.showSheet({ kind: "new-folder", parentId: null }) }]], { isCarriable: true })
-        this.emptyNotice.style.display = folders.length ? "none" : "flex"
-        this.syncTiles(this.grid, this.folderTiles, folders, (notebook, rank) => this.folderTile(notebook, rank), (tile, notebook) => this.refreshFolderTile(tile, notebook))
-    }
-}
-
-export class NotebookScreen extends GridScreen {
-    constructor(app, notebookId) {
-        super(app)
-        this.notebookId = notebookId
-        this.folderGrid = this.makeGrid("notebook-grid", 230, 320)
-        this.noteGrid = this.makeGrid("page-grid", 170, 240)
-        this.folderHeading = create("div", "grid-heading", microLabel("Folders"))
-        this.noteHeading = create("div", "grid-heading", microLabel("Notes"))
-        this.emptyNotice = create("div", "empty-notice", microLabel("Empty folder"))
-        this.mount(topBar({ title: app.library.notebook(notebookId)?.title ?? "Folder", label: "", onBack: () => this.goBack(), trailing: trailingControls(app) }))
-        this.content.append(this.folderHeading, this.folderGrid, this.noteHeading, this.noteGrid, this.emptyNotice)
-        this.update()
-    }
-
-    goBack() {
-        const parentId = this.app.library.parentOf(this.notebookId)
-        this.app.go(parentId ? { kind: "notebook", notebookId: parentId } : { kind: "library" })
-    }
-
-    addPage() {
-        const page = this.app.library.createPage(this.notebookId)
-        this.app.go({ kind: "page", notebookId: this.notebookId, pageId: page.id })
-    }
-
-    update() {
-        const library = this.app.library
-        const notebook = library.notebook(this.notebookId)
-        if (!notebook) {
-            this.app.go({ kind: "library" })
-            return
-        }
-        const pages = library.pages(this.notebookId)
-        const folders = library.folders(this.notebookId)
-        this.header.update({ title: notebook.title, label: folderSummary(library, this.notebookId), trailing: trailingControls(this.app) })
-        this.app.nav.show("notebook", [[
-            { id: "notebook-back", glyph: "back", label: "Back", tint: tokens.semantic.navigation, isTinted: true, action: () => this.goBack() },
-            { id: "new-subfolder", glyph: "folder_add", label: "New folder", tint: tokens.semantic.create, isTinted: true, action: () => this.app.showSheet({ kind: "new-folder", parentId: this.notebookId }) },
-            { id: "new-page", glyph: "note_add", label: "New note", tint: tokens.semantic.create, isTinted: true, action: () => this.addPage() },
-        ]], { isCarriable: true })
-        const hasBoth = folders.length > 0 && pages.length > 0
-        this.folderHeading.style.display = hasBoth ? "flex" : "none"
-        this.noteHeading.style.display = hasBoth ? "flex" : "none"
-        this.folderGrid.style.display = folders.length ? "grid" : "none"
-        this.noteGrid.style.display = pages.length ? "grid" : "none"
-        this.emptyNotice.style.display = folders.length || pages.length ? "none" : "flex"
-        this.syncTiles(this.folderGrid, this.folderTiles, folders, (folder, rank) => this.folderTile(folder, rank), (tile, folder) => this.refreshFolderTile(tile, folder))
-        this.syncTiles(this.noteGrid, this.noteTiles, pages, (page, rank) => this.pageTile(page, rank), (tile, page) => this.refreshPageTile(tile, page))
-    }
-
-    refreshPageTile(tile, page) {
-        const look = noteLook(page)
-        tile.titleElement.textContent = noteTitle(this.app.library, page)
-        tile.iconElement.replaceChildren(glyph(look.icon, { size: 16, color: look.color }))
-        tile.extentElement.textContent = cellCount(page.extent) > 1 ? `${page.extent.cols}×${page.extent.rows}` : ""
-        tile.thumbnailFrame.style.aspectRatio = `${paperWidth(page.extent)} / ${paperHeight(page.extent)}`
-        tile.thumbnail.page = page
-        requestAnimationFrame(() => tile.thumbnail.refresh(page))
-    }
-
-    pageTile(page, index) {
-        const pageId = page.id
-        const pageThumbnail = thumbnail(page)
-        const thumbnailFrame = create("div", "page-thumbnail-frame", pageThumbnail)
-        squircle(thumbnailFrame, { radius: 6, clip: true })
-        const iconElement = create("span", "page-caption-icon")
-        const titleElement = create("span", "page-caption-title")
-        const extentElement = microLabel("")
-        const caption = create("div", "page-caption", iconElement, titleElement, extentElement)
-        const button = create("button", "page-tile pressable-soft", thumbnailFrame, caption)
-        button.type = "button"
-        squircle(button, { radius: squircleRadius.tile, fill: tokens.palette.panel_solid, border: tokens.palette.border })
-        const wrapper = create("div", "tile-wrapper", button)
-        holdable(button, {
-            action: () => this.app.go({ kind: "page", notebookId: this.notebookId, pageId }),
-            onHold: (rect) => this.showNoteMenu(pageId, rect),
-        })
-        wrapper.thumbnail = pageThumbnail
-        wrapper.thumbnailFrame = thumbnailFrame
-        wrapper.titleElement = titleElement
-        wrapper.iconElement = iconElement
-        wrapper.extentElement = extentElement
-        tileAppear(wrapper, index)
-        return wrapper
     }
 
     showNoteMenu(pageId, rect) {
@@ -315,6 +430,66 @@ export class NotebookScreen extends GridScreen {
     }
 }
 
+const dropEdgeShare = 0.22
+const tileMenuTitles = { rename: "Rename", appearance: "Icon & colour", move: "Move", delete_notebook: "Delete", delete_page: "Delete" }
+const folderAspect = "1.25"
+
+export class LibraryScreen extends GridScreen {
+    constructor(app) {
+        super(app, null)
+        this.grid = this.makeGrid("notebook-grid", 230, 320)
+        this.addFolder = this.addTile({ glyphName: "folder", title: "Add folder", aspect: folderAspect, className: "add-folder", action: () => app.showSheet({ kind: "new-folder", parentId: null }) })
+        this.mount({ title: "Folders", label: "" })
+        this.browse.append(this.grid)
+        this.update()
+    }
+
+    updateBrowse() {
+        const folders = this.app.library.folders(null)
+        this.header.update({ label: plural(folders.length, "folder") })
+        this.syncTiles(this.grid, this.folderTiles, folders, (notebook, rank) => this.folderTile(notebook, rank), (tile, notebook) => this.refreshFolderTile(tile, notebook), this.addFolder)
+    }
+}
+
+export class NotebookScreen extends GridScreen {
+    constructor(app, notebookId) {
+        super(app, notebookId)
+        this.folderGrid = this.makeGrid("notebook-grid", 230, 320)
+        this.noteGrid = this.makeGrid("page-grid", 170, 240)
+        this.addFolder = this.addTile({ glyphName: "folder", title: "Add folder", aspect: folderAspect, className: "add-folder", action: () => app.showSheet({ kind: "new-folder", parentId: this.notebookId }) })
+        this.addNote = this.addTile({ glyphName: "note", title: "Add note", aspect: `${paperWidth({ cols: 1, rows: 1 })} / ${paperHeight({ cols: 1, rows: 1 })}`, className: "add-note", action: () => this.addPage() })
+        this.mount({ title: app.library.notebook(notebookId)?.title ?? "Folder", label: "", onBack: () => this.goBack() })
+        this.browse.append(create("div", "grid-heading", microLabel("Folders")), this.folderGrid, create("div", "grid-heading", microLabel("Notes")), this.noteGrid)
+        this.update()
+    }
+
+    goBack() {
+        const parentId = this.app.library.parentOf(this.notebookId)
+        this.app.go(parentId ? { kind: "notebook", notebookId: parentId } : { kind: "library" })
+    }
+
+    addPage() {
+        const page = this.app.library.createPage(this.notebookId)
+        this.app.go({ kind: "page", notebookId: this.notebookId, pageId: page.id })
+    }
+
+    update() {
+        if (!this.app.library.notebook(this.notebookId)) {
+            this.app.go({ kind: "library" })
+            return
+        }
+        super.update()
+    }
+
+    updateBrowse() {
+        const library = this.app.library
+        const notebook = library.notebook(this.notebookId)
+        this.header.update({ title: notebook.title, label: folderSummary(library, this.notebookId) })
+        this.syncTiles(this.folderGrid, this.folderTiles, library.folders(this.notebookId), (folder, rank) => this.folderTile(folder, rank), (tile, folder) => this.refreshFolderTile(tile, folder), this.addFolder)
+        this.syncTiles(this.noteGrid, this.noteTiles, library.pages(this.notebookId), (page, rank) => this.pageTile(page, rank), (tile, page) => this.refreshPageTile(tile, page), this.addNote)
+    }
+}
+
 const menuTitles = {
     previous_page: "Previous note",
     next_page: "Next note",
@@ -332,7 +507,9 @@ export class PageScreen {
         this.notebookId = notebookId
         this.pageId = pageId
         this.element = create("section", "screen page-screen")
-        this.header = topBar({ title: "", label: "", onBack: () => app.go({ kind: "notebook", notebookId }), trailing: [] })
+        this.undoButton = roundIconButton({ glyphName: "undo", label: "Undo", action: () => app.library.undo(this.pageId) })
+        this.redoButton = roundIconButton({ glyphName: "redo", label: "Redo", action: () => app.library.redo(this.pageId) })
+        this.header = topBar({ title: "", label: "", onBack: () => app.go({ kind: "notebook", notebookId }), trailing: [], below: [this.undoButton, this.redoButton] })
         this.canvas = new InkCanvas(this.callbacks())
         this.editorHost = create("div", "text-editor-host")
         this.deletedNotice = create("div", "deleted-notice", microLabel("This note was deleted"))
@@ -367,7 +544,9 @@ export class PageScreen {
         if (library.isReadOnly(this.pageId)) {
             trailing.push(microLabel("Read only", tokens.semantic.destructive))
         }
-        trailing.push(...trailingControls(this.app))
+        trailing.push(settingsControl(this.app))
+        this.undoButton.setEnabled(library.canUndo(this.pageId))
+        this.redoButton.setEnabled(library.canRedo(this.pageId))
         this.header.update({
             title: page ? noteTitle(library, page) : "Note",
             label: library.notebook(this.notebookId)?.title ?? "Folder",
@@ -466,7 +645,7 @@ export class PageScreen {
         const library = this.app.library
         return {
             onCameraChange: () => this.positionEditor(),
-            onStroke: (tool, color, points, width) => library.addStroke(this.pageId, tool, color, points, width),
+            onStroke: (tool, color, pieces, width) => library.addStrokes(this.pageId, tool, color, pieces, width),
             onErase: (identifiers) => library.erase(identifiers, this.pageId),
             onEraseArea: (replacements) => library.replaceStrokes(this.pageId, replacements),
             onUndo: () => library.undo(this.pageId),
@@ -479,7 +658,11 @@ export class PageScreen {
                 if (elementId) {
                     library.editText(elementId, this.pageId)
                 } else {
-                    library.beginText(this.pageId, point)
+                    const page = library.page(this.pageId)
+                    const fontSize = textFontSize()
+                    const height = textLayout({ font_size: fontSize, content: "" }).lineHeight
+                    const box = clampBox({ x: point[0], y: point[1], width: tokens.text.box_width }, page.extent, height)
+                    library.beginText(this.pageId, [box.x, box.y], fontSize)
                 }
             },
             onTextMove: (elementId, box) => library.moveText(elementId, this.pageId, box),

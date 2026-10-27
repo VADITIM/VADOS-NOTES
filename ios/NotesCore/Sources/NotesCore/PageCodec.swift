@@ -69,6 +69,9 @@ public enum PageCodec {
         }
         lines.append("  \"id\": \(try value(page.id)),")
         lines.append("  \"notebook\": \(try value(page.notebook)),")
+        if let order = page.order {
+            lines.append("  \"order\": \(try value(order)),")
+        }
         lines.append("  \"schema_version\": \(try value(page.schemaVersion)),")
         if let title = page.title {
             lines.append("  \"title\": \(try value(title)),")

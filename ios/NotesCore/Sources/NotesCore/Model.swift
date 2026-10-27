@@ -242,6 +242,7 @@ public struct PageHeader: Codable, Equatable, Sendable {
     public var title: String?
     public var color: String?
     public var icon: String?
+    public var order: Int?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -254,9 +255,10 @@ public struct PageHeader: Codable, Equatable, Sendable {
         case title
         case color
         case icon
+        case order
     }
 
-    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, title: String? = nil, color: String? = nil, icon: String? = nil) {
+    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, title: String? = nil, color: String? = nil, icon: String? = nil, order: Int? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.notebook = notebook
@@ -267,6 +269,7 @@ public struct PageHeader: Codable, Equatable, Sendable {
         self.title = title
         self.color = color
         self.icon = icon
+        self.order = order
     }
 }
 
@@ -283,6 +286,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
     public var title: String?
     public var color: String?
     public var icon: String?
+    public var order: Int?
     public var elements: [Element]
 
     enum CodingKeys: String, CodingKey {
@@ -296,6 +300,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         case title
         case color
         case icon
+        case order
         case elements
     }
 
@@ -310,11 +315,12 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         title = header.title
         color = header.color
         icon = header.icon
+        order = header.order
         self.elements = elements
     }
 
     public var header: PageHeader {
-        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, title: title, color: color, icon: icon)
+        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, title: title, color: color, icon: icon, order: order)
     }
 
     public var liveElements: [Element] {
@@ -342,6 +348,7 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
     public var color: String?
     public var icon: String?
     public var parent: String?
+    public var order: Int?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -353,9 +360,10 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
         case color
         case icon
         case parent
+        case order
     }
 
-    public init(schemaVersion: Int = Notebook.currentSchemaVersion, id: String, title: String, updated: Date, device: String, deleted: Bool = false, color: String? = nil, icon: String? = nil, parent: String? = nil) {
+    public init(schemaVersion: Int = Notebook.currentSchemaVersion, id: String, title: String, updated: Date, device: String, deleted: Bool = false, color: String? = nil, icon: String? = nil, parent: String? = nil, order: Int? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.title = title
@@ -365,6 +373,7 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
         self.color = color
         self.icon = icon
         self.parent = parent
+        self.order = order
     }
 }
 

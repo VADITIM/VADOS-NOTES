@@ -409,3 +409,5 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The paper is light (`#EFEEE9`). It is content, like a photo in VAD/OS Gallery, so it owns its colour; the chrome around it stays on the V/AS ground.
 - Notebooks are folders and can nest (`parent`). Pages are notes and carry an optional name, colour and icon. Moving a note to another folder writes it under a new page ID there and tombstones the old file, because the folder is part of the path.
 - Top bars float over the content as overlays on the flat panel colour (no blur); the page fits below them.
+- Folders and notes carry an optional integer `order` and can be rearranged and moved by drag and drop. Folder screens have no bottom nav; "Add folder" and "Add note" lead their grids, and a search field in the top bar finds folders and notes by name.
+- Ink and text stay on the paper: strokes start on it and are clipped to its edge. The paper has rounded corners (4 mm).

@@ -125,17 +125,20 @@ export function backButton(onBack) {
     return holdable(button, { action: onBack })
 }
 
-export function topBar({ title, label, onBack, trailing = [] }) {
+export function topBar({ title, label, onBack, trailing = [], below = [] }) {
     const labelElement = label === undefined ? null : microLabel(label)
     const titleElement = sweepTitle(title)
     const trailingElement = create("div", "top-bar-trailing", ...trailing)
+    const titles = create("div", "top-bar-titles", labelElement, titleElement)
+    const back = onBack ? backButton(onBack) : null
     const bar = create(
         "header",
-        "top-bar",
-        onBack ? backButton(onBack) : null,
-        create("div", "top-bar-titles", labelElement, titleElement),
+        `top-bar${below.length ? " has-below" : ""}`,
+        below.length ? create("div", "top-bar-stack", create("div", "top-bar-lead", back, titles), create("div", "top-bar-below", ...below)) : back,
+        below.length ? null : titles,
         trailingElement,
     )
+    bar.backButton = back
     bar.update = ({ title: nextTitle, label: nextLabel, trailing: nextTrailing }) => {
         if (nextTitle !== undefined) {
             titleElement.setText(nextTitle)
@@ -150,19 +153,56 @@ export function topBar({ title, label, onBack, trailing = [] }) {
     return bar
 }
 
-export function syncBadge(status, onOpen) {
-    const color = status.color
-    const badge = create("button", "sync-badge pressable", glyph("sync", { color, size: 16 }), microLabel(status.label, color))
-    badge.type = "button"
-    return holdable(badge, { action: onOpen })
-}
-
 export function settingsButton(onOpen) {
     const button = create("button", "round-button pressable", glyph("settings", { color: tokens.palette.text_body }))
     button.type = "button"
     button.setAttribute("aria-label", "Settings")
     button.title = "Settings"
     return holdable(button, { action: onOpen })
+}
+
+export function roundIconButton({ glyphName, label, color = tokens.palette.text_body, action }) {
+    const button = create("button", "round-button pressable", glyph(glyphName, { color }))
+    button.type = "button"
+    button.setAttribute("aria-label", label)
+    button.title = label
+    button.setEnabled = (isEnabled) => {
+        button.disabled = !isEnabled
+        button.classList.toggle("is-disabled", !isEnabled)
+    }
+    return holdable(button, { action })
+}
+
+export function searchField({ placeholder, onChange }) {
+    const input = create("input", "search-input")
+    input.type = "search"
+    input.placeholder = placeholder
+    input.spellcheck = false
+    input.autocomplete = "off"
+    const clear = create("button", "search-clear pressable", glyph("close", { size: 16, color: tokens.palette.text_muted }))
+    clear.type = "button"
+    clear.setAttribute("aria-label", "Clear search")
+    const wrapper = create("label", "search-field", glyph("search", { size: 18, color: tokens.palette.text_muted }), input, clear)
+    const changed = () => {
+        wrapper.classList.toggle("has-query", input.value.length > 0)
+        onChange(input.value)
+    }
+    input.addEventListener("input", changed)
+    input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && input.value) {
+            event.stopPropagation()
+            input.value = ""
+            changed()
+        }
+    })
+    clear.addEventListener("click", (event) => {
+        event.preventDefault()
+        input.value = ""
+        changed()
+        input.focus()
+    })
+    wrapper.input = input
+    return wrapper
 }
 
 export function slabButton(title, color, action) {

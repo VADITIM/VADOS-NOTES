@@ -280,6 +280,12 @@ function drawText(context, element, camera, offset, pixelRatio, style) {
     context.restore()
 }
 
+export function clipToPaper(context, extent) {
+    context.beginPath()
+    context.roundRect(0, 0, paperWidth(extent), paperHeight(extent), tokens.page.corner_radius)
+    context.clip()
+}
+
 export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, paperStyle, hiddenElementIds = new Set(), textOffsets = new Map(), cache }) {
     const colors = paperColors(paperStyle)
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
@@ -302,15 +308,13 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     context.save()
     context.translate(camera.offsetX, camera.offsetY)
     context.scale(camera.scale, camera.scale)
+    clipToPaper(context, page.extent)
     context.fillStyle = colors.paper
     context.fillRect(0, 0, paper.maximumX, paper.maximumY)
     if (showsGuides) {
         drawGuides(context, visible, camera, colors)
     }
     drawCellBoundaries(context, page.extent, camera, colors)
-    context.beginPath()
-    context.rect(0, 0, paper.maximumX, paper.maximumY)
-    context.clip()
     for (const element of liveElements(page)) {
         if (hiddenElementIds.has(element.id)) {
             continue

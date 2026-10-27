@@ -37,7 +37,8 @@ public enum Merge {
             extent: first.extent.union(second.extent),
             title: newer.title,
             color: newer.color,
-            icon: newer.icon
+            icon: newer.icon,
+            order: newer.order
         )
     }
 

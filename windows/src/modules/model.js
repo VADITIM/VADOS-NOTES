@@ -214,6 +214,107 @@ export function smoothStroke(points, scale) {
     return cleaned(simplified(smooth, tokens.ink.simplify_points / scale))
 }
 
+export function axisSnapped(start, end) {
+    const deltaX = end[0] - start[0]
+    const deltaY = end[1] - start[1]
+    const tolerance = Math.tan((tokens.ink.straighten_axis_snap_degrees * Math.PI) / 180)
+    if (Math.abs(deltaY) <= Math.abs(deltaX) * tolerance) {
+        return [end[0], start[1]]
+    }
+    if (Math.abs(deltaX) <= Math.abs(deltaY) * tolerance) {
+        return [start[0], end[1]]
+    }
+    return end
+}
+
+function isInsideRect(point, width, height) {
+    return point[0] >= 0 && point[0] <= width && point[1] >= 0 && point[1] <= height
+}
+
+function insideShares(start, end, width, height) {
+    let entry = 0
+    let exit = 1
+    const deltaX = end[0] - start[0]
+    const deltaY = end[1] - start[1]
+    const limits = [[-deltaX, start[0]], [deltaX, width - start[0]], [-deltaY, start[1]], [deltaY, height - start[1]]]
+    for (const [direction, room] of limits) {
+        if (direction === 0) {
+            if (room < 0) {
+                return null
+            }
+            continue
+        }
+        const share = room / direction
+        if (direction < 0) {
+            entry = Math.max(entry, share)
+        } else {
+            exit = Math.min(exit, share)
+        }
+        if (entry > exit) {
+            return null
+        }
+    }
+    return [entry, exit]
+}
+
+export function clipToPaper(points, extent) {
+    const width = paperWidth(extent)
+    const height = paperHeight(extent)
+    if (points.every((point) => isInsideRect(point, width, height))) {
+        return [points]
+    }
+    if (points.length === 1) {
+        return []
+    }
+    const pieces = []
+    let current = []
+    for (let index = 1; index < points.length; index += 1) {
+        const start = points[index - 1]
+        const end = points[index]
+        const shares = insideShares(start, end, width, height)
+        if (!shares) {
+            if (current.length) {
+                pieces.push(current)
+                current = []
+            }
+            continue
+        }
+        const [entry, exit] = shares
+        if (!current.length) {
+            current.push(pointAt(start, end, entry))
+        }
+        current.push(pointAt(start, end, exit))
+        if (exit < 1) {
+            pieces.push(current)
+            current = []
+        }
+    }
+    if (current.length) {
+        pieces.push(current)
+    }
+    return pieces.map(cleaned).filter((piece) => piece.length >= 2)
+}
+
+export function clampBox(box, extent, height) {
+    const width = Math.min(box.width, paperWidth(extent))
+    return {
+        ...box,
+        width,
+        x: Math.min(paperWidth(extent) - width, Math.max(0, box.x)),
+        y: Math.min(paperHeight(extent) - height, Math.max(0, box.y)),
+    }
+}
+
+export function isInsidePaper(point, extent) {
+    return isInsideRect(point, paperWidth(extent), paperHeight(extent))
+}
+
+export function sortedByOrder(items) {
+    const byIdentifier = [...items].sort((first, second) => (first.id < second.id ? -1 : 1))
+    const rank = new Map(byIdentifier.map((item, index) => [item.id, Number.isFinite(item.order) ? item.order : index]))
+    return byIdentifier.sort((first, second) => rank.get(first.id) - rank.get(second.id) || (first.id < second.id ? -1 : 1))
+}
+
 export function straightened(points, start, end, share) {
     const length = strokeLength(points)
     if (length <= 0 || share >= 1) {
@@ -399,7 +500,7 @@ function canonical(value) {
 }
 
 export function encodePage(page) {
-    const optional = (key) => (typeof page[key] === "string" ? [`  "${key}": ${canonical(page[key])},`] : [])
+    const optional = (key) => (typeof page[key] === "string" || Number.isFinite(page[key]) ? [`  "${key}": ${canonical(page[key])},`] : [])
     const lines = [
         "{",
         ...optional("color"),
@@ -409,6 +510,7 @@ export function encodePage(page) {
         ...optional("icon"),
         `  "id": ${canonical(page.id)},`,
         `  "notebook": ${canonical(page.notebook)},`,
+        ...optional("order"),
         `  "schema_version": ${canonical(page.schema_version)},`,
         ...optional("title"),
         `  "updated": ${canonical(page.updated)},`,

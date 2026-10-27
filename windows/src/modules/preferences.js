@@ -134,3 +134,12 @@ export function navPlacement() {
 export function setNavPlacement(placement) {
     writeSetting("navPlacement", placement)
 }
+
+export function textFontSize() {
+    return clamp(readSetting("textFontSize", tokens.text.font_size), tokens.text.font_size_range)
+}
+
+export function setTextFontSize(size) {
+    writeSetting("textFontSize", clamp(size, tokens.text.font_size_range))
+    changed()
+}

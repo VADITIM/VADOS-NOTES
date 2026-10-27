@@ -18,7 +18,9 @@ import {
     setEraserMode,
     setEraserRadius,
     setToolColor,
+    setTextFontSize,
     setToolWidth,
+    textFontSize,
     toolColor,
     toolWidth,
     widthPresets,
@@ -29,6 +31,24 @@ const previewDiameterRange = [4, 20]
 const toolLabels = { pen: "Pen", marker: "Marker", eraser: "Eraser", text: "Text" }
 const eraserModeGlyphs = { stroke: "erase_stroke", area: "erase_area" }
 const eraserModeLabels = { stroke: "Whole line", area: "Precise" }
+const millimetresPerPoint = 0.35278
+
+export function pointSize(millimetres) {
+    return String(Math.round(millimetres / millimetresPerPoint))
+}
+
+function captionButton({ caption, label, onPress }) {
+    const button = create("button", "tool-nav-button caption-button pressable", create("span", "tool-nav-caption", caption))
+    button.type = "button"
+    button.setAttribute("aria-label", label)
+    button.title = label
+    button.addEventListener("pointerdown", (event) => event.stopPropagation())
+    button.addEventListener("click", (event) => {
+        event.stopPropagation()
+        onPress()
+    })
+    return button
+}
 
 function shareOf(value, [minimum, maximum]) {
     return Math.log(value / minimum) / Math.log(maximum / minimum)
@@ -110,13 +130,19 @@ export class PageTools {
 
     update(session) {
         const library = this.app.library
-        const pageId = this.screen.pageId
         if (session) {
+            const color = inkOnPaper(session.element.color ?? tokens.text.color, paperStyle())
             this.nav.show("page-typing", [[
-                { id: "typing", glyph: "text", label: "Typing", tint: tokens.palette.accent, action: () => {} },
+                { id: "text-size", caption: pointSize(session.element.font_size ?? textFontSize()), label: "Font size", tint: tokens.palette.text_bright, action: () => this.toggleSubNav("text-size", "text-size") },
+                { id: "text-color", glyph: "text", label: "Text colour", tint: isLight(color) ? color : tokens.palette.text_bright, swatch: color, isTinted: true, action: () => this.toggleSubNav("text-color", "text-color") },
+            ], [
                 { id: "finish-text", glyph: "check", label: "Done", tint: tokens.semantic.create, isTinted: true, action: () => library.finishText() },
-            ]], { selectedId: "typing", isCarriable: true })
+            ]], { isCarriable: true })
+            this.controls?.update()
             return
+        }
+        if (this.controls?.isTyping) {
+            this.closeSubNav()
         }
         const toolItems = [
             ...drawingTools.map((tool) => {
@@ -133,21 +159,16 @@ export class PageTools {
             { id: "eraser", glyph: "eraser", label: toolLabels.eraser, tint: tokens.semantic.destructive, action: () => this.pressTool("eraser") },
             { id: "text", glyph: "text", label: toolLabels.text, tint: tokens.palette.accent, action: () => this.pressTool("text") },
         ]
-        const history = [
-            { id: "undo", glyph: "undo", label: "Undo", isEnabled: library.canUndo(pageId), action: () => library.undo(pageId) },
-            { id: "redo", glyph: "redo", label: "Redo", isEnabled: library.canRedo(pageId), action: () => library.redo(pageId) },
-        ]
         const more = [{ id: "page-menu", glyph: "more", label: "Page menu", action: (button) => this.screen.showPageMenu({ around: button.getBoundingClientRect() }) }]
-        this.nav.show("page-tools", [toolItems, history, more], { selectedId: activeTool(), isCarriable: true })
+        this.nav.show("page-tools", [toolItems, more], { selectedId: activeTool(), isCarriable: true })
         this.controls?.update()
     }
 
     pressTool(tool) {
         if (activeTool() === tool) {
             if (tool === "text") {
-                return
-            }
-            if (this.nav.isSubNavOpen(tool)) {
+                this.toggleSubNav("text-size", "text")
+            } else if (this.nav.isSubNavOpen(tool)) {
                 this.closeSubNav()
             } else {
                 this.openSubNav(tool)
@@ -158,12 +179,29 @@ export class PageTools {
         setActiveTool(tool)
     }
 
-    openSubNav(tool) {
-        const controls = tool === "eraser" ? this.eraserControls() : this.inkControls(tool)
+    toggleSubNav(key, anchorId) {
+        if (this.nav.isSubNavOpen(key)) {
+            this.closeSubNav()
+        } else {
+            this.openSubNav(key, anchorId)
+        }
+    }
+
+    makeControls(key) {
+        switch (key) {
+        case "eraser": return this.eraserControls()
+        case "text-size": return this.textSizeControls()
+        case "text-color": return this.textColorControls()
+        default: return this.inkControls(key)
+        }
+    }
+
+    openSubNav(key, anchorId = key) {
+        const controls = this.makeControls(key)
         this.controls = controls
         this.nav.openSubNav({
-            key: tool,
-            anchorId: tool,
+            key,
+            anchorId,
             children: controls.children,
             onClose: () => {
                 if (this.controls === controls) {
@@ -245,6 +283,77 @@ export class PageTools {
             }
         }
         return { children: [slider, separator(), sizes.row, addSizeButton, separator(), colors.row, addColorButton, separator(), wheel], update }
+    }
+
+    textSizeControls() {
+        const library = this.app.library
+        const range = tokens.text.font_size_range
+        const currentSize = () => library.textEditing?.element.font_size ?? textFontSize()
+        const choose = (size) => {
+            setTextFontSize(size)
+            library.styleText({ font_size: textFontSize() })
+        }
+        const slider = sizeSlider({
+            orientation: this.nav.orientation,
+            share: shareOf(currentSize(), range),
+            onChange: (share) => choose(valueAt(share, range)),
+        })
+        const presets = tokens.text.font_size_presets.map((size) => {
+            const button = captionButton({ caption: pointSize(size), label: `${pointSize(size)} pt`, onPress: () => choose(size) })
+            button.size = size
+            return button
+        })
+        const update = () => {
+            const size = currentSize()
+            slider.setShare(shareOf(size, range))
+            slider.setPreview({ diameter: previewDiameter(shareOf(size, range)), color: tokens.palette.text_bright })
+            for (const button of presets) {
+                button.classList.toggle("is-selected", pointSize(button.size) === pointSize(size))
+            }
+        }
+        return { children: [slider, separator(), create("span", "swatch-row", ...presets)], update, isTyping: Boolean(library.textEditing) }
+    }
+
+    textColorControls() {
+        const library = this.app.library
+        const currentColor = () => library.textEditing?.element.color ?? tokens.text.color
+        const choose = (color) => library.styleText({ color: color.toUpperCase() })
+        const swatches = tokens.text.colors.map((color) => {
+            const button = swatchButton({ color, label: color, onSelect: () => choose(color) })
+            button.color = color
+            return button
+        })
+        let panel = null
+        const wheel = wheelButton({
+            label: "Colour wheel",
+            onPress: () => {
+                if (panel && this.nav.panel?.element === panel) {
+                    this.nav.closePanel()
+                    panel = null
+                    wheel.classList.remove("is-open")
+                    return
+                }
+                panel = colorPanel({
+                    color: inkOnPaper(currentColor(), paperStyle()),
+                    onChange: (hex) => choose(inkOnPaper(hex, paperStyle())),
+                })
+                this.nav.openPanel(panel, wheel)
+                wheel.classList.add("is-open")
+            },
+        })
+        const update = () => {
+            const style = paperStyle()
+            const current = currentColor().toUpperCase()
+            for (const button of swatches) {
+                button.setState({ color: inkOnPaper(button.color, style), isSelected: button.color === current })
+            }
+            if (panel && this.nav.panel?.element === panel) {
+                panel.setColor(inkOnPaper(current, style))
+            } else {
+                wheel.classList.remove("is-open")
+            }
+        }
+        return { children: [create("span", "swatch-row", ...swatches), separator(), wheel], update, isTyping: true }
     }
 
     eraserControls() {

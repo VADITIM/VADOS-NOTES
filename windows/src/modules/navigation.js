@@ -77,7 +77,7 @@ export function separator() {
 }
 
 function navButton(item) {
-    const icon = create("span", "tool-nav-glyph", glyph(item.glyph))
+    const icon = create("span", "tool-nav-glyph", item.caption === undefined ? glyph(item.glyph) : create("span", "tool-nav-caption"))
     const dot = create("span", "tool-nav-swatch")
     const button = create("button", "tool-nav-button pressable", icon, dot)
     button.type = "button"
@@ -115,6 +115,12 @@ export class ToolNav {
         this.isSwallowingClick = false
         this.subNav = null
         this.panel = null
+        this.isHidden = false
+        this.layer.addEventListener("mousedown", (event) => {
+            if (event.target.tagName !== "INPUT") {
+                event.preventDefault()
+            }
+        })
         this.listenForCarry()
         new ResizeObserver(() => this.relayout()).observe(this.layer)
     }
@@ -123,7 +129,39 @@ export class ToolNav {
         return { width: this.layer.clientWidth, height: this.layer.clientHeight }
     }
 
+    hide() {
+        if (this.isHidden) {
+            return
+        }
+        this.isHidden = true
+        this.signature = null
+        this.closeSubNav()
+        this.cancelHold()
+        this.motion?.stop()
+        this.motion = null
+        const element = this.element
+        element.style.pointerEvents = "none"
+        cancelAnimations(element)
+        animate(element, [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.6)" }], { milliseconds: duration("overlay_leave"), curveName: "back_in", fill: "forwards" })
+    }
+
+    reveal() {
+        if (!this.isHidden) {
+            return false
+        }
+        this.isHidden = false
+        const element = this.element
+        element.style.pointerEvents = ""
+        this.face?.remove()
+        this.face = null
+        this.size = null
+        cancelAnimations(element)
+        animate(element, [{ opacity: 0, transform: "scale(0.6)" }, { opacity: 1, transform: "scale(1)" }], { milliseconds: duration("overlay_enter"), curveName: "back_out" })
+        return true
+    }
+
     show(kind, groups, { selectedId = null, isCarriable = false } = {}) {
+        this.reveal()
         this.isCarriable = isCarriable
         const signature = `${kind}|${groups.map((group) => group.map((item) => item.id).join(",")).join("/")}`
         if (signature === this.signature) {
@@ -201,6 +239,10 @@ export class ToolNav {
             const isEnabled = item.isEnabled !== false
             button.disabled = !isEnabled
             button.classList.toggle("is-disabled", !isEnabled)
+            const caption = button.querySelector(".tool-nav-caption")
+            if (caption) {
+                caption.textContent = item.caption
+            }
             const dot = button.querySelector(".tool-nav-swatch")
             dot.style.display = item.swatch ? "block" : "none"
             if (item.swatch) {
@@ -285,7 +327,7 @@ export class ToolNav {
     }
 
     relayout() {
-        if (!this.face || this.carry || this.motion) {
+        if (!this.face || this.carry || this.motion || this.isHidden) {
             return
         }
         const size = this.measure(this.face)

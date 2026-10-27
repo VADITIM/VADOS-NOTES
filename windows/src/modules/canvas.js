@@ -1,5 +1,5 @@
-import { cutStroke, isStrokeSwept, liveElements, smoothStroke, straightened } from "./model.js"
-import { Camera, StrokePathCache, drawPage, strokePath, textRect } from "./renderer.js"
+import { axisSnapped, clampBox, clipToPaper, cutStroke, isInsidePaper, isStrokeSwept, liveElements, smoothStroke, straightened } from "./model.js"
+import { Camera, StrokePathCache, clipToPaper as clipContextToPaper, drawPage, strokePath, textRect } from "./renderer.js"
 import { duration, tween } from "./motion.js"
 import { inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
@@ -239,13 +239,13 @@ export class InkCanvas {
         if (!stroke.straight) {
             return smooth
         }
-        return straightened(smooth, stroke.raw[0], stroke.straight.end, stroke.straight.share)
+        return straightened(smooth, stroke.raw[0], axisSnapped(stroke.raw[0], stroke.straight.end), stroke.straight.share)
     }
 
     finalStrokePoints() {
         const stroke = this.stroke
         if (stroke.straight) {
-            return smoothStroke([stroke.raw[0], stroke.straight.end], this.camera.scale)
+            return smoothStroke([stroke.raw[0], axisSnapped(stroke.raw[0], stroke.straight.end)], this.camera.scale)
         }
         return smoothStroke(stroke.raw, this.camera.scale)
     }
@@ -339,11 +339,17 @@ export class InkCanvas {
             return
         }
         const style = tokens.tools[this.tool.tool]
+        context.save()
+        context.translate(this.camera.offsetX, this.camera.offsetY)
+        context.scale(this.camera.scale, this.camera.scale)
+        clipContextToPaper(context, this.page.extent)
+        context.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0)
         context.lineWidth = this.tool.width * this.camera.scale
         context.lineCap = "round"
         context.lineJoin = "round"
         context.strokeStyle = withAlpha(inkOnPaper(this.tool.color, this.paperStyle), style.opacity)
         context.stroke(strokePath(points, (point) => this.camera.toScreen(point)))
+        context.restore()
     }
 
     cameraChanged() {
@@ -448,6 +454,10 @@ export class InkCanvas {
         }
         const point = this.camera.toPage(location[0], location[1])
         if (this.tool.kind === "ink") {
+            if (!isInsidePaper(point, this.page.extent)) {
+                this.isPanning = true
+                return
+            }
             this.beginStroke(location, point)
         } else if (this.tool.kind === "eraser") {
             this.hoverLocation = location
@@ -457,7 +467,7 @@ export class InkCanvas {
         } else if (this.tool.kind === "text") {
             const element = this.textElement(point)
             if (element) {
-                this.movingText = { id: element.id, origin: element.box, start: point }
+                this.movingText = { id: element.id, origin: element.box, start: point, height: textRect(element).height }
             }
         }
     }
@@ -529,7 +539,9 @@ export class InkCanvas {
             this.drawLive()
         } else if (this.tool.kind === "text" && this.movingText && this.hasMoved) {
             const point = this.camera.toPage(location[0], location[1])
-            this.textOffset = [point[0] - this.movingText.start[0], point[1] - this.movingText.start[1]]
+            const moving = this.movingText
+            const box = clampBox({ ...moving.origin, x: moving.origin.x + point[0] - moving.start[0], y: moving.origin.y + point[1] - moving.start[1] }, this.page.extent, moving.height)
+            this.textOffset = [box.x - moving.origin.x, box.y - moving.origin.y]
             this.requestDraw()
         }
     }
@@ -568,7 +580,7 @@ export class InkCanvas {
             const points = this.finalStrokePoints()
             this.endStroke()
             this.drawLive(points)
-            this.callbacks.onStroke?.(this.tool.tool, this.tool.color, points, this.tool.width)
+            this.callbacks.onStroke?.(this.tool.tool, this.tool.color, clipToPaper(points, this.page.extent), this.tool.width)
         } else if (this.tool.kind === "eraser") {
             this.lastErasePoint = null
             if (event.pointerType === "touch") {
@@ -588,12 +600,12 @@ export class InkCanvas {
             const moving = this.movingText
             if (moving) {
                 if (this.textOffsetMoved) {
-                    this.callbacks.onTextMove?.(moving.id, { x: moving.origin.x + this.textOffset[0], y: moving.origin.y + this.textOffset[1], width: moving.origin.width })
+                    this.callbacks.onTextMove?.(moving.id, this.movedTextBox())
                 } else {
                     this.movingText = null
                     this.callbacks.onTextTap?.(point, moving.id)
                 }
-            } else {
+            } else if (isInsidePaper(point, this.page.extent)) {
                 this.callbacks.onTextTap?.(point, null)
             }
         }
@@ -718,6 +730,11 @@ export class InkCanvas {
         this.areaErase = new Map()
         this.movingText = null
         this.textOffset = [0, 0]
+    }
+
+    movedTextBox() {
+        const origin = this.movingText.origin
+        return { x: origin.x + this.textOffset[0], y: origin.y + this.textOffset[1], width: origin.width }
     }
 
     get textOffsetMoved() {

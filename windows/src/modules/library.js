@@ -13,6 +13,7 @@ import {
     notebookPath,
     pagePath,
     schemaVersion,
+    sortedByOrder,
     timestampMilliseconds,
     timestampNow,
     tombstone,
@@ -21,6 +22,10 @@ import { deviceIdentity, loadFiles, writeFile } from "./storage.js"
 import { tokens } from "./tokens.js"
 
 const undoLimit = 200
+
+function endOrder(items) {
+    return items.reduce((highest, item, index) => Math.max(highest, Number.isFinite(item.order) ? item.order : index), -1) + 1
+}
 const writeDelayMilliseconds = 250
 
 export class Library {
@@ -87,7 +92,7 @@ export class Library {
     }
 
     folders(parentId = null) {
-        return this.liveNotebooks().filter((notebook) => this.parentOf(notebook.id) === parentId)
+        return sortedByOrder(this.liveNotebooks().filter((notebook) => this.parentOf(notebook.id) === parentId))
     }
 
     isInside(notebookId, ancestorId) {
@@ -135,14 +140,12 @@ export class Library {
 
     moveNotebook(notebookId, parentId) {
         if (this.canMoveNotebook(notebookId, parentId) && this.parentOf(notebookId) !== parentId) {
-            this.updateNotebook(notebookId, { parent: parentId })
+            this.updateNotebook(notebookId, { parent: parentId, order: endOrder(this.folders(parentId)) })
         }
     }
 
     pages(notebookId) {
-        return [...this.pagesById.values()]
-            .filter((page) => page.notebook === notebookId && !page.deleted)
-            .sort((first, second) => (first.id < second.id ? -1 : 1))
+        return sortedByOrder([...this.pagesById.values()].filter((page) => page.notebook === notebookId && !page.deleted))
     }
 
     page(pageId) {
@@ -163,6 +166,7 @@ export class Library {
             updated: now,
             device: this.device,
             deleted: false,
+            order: endOrder(this.folders(parentId && this.notebook(parentId) ? parentId : null)),
         }
         if (parentId && this.notebook(parentId)) {
             notebook.parent = parentId
@@ -196,6 +200,7 @@ export class Library {
             id: makeIdentifier("p", timestampMilliseconds(now)),
             notebook: notebookId,
             title: `Note ${this.pages(notebookId).length + 1}`,
+            order: endOrder(this.pages(notebookId)),
             updated: now,
             device: this.device,
             deleted: false,
@@ -221,13 +226,29 @@ export class Library {
         this.finishText()
         const now = this.timestamp()
         const { elements, ...header } = page
-        const moved = { ...header, id: makeIdentifier("p", timestampMilliseconds(now)), notebook: notebookId, updated: now, device: this.device }
+        const moved = { ...header, id: makeIdentifier("p", timestampMilliseconds(now)), notebook: notebookId, order: endOrder(this.pages(notebookId)), updated: now, device: this.device }
         this.applyHeader(moved)
         const target = { ...this.pagesById.get(moved.id), elements: [...elements] }
         this.pagesById.set(moved.id, target)
         this.schedulePage(target)
         this.deletePage(pageId)
         return moved.id
+    }
+
+    arrangeFolders(notebookIds) {
+        notebookIds.forEach((notebookId, index) => {
+            if (this.notebook(notebookId) && this.notebook(notebookId).order !== index) {
+                this.updateNotebook(notebookId, { order: index })
+            }
+        })
+    }
+
+    arrangePages(pageIds) {
+        pageIds.forEach((pageId, index) => {
+            if (this.page(pageId) && this.page(pageId).order !== index) {
+                this.updatePage(pageId, { order: index })
+            }
+        })
     }
 
     deletePage(pageId) {
@@ -249,28 +270,32 @@ export class Library {
         this.applyHeader({ ...this.header(page), extent, updated: this.timestamp(), device: this.device })
     }
 
-    addStroke(pageId, tool, color, points, width = tokens.tools[tool].width) {
+    addStrokes(pageId, tool, color, pieces, width = tokens.tools[tool].width) {
         const page = this.page(pageId)
-        if (!page || this.isReadOnly(pageId) || points.length === 0) {
+        const shown = pieces.filter((points) => points.length > 0)
+        if (!page || this.isReadOnly(pageId) || shown.length === 0) {
             return
         }
         const now = this.timestamp()
         const layer = layerForTool(tool)
-        const element = {
-            id: makeIdentifier("e", timestampMilliseconds(now)),
-            type: "stroke",
-            layer,
-            order: nextOrder(page, layer),
-            tool,
-            color,
-            width,
-            points,
-            updated: now,
-            device: this.device,
-            deleted: false,
-        }
-        this.applyElement(pageId, element)
-        this.record({ before: [], after: [element] }, pageId)
+        const added = shown.map((points) => {
+            const element = {
+                id: makeIdentifier("e", timestampMilliseconds(now)),
+                type: "stroke",
+                layer,
+                order: nextOrder(this.pagesById.get(pageId), layer),
+                tool,
+                color,
+                width,
+                points,
+                updated: now,
+                device: this.device,
+                deleted: false,
+            }
+            this.applyElement(pageId, element)
+            return element
+        })
+        this.record({ before: [], after: added }, pageId)
     }
 
     erase(elementIds, pageId) {
@@ -333,7 +358,7 @@ export class Library {
         this.record({ before: [element], after: [moved] }, pageId)
     }
 
-    beginText(pageId, point) {
+    beginText(pageId, point, fontSize = tokens.text.font_size) {
         const page = this.page(pageId)
         if (!page || this.isReadOnly(pageId)) {
             return
@@ -348,7 +373,7 @@ export class Library {
             color: tokens.text.color,
             content: "",
             box: { x: point[0], y: point[1], width: tokens.text.box_width },
-            font_size: tokens.text.font_size,
+            font_size: fontSize,
             updated: now,
             device: this.device,
             deleted: false,
@@ -379,6 +404,19 @@ export class Library {
         }
     }
 
+    styleText(changes) {
+        const session = this.textEditing
+        if (!session) {
+            return
+        }
+        session.element = { ...session.element, ...changes, updated: this.timestamp(), device: this.device }
+        if (session.isApplied) {
+            this.applyElement(session.pageId, session.element)
+        } else {
+            this.changed()
+        }
+    }
+
     finishText() {
         const session = this.textEditing
         if (!session) {
@@ -397,7 +435,7 @@ export class Library {
             }
             return
         }
-        if (session.original?.content !== session.element.content) {
+        if (session.original?.content !== session.element.content || session.original?.font_size !== session.element.font_size || session.original?.color !== session.element.color) {
             this.record({ before: session.original ? [session.original] : [], after: [session.element] }, session.pageId)
         }
         this.changed()

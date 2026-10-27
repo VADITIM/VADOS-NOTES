@@ -32,6 +32,7 @@ final class CodecTests: XCTestCase {
         page.title = "Lecture \"one\""
         page.color = "#FF6B6B"
         page.icon = "star"
+        page.order = 3
 
         let data = try PageCodec.encodePage(page)
         let text = String(decoding: data, as: UTF8.self)
@@ -40,11 +41,12 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(decoded, page)
         XCTAssertEqual(try PageCodec.encodePage(decoded), data)
         XCTAssertTrue(text.hasPrefix("{\n  \"color\": \"#FF6B6B\",\n  \"deleted\""))
+        XCTAssertTrue(text.contains("\"notebook\": \"nb_01TEST\",\n  \"order\": 3,\n  \"schema_version\""))
         XCTAssertEqual(Merge.page(page, Fixtures.page(at: -1)).header.title, page.title)
     }
 
     func testNotebookColorIconAndParentRoundTrip() throws {
-        let notebook = Notebook(id: "nb_01CHILD", title: "Child", updated: Fixtures.time(1), device: "pc-01", color: "#5BFD5B", icon: "book", parent: "nb_01PARENT")
+        let notebook = Notebook(id: "nb_01CHILD", title: "Child", updated: Fixtures.time(1), device: "pc-01", color: "#5BFD5B", icon: "book", parent: "nb_01PARENT", order: 2)
 
         XCTAssertEqual(try PageCodec.decodeNotebook(try PageCodec.encodeNotebook(notebook)), notebook)
         XCTAssertFalse(String(decoding: try PageCodec.encodeNotebook(Notebook(id: "nb_01PLAIN", title: "Plain", updated: Fixtures.time(1), device: "pc-01")), as: UTF8.self).contains("parent"))
