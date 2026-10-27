@@ -126,7 +126,7 @@ final class Library: ObservableObject {
     func createNotebook(title: String, parent parentId: String?) -> Notebook {
         let now = store.timestamp()
         let validParent = parentId.flatMap { notebook($0) == nil ? nil : $0 }
-        let notebook = Notebook(
+        let created = Notebook(
             id: Identifier.make(prefix: Identifier.notebookPrefix, date: now),
             title: title,
             updated: now,
@@ -134,8 +134,8 @@ final class Library: ObservableObject {
             parent: validParent,
             order: Arrangement.endOrder(after: folders(in: validParent))
         )
-        apply(.notebook(notebook), page: nil)
-        return notebook
+        apply(.notebook(created), page: nil)
+        return created
     }
 
     func updateNotebook(_ notebookId: String, _ change: (inout Notebook) -> Void) {

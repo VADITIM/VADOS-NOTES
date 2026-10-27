@@ -19,6 +19,11 @@ public struct MarkdownStyle: Equatable, Hashable, Sendable {
 public struct MarkdownRun: Equatable, Sendable {
     public var text: String
     public var style: MarkdownStyle
+
+    public init(text: String, style: MarkdownStyle) {
+        self.text = text
+        self.style = style
+    }
 }
 
 public enum MarkdownBlockKind: String, Equatable, Sendable {
