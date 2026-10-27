@@ -10,3 +10,5 @@ Deliberate shortcuts, each with its ceiling and upgrade path.
 - **Import is a disabled slot.** Phase 4b.
 - **No app icon.** Make one with V/AS `guides/app-icon.md`.
 - **Sync status in the sync sheet is read once.** It does not live-update while the sheet is open.
+- **Windows has no sync yet.** The sync sheet keeps owner, repository and branch but stores no token. Upgrade: port the journal and push protocol (phase 6) and keep the token in Credential Manager.
+- **Windows text wrapping is approximate.** Words wrap at spaces with canvas measurement; TextKit can break a line one word differently in rare cases.

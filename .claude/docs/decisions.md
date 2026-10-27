@@ -28,3 +28,14 @@ Reasons that would otherwise be comments. The spec's section 11 is the product-l
 - **No blur, no glass, no shadows.** The spec overrides the Gallery's glass pill: the pop bar is a flat `panel_solid` capsule with a hairline.
 - **One accent (`#FFDD1B`) app-wide.** Green, blue, red, grey and amber are taken by the spec's semantic roles, so the accent had to be a colour none of them use.
 - **Swift 5 language mode in the app target.** UIKit timer and gesture callbacks would need annotations everywhere under Swift 6 strict concurrency for no gain in a single-window app.
+
+## Windows app (`windows/`)
+
+- **Plain ES modules, no bundler.** The frontend runs as-is in WebView2 and in any browser, so the UI can be previewed without Rust.
+- **Tokens come from Rust.** `shared/tokens.json` is compiled into the binary with `include_str!` and handed to the frontend by the `tokens` command, so there is still one definition.
+- **Squircles are drawn as SVG paths**, generated with the same superellipse as `Squircle.swift` (exponent 5, 12 steps per corner, extent 1.8 × radius). CSS `border-radius` would give a different corner.
+- **Text is laid out once at a reference scale** (10 px per mm) and drawn at the current zoom, so line breaks do not shift while zooming.
+- **Right-click opens the same menu a hold opens.** Holding still still works; right-click is the Windows habit and changes no slot.
+- **Mouse draws like the Pencil; touch follows the finger rules.** Middle-drag, Space+drag and the wheel pan, Ctrl+wheel zooms.
+- **The camera is not refitted on window resize.** The iPad refits on rotation; on Windows resizes are frequent and refitting would throw away the zoom.
+- **Pages are written straight to files in the repository layout.** No journal yet; that arrives with Windows sync (phase 6).
