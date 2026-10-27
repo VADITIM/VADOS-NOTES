@@ -1,7 +1,18 @@
-     /\
-    /  \
-   /    \
-  /_    _\
-    |  |
-    |  |
-    |__|
+.
+                 ;          .W.     :
+.                ED.        '#'     t             .
+t          d     E#Wi        #     t#,           .:
+E         ;f   . E###G.     ###   ;##W.          ;W
+EK       P:.  ;: E#fD#W;    :#:  :#L:WE         f#E
+EK,    .DD:  ;W, E#t t##L    :  .KG  ,#D      .E#f
+EK.   ,WK.  j##, E#t  .E#K,     EE    ;#f    iWW;
+E#t  i#D   G###, E#t    j##f   f#.     t#i  L##Lffi
+E#t j#f  :E####, E#t    :E#K:  :#G     GK  tLLG##L
+E#tL#i  ;W#DG##, E#t   t##L     ;#L   LW.   ,W#i
+E#WW,  j###DW##, E#t .D#W;       t#f f#:   j#E.
+E#K:  G##i  G##, E#tiW#G.   ,W,   f#D#;  .D#j
+ED.  K#K:   L##, E#K##i            G#t  ,WK,
+t:  ;K#;;,,;L##, E##D.       ;      t   EG.
+:  ;K#:      L#, E#t        t#i     ;   ;'
+'  #K        'L, L:         .W.     '   '
+   #          '  '           :
