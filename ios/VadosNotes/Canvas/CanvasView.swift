@@ -4,23 +4,31 @@ import UIKit
 
 struct CanvasCallbacks {
     var onCameraChange: (CanvasCamera) -> Void
-    var onStroke: (Tool, String, [Point]) -> Void
+    var onStroke: (Tool, String, [[Point]], Double) -> Void
     var onErase: ([String]) -> Void
+    var onEraseArea: ([StrokeReplacement]) -> Void
     var onTextTap: (Point, String?) -> Void
     var onTextMove: (String, TextBox) -> Void
     var onInput: () -> Void
     var onHold: (CGPoint) -> Void
     var onHoldMove: (CGPoint) -> Void
     var onHoldEnd: (CGPoint) -> Void
+    var onUndo: () -> Void
+    var onRedo: () -> Void
 }
 
 struct CanvasView: UIViewRepresentable {
     let page: Page
     let tool: CanvasTool
     let inkColor: String
+    let inkWidth: Double
+    let eraserRadius: Double
+    let paperStyle: PaperStyle
     let showsGuides: Bool
+    let showsDividers: Bool
     let hiddenElementIds: Set<String>
     let isReadOnly: Bool
+    let topInset: CGFloat
     let fitRequest: Int
     let callbacks: CanvasCallbacks
 
@@ -52,25 +60,33 @@ struct CanvasView: UIViewRepresentable {
         view.page = page
         view.tool = tool
         view.inkColor = inkColor
+        view.inkWidth = inkWidth
+        view.eraserRadius = eraserRadius
+        view.paperStyle = paperStyle
         view.showsGuides = showsGuides
+        view.showsDividers = showsDividers
         view.hiddenElementIds = hiddenElementIds
         view.isReadOnly = isReadOnly
+        view.topInset = topInset
         view.onCameraChange = callbacks.onCameraChange
         view.onStroke = callbacks.onStroke
         view.onErase = callbacks.onErase
+        view.onEraseArea = callbacks.onEraseArea
         view.onTextTap = callbacks.onTextTap
         view.onTextMove = callbacks.onTextMove
         view.onInput = callbacks.onInput
         view.onHold = callbacks.onHold
         view.onHoldMove = callbacks.onHoldMove
         view.onHoldEnd = callbacks.onHoldEnd
+        view.onUndo = callbacks.onUndo
+        view.onRedo = callbacks.onRedo
     }
 }
 
 struct TextBlockEditor: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
-    let color: String
+    let color: UIColor
     let onChange: (String) -> Void
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -121,8 +137,10 @@ struct TextBlockEditor: UIViewRepresentable {
     }
 
     private func apply(to view: UITextView) {
-        let attributes = PageRenderer.textAttributes(fontSize: fontSize, color: UIColor(hex: color))
-        if view.typingAttributes[.font] as? UIFont != attributes[.font] as? UIFont {
+        let attributes = PageRenderer.textAttributes(fontSize: fontSize, color: color)
+        let currentFont = view.typingAttributes[.font] as? UIFont
+        let currentColor = view.typingAttributes[.foregroundColor] as? UIColor
+        if currentFont != attributes[.font] as? UIFont || currentColor != color {
             view.typingAttributes = attributes
             let selection = view.selectedRange
             view.attributedText = NSAttributedString(string: view.text, attributes: attributes)

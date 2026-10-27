@@ -1,103 +1,202 @@
 import SwiftUI
 
-enum Glyph {
-    case pen
-    case pencil
-    case marker
-    case eraser
-    case text
-    case undo
-    case redo
-    case back
-    case plus
-    case more
-    case sync
-    case check
+enum SVGPath {
+    private static var cache: [String: Path] = [:]
 
-    func path(in rect: CGRect) -> Path {
-        let unit = min(rect.width, rect.height) / 24
-        let origin = CGPoint(x: rect.midX - 12 * unit, y: rect.midY - 12 * unit)
-        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: origin.x + x * unit, y: origin.y + y * unit)
+    static func path(_ data: String) -> Path {
+        if let cached = cache[data] {
+            return cached
         }
+        let parsed = parse(data)
+        cache[data] = parsed
+        return parsed
+    }
+
+    private static func tokens(_ data: String) -> [String] {
+        var result: [String] = []
+        var number = ""
+        func flush() {
+            if !number.isEmpty {
+                result.append(number)
+                number = ""
+            }
+        }
+        for character in data {
+            if character.isLetter && character != "e" {
+                flush()
+                result.append(String(character))
+            } else if character == "-" && !number.isEmpty && number.last != "e" {
+                flush()
+                number = "-"
+            } else if character == "." && number.contains(".") {
+                flush()
+                number = "."
+            } else if character.isNumber || character == "." || character == "-" || character == "e" {
+                number.append(character)
+            } else {
+                flush()
+            }
+        }
+        flush()
+        return result
+    }
+
+    private static func parse(_ data: String) -> Path {
         var path = Path()
-        func polyline(_ coordinates: [(CGFloat, CGFloat)], isClosed: Bool = false) {
-            guard let first = coordinates.first else { return }
-            path.move(to: point(first.0, first.1))
-            for coordinate in coordinates.dropFirst() {
-                path.addLine(to: point(coordinate.0, coordinate.1))
-            }
-            if isClosed {
-                path.closeSubpath()
-            }
+        let items = tokens(data)
+        var index = 0
+        var command: Character = "M"
+        var current = CGPoint.zero
+        var start = CGPoint.zero
+        func number() -> CGFloat {
+            defer { index += 1 }
+            return index < items.count ? CGFloat(Double(items[index]) ?? 0) : 0
         }
-        switch self {
-        case .pen:
-            polyline([(4, 20), (6, 14), (16, 4), (20, 8), (10, 18)], isClosed: true)
-            polyline([(14, 6), (18, 10)])
-            polyline([(4, 20), (7.5, 16.5)])
-        case .pencil:
-            polyline([(4, 20), (6, 14), (16, 4), (20, 8), (10, 18)], isClosed: true)
-            polyline([(6, 14), (10, 18)])
-            polyline([(13.5, 6.5), (17.5, 10.5)])
-        case .marker:
-            polyline([(6, 18), (6, 14), (15, 5), (19, 9), (10, 18)], isClosed: true)
-            polyline([(4, 21), (11, 21)])
-        case .eraser:
-            polyline([(3, 15), (12, 6), (20, 14), (13, 21), (9, 21)], isClosed: true)
-            polyline([(7.5, 10.5), (15.5, 18.5)])
-            polyline([(13, 21), (21, 21)])
-        case .text:
-            polyline([(6, 6), (18, 6)])
-            polyline([(12, 6), (12, 19)])
-            polyline([(9, 19), (15, 19)])
-        case .undo:
-            polyline([(9, 5), (4, 10), (9, 15)])
-            path.move(to: point(4, 10))
-            path.addCurve(to: point(14, 19), control1: point(17, 10), control2: point(21, 14))
-        case .redo:
-            polyline([(15, 5), (20, 10), (15, 15)])
-            path.move(to: point(20, 10))
-            path.addCurve(to: point(10, 19), control1: point(7, 10), control2: point(3, 14))
-        case .back:
-            polyline([(15, 5), (8, 12), (15, 19)])
-        case .plus:
-            polyline([(12, 5), (12, 19)])
-            polyline([(5, 12), (19, 12)])
-        case .more:
-            for x in [6.0, 12.0, 18.0] {
-                path.addEllipse(in: CGRect(x: origin.x + (CGFloat(x) - 1.3) * unit, y: origin.y + 10.7 * unit, width: 2.6 * unit, height: 2.6 * unit))
+        func isNumberNext() -> Bool {
+            index < items.count && !(items[index].first?.isLetter ?? false)
+        }
+        while index < items.count {
+            if let first = items[index].first, first.isLetter {
+                command = first
+                index += 1
             }
-        case .sync:
-            path.move(to: point(19, 9))
-            path.addCurve(to: point(5, 10), control1: point(17, 4), control2: point(8, 3))
-            polyline([(19, 4), (19, 9), (14, 9)])
-            path.move(to: point(5, 15))
-            path.addCurve(to: point(19, 14), control1: point(7, 20), control2: point(16, 21))
-            polyline([(5, 20), (5, 15), (10, 15)])
-        case .check:
-            polyline([(5, 12.5), (10, 17.5), (19.5, 7)])
+            let isRelative = command.isLowercase
+            let base = isRelative ? current : .zero
+            switch command.uppercased().first ?? "M" {
+            case "M":
+                let point = CGPoint(x: base.x + number(), y: base.y + number())
+                path.move(to: point)
+                current = point
+                start = point
+                command = isRelative ? "l" : "L"
+            case "L":
+                let point = CGPoint(x: base.x + number(), y: base.y + number())
+                path.addLine(to: point)
+                current = point
+            case "H":
+                current = CGPoint(x: (isRelative ? current.x : 0) + number(), y: current.y)
+                path.addLine(to: current)
+            case "V":
+                current = CGPoint(x: current.x, y: (isRelative ? current.y : 0) + number())
+                path.addLine(to: current)
+            case "C":
+                let first = CGPoint(x: base.x + number(), y: base.y + number())
+                let second = CGPoint(x: base.x + number(), y: base.y + number())
+                let end = CGPoint(x: base.x + number(), y: base.y + number())
+                path.addCurve(to: end, control1: first, control2: second)
+                current = end
+            case "Q":
+                let control = CGPoint(x: base.x + number(), y: base.y + number())
+                let end = CGPoint(x: base.x + number(), y: base.y + number())
+                path.addQuadCurve(to: end, control: control)
+                current = end
+            case "A":
+                let radiusX = abs(number())
+                let radiusY = abs(number())
+                let rotation = number()
+                let isLarge = number() != 0
+                let isSweep = number() != 0
+                let end = CGPoint(x: base.x + number(), y: base.y + number())
+                addArc(to: &path, from: current, to: end, radiusX: radiusX, radiusY: radiusY, rotation: rotation, isLarge: isLarge, isSweep: isSweep)
+                current = end
+            case "Z":
+                path.closeSubpath()
+                current = start
+                if isNumberNext() {
+                    command = "L"
+                }
+                continue
+            default:
+                index += 1
+            }
         }
         return path
     }
-}
 
-struct GlyphView: View {
-    let glyph: Glyph
-    var color: Color = Palette.textBright
-    var size: CGFloat = 22
-
-    var body: some View {
-        GlyphShape(glyph: glyph)
-            .stroke(color, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
-            .frame(width: size, height: size)
+    private static func addArc(to path: inout Path, from start: CGPoint, to end: CGPoint, radiusX: CGFloat, radiusY: CGFloat, rotation: CGFloat, isLarge: Bool, isSweep: Bool) {
+        guard radiusX > 0, radiusY > 0, start != end else {
+            path.addLine(to: end)
+            return
+        }
+        let angle = rotation * .pi / 180
+        let cosine = cos(angle)
+        let sine = sin(angle)
+        let halfX = (start.x - end.x) / 2
+        let halfY = (start.y - end.y) / 2
+        let primeX = cosine * halfX + sine * halfY
+        let primeY = -sine * halfX + cosine * halfY
+        var rx = radiusX
+        var ry = radiusY
+        let lambda = (primeX * primeX) / (rx * rx) + (primeY * primeY) / (ry * ry)
+        if lambda > 1 {
+            rx *= sqrt(lambda)
+            ry *= sqrt(lambda)
+        }
+        let numerator = max(0, rx * rx * ry * ry - rx * rx * primeY * primeY - ry * ry * primeX * primeX)
+        let denominator = rx * rx * primeY * primeY + ry * ry * primeX * primeX
+        var factor = denominator == 0 ? 0 : sqrt(numerator / denominator)
+        if isLarge == isSweep {
+            factor = -factor
+        }
+        let centerPrimeX = factor * rx * primeY / ry
+        let centerPrimeY = -factor * ry * primeX / rx
+        let centerX = cosine * centerPrimeX - sine * centerPrimeY + (start.x + end.x) / 2
+        let centerY = sine * centerPrimeX + cosine * centerPrimeY + (start.y + end.y) / 2
+        func vectorAngle(_ ux: CGFloat, _ uy: CGFloat, _ vx: CGFloat, _ vy: CGFloat) -> CGFloat {
+            let sign: CGFloat = ux * vy - uy * vx < 0 ? -1 : 1
+            let dot = (ux * vx + uy * vy) / (sqrt(ux * ux + uy * uy) * sqrt(vx * vx + vy * vy))
+            return sign * acos(min(1, max(-1, dot)))
+        }
+        let startAngle = vectorAngle(1, 0, (primeX - centerPrimeX) / rx, (primeY - centerPrimeY) / ry)
+        var delta = vectorAngle((primeX - centerPrimeX) / rx, (primeY - centerPrimeY) / ry, (-primeX - centerPrimeX) / rx, (-primeY - centerPrimeY) / ry)
+        if !isSweep && delta > 0 {
+            delta -= 2 * .pi
+        } else if isSweep && delta < 0 {
+            delta += 2 * .pi
+        }
+        let segments = max(1, Int(ceil(abs(delta) / (.pi / 2))))
+        let step = delta / CGFloat(segments)
+        let handle = 4.0 / 3.0 * tan(step / 4)
+        func pointOn(_ theta: CGFloat) -> CGPoint {
+            CGPoint(x: centerX + rx * cos(theta) * cosine - ry * sin(theta) * sine, y: centerY + rx * cos(theta) * sine + ry * sin(theta) * cosine)
+        }
+        func derivative(_ theta: CGFloat) -> CGPoint {
+            CGPoint(x: -rx * sin(theta) * cosine - ry * cos(theta) * sine, y: -rx * sin(theta) * sine + ry * cos(theta) * cosine)
+        }
+        for segment in 0..<segments {
+            let first = startAngle + step * CGFloat(segment)
+            let second = first + step
+            let from = pointOn(first)
+            let to = pointOn(second)
+            let fromDerivative = derivative(first)
+            let toDerivative = derivative(second)
+            path.addCurve(
+                to: to,
+                control1: CGPoint(x: from.x + handle * fromDerivative.x, y: from.y + handle * fromDerivative.y),
+                control2: CGPoint(x: to.x - handle * toDerivative.x, y: to.y - handle * toDerivative.y)
+            )
+        }
     }
 }
 
 struct GlyphShape: Shape {
-    let glyph: Glyph
+    let name: String
 
     func path(in rect: CGRect) -> Path {
-        glyph.path(in: rect)
+        let scale = min(rect.width, rect.height) / 24
+        let transform = CGAffineTransform(translationX: rect.midX - 12 * scale, y: rect.midY - 12 * scale).scaledBy(x: scale, y: scale)
+        return SVGPath.path(Tokens.shared.glyphs[name] ?? "").applying(transform)
+    }
+}
+
+struct GlyphView: View {
+    let name: String
+    var color: Color = Palette.textBright
+    var size: CGFloat = 22
+
+    var body: some View {
+        GlyphShape(name: name)
+            .stroke(color, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
+            .frame(width: size, height: size)
     }
 }

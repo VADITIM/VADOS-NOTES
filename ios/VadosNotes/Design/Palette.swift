@@ -42,10 +42,23 @@ enum Palette {
     static let edit = Color(hex: tokens.semantic.edit)
     static let importAsset = Color(hex: tokens.semantic.import)
 
-    static let paper = UIColor(hex: tokens.page.paper)
-    static let guide = UIColor(hex: tokens.page.guide)
-    static let cellBoundary = UIColor(hex: tokens.page.cellBoundary)
     static let outside = UIColor(hex: tokens.page.outside)
+
+    static func paperColors(_ style: PaperStyle) -> Tokens.PaperStyleTokens {
+        style == .dark ? tokens.page.styles.dark : tokens.page.styles.light
+    }
+
+    static func isNeutral(_ hex: String) -> Bool {
+        let components = HexColor.components(hex)
+        let values = [components.red, components.green, components.blue]
+        return (values.max() ?? 0) - (values.min() ?? 0) <= tokens.page.neutralInkChroma
+    }
+
+    static func inkOnPaper(_ hex: String, style: PaperStyle) -> String {
+        guard style == .dark, isNeutral(hex) else { return hex }
+        let components = HexColor.components(hex)
+        return HexColor.hex(red: 1 - components.red, green: 1 - components.green, blue: 1 - components.blue, alpha: components.alpha)
+    }
 
     static func color(for role: MenuRole) -> Color {
         switch role {
@@ -65,7 +78,19 @@ enum Palette {
     }
 }
 
+enum PaperStyle: String, CaseIterable {
+    case dark
+    case light
+}
+
 enum HexColor {
+    static func hex(red: Double, green: Double, blue: Double, alpha: Double = 1) -> String {
+        func byte(_ value: Double) -> String {
+            String(format: "%02X", Int((min(1, max(0, value)) * 255).rounded()))
+        }
+        return "#\(byte(red))\(byte(green))\(byte(blue))\(alpha < 1 ? byte(alpha) : "")"
+    }
+
     static func components(_ hex: String) -> (red: Double, green: Double, blue: Double, alpha: Double) {
         var text = hex.trimmingCharacters(in: .whitespaces)
         if text.hasPrefix("#") {

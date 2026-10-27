@@ -1,6 +1,17 @@
 import Foundation
 
 struct Tokens: Decodable {
+    struct PaperStyleTokens: Decodable {
+        let paper: String
+        let guide: String
+        let cellBoundary: String
+    }
+
+    struct PaperStyles: Decodable {
+        let dark: PaperStyleTokens
+        let light: PaperStyleTokens
+    }
+
     struct PageTokens: Decodable {
         let cellWidth: Double
         let cellHeight: Double
@@ -9,6 +20,10 @@ struct Tokens: Decodable {
         let guide: String
         let cellBoundary: String
         let outside: String
+        let defaultStyle: String
+        let neutralInkChroma: Double
+        let cornerRadius: Double
+        let styles: PaperStyles
     }
 
     struct PaletteTokens: Decodable {
@@ -46,12 +61,16 @@ struct Tokens: Decodable {
     struct InkToolTokens: Decodable {
         let layer: String
         let width: Double
+        let widthRange: [Double]?
+        let widthPresets: [Double]?
         let opacity: Double
         let colors: [String]
     }
 
     struct EraserTokens: Decodable {
         let radius: Double
+        let radiusRange: [Double]
+        let modes: [String]
     }
 
     struct ToolTokens: Decodable {
@@ -61,12 +80,23 @@ struct Tokens: Decodable {
         let eraser: EraserTokens
     }
 
+    struct InkTokens: Decodable {
+        let sampleSpacingPoints: Double
+        let smoothingPoints: Double
+        let simplifyPoints: Double
+        let straightenTolerancePoints: Double
+        let straightenAxisSnapDegrees: Double
+    }
+
     struct TextTokens: Decodable {
         let font: String
         let fontSize: Double
         let lineHeight: Double
         let boxWidth: Double
         let color: String
+        let fontSizeRange: [Double]
+        let fontSizePresets: [Double]
+        let colors: [String]
     }
 
     struct CurveTokens: Decodable {
@@ -89,6 +119,12 @@ struct Tokens: Decodable {
         let sweepGrow: Int
         let sweepRetract: Int
         let menuHold: Int
+        let navSlide: Int
+        let navTrail: Int
+        let navCarryHold: Int
+        let tileDragHold: Int
+        let strokeStraightenHold: Int
+        let strokeStraightenSnap: Int
         let undo: Int
     }
 
@@ -116,24 +152,56 @@ struct Tokens: Decodable {
         let pageTile: [MenuSlotToken]
     }
 
+    struct FolderTokens: Decodable {
+        let defaultColor: String
+        let defaultIcon: String
+        let noteIcon: String
+        let colors: [String]
+        let icons: [String]
+    }
+
+    private struct GlyphFile: Decodable {
+        let glyphs: [String: String]
+    }
+
     let version: Int
     let page: PageTokens
     let palette: PaletteTokens
     let semantic: SemanticTokens
     let tools: ToolTokens
+    let ink: InkTokens
     let text: TextTokens
     let motion: MotionTokens
     let sync: SyncTokens
     let menus: MenuTokens
+    let folders: FolderTokens
+    private(set) var glyphs: [String: String] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case page
+        case palette
+        case semantic
+        case tools
+        case ink
+        case text
+        case motion
+        case sync
+        case menus
+        case folders
+    }
 
     static let shared: Tokens = {
         guard let url = Bundle.main.url(forResource: "tokens", withExtension: "json") else {
             fatalError("tokens.json is missing from the app bundle")
         }
         do {
+            let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
-            return try decoder.decode(Tokens.self, from: Data(contentsOf: url))
+            var tokens = try decoder.decode(Tokens.self, from: data)
+            tokens.glyphs = try JSONDecoder().decode(GlyphFile.self, from: data).glyphs
+            return tokens
         } catch {
             fatalError("tokens.json does not decode: \(error)")
         }

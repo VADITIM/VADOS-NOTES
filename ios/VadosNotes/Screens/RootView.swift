@@ -1,3 +1,4 @@
+import NotesCore
 import SwiftUI
 
 enum Route: Hashable {
@@ -6,16 +7,29 @@ enum Route: Hashable {
     case page(notebookId: String, pageId: String)
 }
 
+enum TileTarget: Hashable {
+    case folder(String)
+    case note(String)
+}
+
 enum SheetRequest: Identifiable, Equatable {
-    case newNotebook
-    case rename(notebookId: String, title: String)
-    case sync
+    case newFolder(parentId: String?)
+    case renameFolder(String)
+    case renameNote(String)
+    case appearance(TileTarget)
+    case move(TileTarget)
+    case newNote(notebookId: String)
+    case settings
 
     var id: String {
         switch self {
-        case .newNotebook: return "new"
-        case .rename(let notebookId, _): return "rename-\(notebookId)"
-        case .sync: return "sync"
+        case .newFolder(let parentId): return "new-folder-\(parentId ?? "root")"
+        case .renameFolder(let notebookId): return "rename-folder-\(notebookId)"
+        case .renameNote(let pageId): return "rename-note-\(pageId)"
+        case .appearance(let target): return "appearance-\(target)"
+        case .move(let target): return "move-\(target)"
+        case .newNote(let notebookId): return "new-note-\(notebookId)"
+        case .settings: return "settings"
         }
     }
 }
@@ -43,6 +57,7 @@ struct RootView: View {
     @EnvironmentObject private var library: Library
     @StateObject private var navigator = Navigator()
     @StateObject private var menu = MenuController()
+    @StateObject private var preferences = Preferences.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -65,7 +80,11 @@ struct RootView: View {
         .ignoresSafeArea(.keyboard)
         .environmentObject(navigator)
         .environmentObject(menu)
+        .environmentObject(preferences)
         .preferredColorScheme(.dark)
+        .onAppear {
+            ImportImages.shared.assetURL = { [library] asset in library.assetsDirectory.appendingPathComponent("\(asset.replacingOccurrences(of: "sha256:", with: "")).pdf") }
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
@@ -88,70 +107,160 @@ struct RootView: View {
     private var screen: some View {
         switch navigator.route {
         case .library:
-            LibraryScreen()
+            GridScreen(notebookId: nil)
         case .notebook(let notebookId):
-            NotebookScreen(notebookId: notebookId)
+            GridScreen(notebookId: notebookId)
         case .page(let notebookId, let pageId):
             PageScreen(notebookId: notebookId, pageId: pageId)
         }
     }
 }
 
-struct TopBar<Trailing: View>: View {
-    let title: String
-    var label: String?
-    var onBack: (() -> Void)?
-    @ViewBuilder var trailing: () -> Trailing
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            if let onBack {
-                HoldableButton(action: onBack) {
-                    GlyphView(glyph: .back, color: Palette.navigation)
-                        .frame(width: 48, height: 48)
-                        .background(Circle().fill(Palette.panelSolid))
-                        .overlay(Circle().stroke(Palette.border, lineWidth: 1))
-                }
-                .transition(.pop)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                if let label {
-                    MicroLabel(text: label)
-                }
-                SweepTitle(text: title)
-            }
-            Spacer(minLength: 12)
-            trailing()
+struct BackButtonFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 18)
     }
 }
 
-struct SyncBadge: View {
-    @ObservedObject var sync: SyncCoordinator
-    @EnvironmentObject private var navigator: Navigator
-
-    private var color: Color {
-        switch sync.status {
-        case .synced: return Palette.textLabel
-        case .syncing: return Palette.accent
-        case .paused, .failed: return Palette.destructive
-        case .offline, .retrying, .notConnected: return Palette.textMuted
-        }
+struct TopBarHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
+}
+
+struct RoundIconButton: View {
+    let glyph: String
+    var color: Color = Palette.textBody
+    var isTinted = false
+    var isEnabled = true
+    let action: () -> Void
 
     var body: some View {
-        HoldableButton(action: { navigator.show(.sync) }) {
-            HStack(spacing: 8) {
-                GlyphView(glyph: .sync, color: color, size: 16)
-                MicroLabel(text: sync.blockedCount > 0 ? "\(sync.status.label) · \(sync.blockedCount) blocked" : sync.status.label, color: color)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 40)
-            .background(Capsule().fill(Palette.panelSolid))
-            .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
+        HoldableButton(action: action) {
+            GlyphView(name: glyph, color: color)
+                .frame(width: 48, height: 48)
+                .background(Circle().fill(isTinted ? color.opacity(0.14) : Palette.panel).background(Circle().fill(Palette.panelSolid)))
+                .overlay(Circle().stroke(isTinted ? color.opacity(0.55) : Palette.border, lineWidth: isTinted ? 1.5 : 1))
         }
-        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: sync.status)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.38)
+    }
+}
+
+struct SettingsButton: View {
+    @EnvironmentObject private var navigator: Navigator
+
+    var body: some View {
+        RoundIconButton(glyph: "settings", action: { navigator.show(.settings) })
+    }
+}
+
+struct TopBar<Trailing: View, Below: View>: View {
+    let title: String
+    var label: String?
+    var onBack: (() -> Void)?
+    var onTitle: (() -> Void)?
+    @ViewBuilder var trailing: () -> Trailing
+    @ViewBuilder var below: () -> Below
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 14) {
+                if let onBack {
+                    HoldableButton(action: onBack) {
+                        GlyphView(name: "back", color: Palette.navigation)
+                            .frame(width: 48, height: 48)
+                            .background(Circle().fill(Palette.panel))
+                            .overlay(Circle().stroke(Palette.border, lineWidth: 1))
+                    }
+                    .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
+                }
+                titles
+                Spacer(minLength: 12)
+                HStack(spacing: 14) {
+                    trailing()
+                }
+            }
+            HStack(spacing: 10) {
+                below()
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 16)
+        .background(GeometryReader { proxy in Color.clear.preference(key: TopBarHeightKey.self, value: proxy.frame(in: .global).maxY) })
+    }
+
+    @ViewBuilder
+    private var titles: some View {
+        let content = VStack(alignment: .leading, spacing: 4) {
+            if let label {
+                MicroLabel(text: label)
+            }
+            SweepTitle(text: title)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 9)
+        .padding(.bottom, 11)
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.panel))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.border, lineWidth: 1))
+        if let onTitle {
+            HoldableButton(pressedScale: 0.97, action: onTitle) {
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension TopBar where Below == EmptyView {
+    init(title: String, label: String? = nil, onBack: (() -> Void)? = nil, onTitle: (() -> Void)? = nil, @ViewBuilder trailing: @escaping () -> Trailing) {
+        self.title = title
+        self.label = label
+        self.onBack = onBack
+        self.onTitle = onTitle
+        self.trailing = trailing
+        self.below = { EmptyView() }
+    }
+}
+
+struct SearchField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            GlyphView(name: "search", color: Palette.textMuted, size: 18)
+            TextField("", text: $text, prompt: Text("Search").foregroundColor(Palette.textMuted))
+                .font(Typography.mono(14))
+                .foregroundColor(Palette.textPrimary)
+                .tint(Palette.accent)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($isFocused)
+                .submitLabel(.search)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    GlyphView(name: "close", color: Palette.textMuted, size: 16)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(PressableStyle())
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .frame(width: 260, height: 48)
+        .background(Capsule().fill(Palette.panel))
+        .overlay(Capsule().stroke(isFocused ? Palette.accent : Palette.borderControl, lineWidth: 1))
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: text.isEmpty)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isFocused)
     }
 }

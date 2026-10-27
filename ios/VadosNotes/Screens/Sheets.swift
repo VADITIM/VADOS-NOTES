@@ -1,9 +1,11 @@
 import NotesCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SheetHost: View {
     let request: SheetRequest
 
+    @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
 
     var body: some View {
@@ -11,24 +13,41 @@ struct SheetHost: View {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
-            Group {
-                switch request {
-                case .newNotebook:
-                    NameSheet(heading: "New notebook", initial: "", confirmTitle: "Create", confirmColor: Palette.create) { title in
-                        NameSheet.Action.create(title)
-                    }
-                case .rename(let notebookId, let title):
-                    NameSheet(heading: "Rename", initial: title, confirmTitle: "Rename", confirmColor: Palette.edit) { newTitle in
-                        NameSheet.Action.rename(notebookId, newTitle)
-                    }
-                case .sync:
-                    SyncSheet()
-                }
+            content
+                .frame(maxWidth: 560)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 32)
+                .transition(.overlay)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch request {
+        case .newFolder(let parentId):
+            NameSheet(heading: "New folder", initial: "", confirmTitle: "Create", confirmColor: Palette.create) { title in
+                let notebook = library.createNotebook(title: title, parent: parentId)
+                navigator.show(nil)
+                navigator.go(.notebook(notebook.id))
             }
-            .frame(maxWidth: 560)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 32)
-            .transition(.overlay)
+        case .renameFolder(let notebookId):
+            NameSheet(heading: "Rename folder", initial: library.notebook(notebookId)?.title ?? "", confirmTitle: "Rename", confirmColor: Palette.edit) { title in
+                library.updateNotebook(notebookId) { $0.title = title }
+                navigator.show(nil)
+            }
+        case .renameNote(let pageId):
+            NameSheet(heading: "Rename note", initial: library.page(pageId).map { library.noteTitle($0) } ?? "", confirmTitle: "Rename", confirmColor: Palette.edit) { title in
+                library.updatePage(pageId) { $0.title = title }
+                navigator.show(nil)
+            }
+        case .appearance(let target):
+            AppearanceSheet(target: target)
+        case .move(let target):
+            MoveSheet(target: target)
+        case .newNote(let notebookId):
+            NewNoteSheet(notebookId: notebookId)
+        case .settings:
+            SettingsSheet()
         }
     }
 }
@@ -86,20 +105,54 @@ struct SlabButton: View {
     }
 }
 
-struct NameSheet: View {
-    enum Action {
-        case create(String)
-        case rename(String, String)
-    }
+struct SegmentOption<Value: Hashable>: Hashable {
+    let value: Value
+    let title: String
+}
 
+struct Segmented<Value: Hashable>: View {
+    let options: [SegmentOption<Value>]
+    let selected: Value
+    let onPick: (Value) -> Void
+
+    @Namespace private var washSpace
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.value) { option in
+                Button {
+                    onPick(option.value)
+                } label: {
+                    Text(option.title.uppercased())
+                        .font(Typography.mono(12))
+                        .tracking(1.5)
+                        .foregroundColor(option.value == selected ? Palette.textBright : Palette.textMuted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background {
+                            if option.value == selected {
+                                Capsule().fill(Palette.pressedWash).matchedGeometryEffect(id: "wash", in: washSpace)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableStyle(pressedScale: 0.97))
+            }
+        }
+        .padding(4)
+        .frame(height: 46)
+        .background(Capsule().fill(Palette.sunkenDeep))
+        .overlay(Capsule().stroke(Palette.borderControl, lineWidth: 1))
+        .animation(Motion.powerTwoOut(Tokens.shared.motion.durations.navSlide), value: selected)
+    }
+}
+
+struct NameSheet: View {
     let heading: String
     let initial: String
     let confirmTitle: String
     let confirmColor: Color
-    let makeAction: (String) -> Action
+    let confirm: (String) -> Void
 
-    @EnvironmentObject private var library: Library
-    @EnvironmentObject private var navigator: Navigator
     @State private var title = ""
     @FocusState private var isFocused: Bool
 
@@ -109,13 +162,13 @@ struct NameSheet: View {
 
     var body: some View {
         SheetPanel(heading: heading) {
-            TextField("", text: $title, prompt: Text("Title").foregroundColor(Palette.textFaint))
+            TextField("", text: $title, prompt: Text("Name").foregroundColor(Palette.textFaint))
                 .modifier(FieldStyle())
                 .textInputAutocapitalization(.sentences)
                 .focused($isFocused)
                 .submitLabel(.done)
-                .onSubmit(confirm)
-            SlabButton(title: confirmTitle, color: confirmColor, isEnabled: !trimmed.isEmpty, action: confirm)
+                .onSubmit(submit)
+            SlabButton(title: confirmTitle, color: confirmColor, isEnabled: !trimmed.isEmpty, action: submit)
         }
         .onAppear {
             title = initial
@@ -123,23 +176,273 @@ struct NameSheet: View {
         }
     }
 
-    private func confirm() {
+    private func submit() {
         guard !trimmed.isEmpty else { return }
-        switch makeAction(trimmed) {
-        case .create(let name):
-            let notebook = library.createNotebook(title: name)
-            navigator.show(nil)
-            navigator.go(.notebook(notebook.id))
-        case .rename(let notebookId, let name):
-            library.rename(notebookId, to: name)
-            navigator.show(nil)
+        confirm(trimmed)
+    }
+}
+
+struct AppearanceSheet: View {
+    let target: TileTarget
+
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var navigator: Navigator
+
+    private var details: (title: String, color: String, icon: String)? {
+        switch target {
+        case .folder(let id):
+            guard let notebook = library.notebook(id) else { return nil }
+            let look = Looks.folder(notebook)
+            return (notebook.title, look.color, look.icon)
+        case .note(let id):
+            guard let page = library.page(id) else { return nil }
+            let look = Looks.note(page)
+            return (library.noteTitle(page), look.color, look.icon)
+        }
+    }
+
+    private func apply(color: String? = nil, icon: String? = nil) {
+        switch target {
+        case .folder(let id):
+            library.updateNotebook(id) { notebook in
+                if let color { notebook.color = color }
+                if let icon { notebook.icon = icon }
+            }
+        case .note(let id):
+            library.updatePage(id) { header in
+                if let color { header.color = color }
+                if let icon { header.icon = icon }
+            }
+        }
+    }
+
+    var body: some View {
+        let _ = library.revision
+        SheetPanel(heading: "Icon & colour") {
+            if let details {
+                HStack(spacing: 14) {
+                    GlyphView(name: details.icon, color: Color(hex: details.color), size: 28)
+                        .frame(width: 52, height: 52)
+                        .background(RoundedRectangle(cornerRadius: 16).fill(Palette.sunkenDeep))
+                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.borderControl, lineWidth: 1))
+                    Text(details.title)
+                        .font(Typography.heading(19))
+                        .foregroundColor(Palette.textBright)
+                        .lineLimit(1)
+                }
+                HStack(spacing: 4) {
+                    ForEach(Tokens.shared.folders.colors, id: \.self) { color in
+                        SwatchButton(color: Color(hex: color), isSelected: color.uppercased() == details.color.uppercased(), orientation: .horizontal, onSelect: { apply(color: color) })
+                    }
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 48), spacing: 6)], spacing: 6) {
+                    ForEach(Tokens.shared.folders.icons, id: \.self) { icon in
+                        Button {
+                            apply(icon: icon)
+                        } label: {
+                            GlyphView(name: icon, color: icon == details.icon ? Color(hex: details.color) : Palette.textMuted)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 48)
+                                .background(RoundedRectangle(cornerRadius: 14).fill(Palette.sunkenDeep))
+                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(icon == details.icon ? Color(hex: details.color) : .clear, lineWidth: 2))
+                        }
+                        .buttonStyle(PressableStyle())
+                    }
+                }
+            }
+            SlabButton(title: "Done", color: Palette.create) { navigator.show(nil) }
         }
     }
 }
 
-struct SyncSheet: View {
+struct MoveSheet: View {
+    let target: TileTarget
+
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
+
+    private struct Row: Identifiable {
+        let id: String
+        let notebook: Notebook?
+        let depth: Int
+    }
+
+    private func tree(_ parentId: String?, depth: Int) -> [Row] {
+        library.folders(in: parentId).flatMap { folder in
+            [Row(id: folder.id, notebook: folder, depth: depth)] + tree(folder.id, depth: depth + 1)
+        }
+    }
+
+    var body: some View {
+        let rows: [Row] = {
+            switch target {
+            case .folder: return [Row(id: "root", notebook: nil, depth: 0)] + tree(nil, depth: 0)
+            case .note: return tree(nil, depth: 0)
+            }
+        }()
+        SheetPanel(heading: "Move to") {
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(rows) { row in
+                        moveRow(row)
+                    }
+                }
+            }
+            .frame(maxHeight: 440)
+        }
+    }
+
+    private func state(of row: Row) -> (isCurrent: Bool, isEnabled: Bool) {
+        switch target {
+        case .folder(let id):
+            let destination = row.notebook?.id
+            let isCurrent = library.parent(of: id) == destination
+            return (isCurrent, !isCurrent && library.canMoveNotebook(id, into: destination))
+        case .note(let id):
+            let isCurrent = library.page(id)?.notebook == row.notebook?.id
+            return (isCurrent, !isCurrent && row.notebook != nil)
+        }
+    }
+
+    private func move(to row: Row) {
+        switch target {
+        case .folder(let id):
+            library.moveNotebook(id, into: row.notebook?.id)
+        case .note(let id):
+            if let destination = row.notebook?.id {
+                library.movePage(id, to: destination)
+            }
+        }
+        navigator.show(nil)
+    }
+
+    private func moveRow(_ row: Row) -> some View {
+        let rowState = state(of: row)
+        let isCurrent = rowState.isCurrent
+        let isEnabled = rowState.isEnabled
+        let look = Looks.folder(row.notebook)
+        return Button {
+            move(to: row)
+        } label: {
+            HStack(spacing: 12) {
+                GlyphView(name: row.notebook == nil ? "home" : look.icon, color: row.notebook == nil ? Palette.navigation : Color(hex: look.color), size: 18)
+                Text(row.notebook?.title ?? "Folders (top level)")
+                    .font(Typography.mono(13))
+                    .foregroundColor(Palette.textBright)
+                    .lineLimit(1)
+                Spacer()
+                if isCurrent {
+                    MicroLabel(text: "Here")
+                }
+            }
+            .padding(.leading, 16 + CGFloat(row.depth) * 22)
+            .padding(.trailing, 16)
+            .frame(minHeight: 48)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Palette.sunkenDeep))
+        }
+        .buttonStyle(PressableStyle(pressedScale: 0.98))
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
+    }
+}
+
+struct NewNoteSheet: View {
+    let notebookId: String
+
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var navigator: Navigator
+    @State private var title = ""
+    @State private var isPdf = false
+    @State private var document: ImportedDocument?
+    @State private var fileName: String?
+    @State private var detail = "No file chosen"
+    @State private var isFailed = false
+    @State private var isPicking = false
+    @FocusState private var isFocused: Bool
+
+    private var trimmed: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        SheetPanel(heading: "New note") {
+            TextField("", text: $title, prompt: Text("Name").foregroundColor(Palette.textFaint))
+                .modifier(FieldStyle())
+                .textInputAutocapitalization(.sentences)
+                .focused($isFocused)
+                .submitLabel(.done)
+                .onSubmit(create)
+            Segmented(options: [SegmentOption(value: false, title: "Blank"), SegmentOption(value: true, title: "PDF")], selected: isPdf) { value in
+                isPdf = value
+                if value && document == nil {
+                    isPicking = true
+                }
+            }
+            if isPdf {
+                Button {
+                    isPicking = true
+                } label: {
+                    HStack(spacing: 14) {
+                        GlyphView(name: "note_add", color: Palette.importAsset)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(fileName ?? "Choose PDF")
+                                .font(Typography.monoBold(14))
+                                .foregroundColor(Palette.textBright)
+                                .lineLimit(1)
+                            MicroLabel(text: detail, color: isFailed ? Palette.destructive : Palette.textMuted)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 60)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Palette.sunkenDeep))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.importAsset.opacity(0.45), lineWidth: 1.5))
+                }
+                .buttonStyle(PressableStyle(pressedScale: 0.98))
+                .transition(.opacity)
+            }
+            SlabButton(title: "Create", color: Palette.create, isEnabled: !trimmed.isEmpty && (!isPdf || document != nil), action: create)
+        }
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isPdf)
+        .fileImporter(isPresented: $isPicking, allowedContentTypes: [.pdf]) { result in
+            switch result {
+            case .success(let url):
+                fileName = url.lastPathComponent
+                do {
+                    let imported = try ImportImages.importDocument(from: url, into: library)
+                    document = imported
+                    isFailed = false
+                    detail = "\(imported.pages.count) page\(imported.pages.count == 1 ? "" : "s")"
+                    if trimmed.isEmpty || trimmed.hasPrefix("Note ") {
+                        title = url.deletingPathExtension().lastPathComponent
+                    }
+                } catch {
+                    document = nil
+                    isFailed = true
+                    detail = "Not a readable PDF"
+                }
+            case .failure:
+                break
+            }
+        }
+        .onAppear {
+            title = "Note \(library.pages(in: notebookId).count + 1)"
+            isFocused = true
+        }
+    }
+
+    private func create() {
+        guard !trimmed.isEmpty, !isPdf || document != nil else { return }
+        let page = library.createPage(in: notebookId, title: trimmed, document: isPdf ? document : nil)
+        navigator.show(nil)
+        navigator.go(.page(notebookId: notebookId, pageId: page.id))
+    }
+}
+
+struct SettingsSheet: View {
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var navigator: Navigator
+    @EnvironmentObject private var preferences: Preferences
     @State private var owner = ""
     @State private var repository = ""
     @State private var branch = "main"
@@ -147,35 +450,47 @@ struct SyncSheet: View {
     @State private var hasStoredToken = false
 
     var body: some View {
-        SheetPanel(heading: "Sync with GitHub") {
-            HStack(spacing: 10) {
-                TextField("", text: $owner, prompt: Text("Owner").foregroundColor(Palette.textFaint))
+        SheetPanel(heading: "Settings") {
+            VStack(alignment: .leading, spacing: 12) {
+                MicroLabel(text: "Paper", color: Palette.textMuted)
+                Segmented(options: [SegmentOption(value: PaperStyle.dark, title: "Dark"), SegmentOption(value: PaperStyle.light, title: "White")], selected: preferences.paperStyle) { style in
+                    preferences.setPaperStyle(style)
+                }
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    MicroLabel(text: "GitHub sync", color: Palette.textMuted)
+                    Spacer()
+                    MicroLabel(text: library.sync.status.label, color: Palette.textMuted)
+                }
+                HStack(spacing: 10) {
+                    TextField("", text: $owner, prompt: Text("Owner").foregroundColor(Palette.textFaint))
+                        .modifier(FieldStyle())
+                    Text("/")
+                        .font(Typography.mono(18))
+                        .foregroundColor(Palette.textFaint)
+                    TextField("", text: $repository, prompt: Text("Repository").foregroundColor(Palette.textFaint))
+                        .modifier(FieldStyle())
+                }
+                TextField("", text: $branch, prompt: Text("Branch").foregroundColor(Palette.textFaint))
                     .modifier(FieldStyle())
-                Text("/")
-                    .font(Typography.mono(18))
-                    .foregroundColor(Palette.textFaint)
-                TextField("", text: $repository, prompt: Text("Repository").foregroundColor(Palette.textFaint))
+                SecureField("", text: $token, prompt: Text(hasStoredToken ? "Token stored in Keychain" : "Fine-grained token").foregroundColor(Palette.textFaint))
                     .modifier(FieldStyle())
-            }
-            TextField("", text: $branch, prompt: Text("Branch").foregroundColor(Palette.textFaint))
-                .modifier(FieldStyle())
-            SecureField("", text: $token, prompt: Text(hasStoredToken ? "Token stored in Keychain" : "Fine-grained token").foregroundColor(Palette.textFaint))
-                .modifier(FieldStyle())
-            HStack {
-                MicroLabel(text: library.sync.status.label, color: Palette.textMuted)
-                Spacer()
-                MicroLabel(text: "\(library.store.journal.entries.count) queued")
-            }
-            if case .failed(let message) = library.sync.status {
-                Text(message)
-                    .font(Typography.mono(11))
-                    .foregroundColor(Palette.destructive)
-                    .lineLimit(3)
-            }
-            if !library.store.blockedPaths.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(library.store.blockedPaths.keys.sorted(), id: \.self) { path in
-                        MicroLabel(text: "\(library.store.blockedPaths[path]?.rawValue ?? "") · \(path)", color: Palette.destructive)
+                HStack {
+                    MicroLabel(text: "\(library.store.journal.entries.count) queued")
+                    Spacer()
+                }
+                if case .failed(let message) = library.sync.status {
+                    Text(message)
+                        .font(Typography.mono(11))
+                        .foregroundColor(Palette.destructive)
+                        .lineLimit(3)
+                }
+                if !library.store.blockedPaths.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(library.store.blockedPaths.keys.sorted(), id: \.self) { path in
+                            MicroLabel(text: "\(library.store.blockedPaths[path]?.rawValue ?? "") · \(path)", color: Palette.destructive)
+                        }
                     }
                 }
             }
