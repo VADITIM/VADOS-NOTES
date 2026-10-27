@@ -58,6 +58,7 @@ struct GridScreen: View {
     private let folderColumns = [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 18, alignment: .top)]
     private let noteColumns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 18, alignment: .top)]
     private static let dropEdgeShare: CGFloat = 0.22
+    private static let noteColumnWidth: CGFloat = 170
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -155,7 +156,14 @@ struct GridScreen: View {
         TopBar(
             title: title,
             label: label,
-            onBack: notebookId == nil ? nil : goBack
+            onBack: notebookId == nil ? nil : goBack,
+            onRename: notebookId.map { folderId -> (String) -> Void in
+                { title in
+                    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    library.updateNotebook(folderId) { $0.title = title }
+                }
+            }
         ) {
             SearchField(text: $query)
         }
@@ -190,14 +198,16 @@ struct GridScreen: View {
             heading("Notes")
                 .padding(.top, 12)
             groupRows(isFolders: false)
-            LazyVGrid(columns: noteColumns, alignment: .leading, spacing: 18) {
+            MasonryLayout(minimumColumnWidth: Self.noteColumnWidth, spacing: 18) {
                 AddTile(glyph: "note", title: "Add note", aspect: PaperGeometry.cellWidth / PaperGeometry.cellHeight, isFolder: false) {
                     navigator.show(.newNote(notebookId: notebookId))
                 }
                 ForEach(Array(notes.enumerated()), id: \.element.id) { index, page in
                     noteTile(page, rank: index + 1, isDraggable: true)
+                        .layoutValue(key: MasonrySpan.self, value: page.extent.columns)
                 }
             }
+            .animation(Motion.placement, value: notes.map(\.id))
             .padding(.horizontal, 28)
             .padding(.top, 12)
         }
@@ -215,7 +225,7 @@ struct GridScreen: View {
                 group: group,
                 caption: "\(group.members.count) \(isFolders ? "folder" : "note")\(group.members.count == 1 ? "" : "s")",
                 isOpen: openGroups.contains(group.id),
-                cardHeight: { cell in isFolders ? (cell - 28) / 1.25 + 28 + 12 + 48 : (cell - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + 18 },
+                cardHeight: { cell in isFolders ? (cell - 28) / 1.25 + 28 + 12 + 44 : (cell - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + 18 },
                 onToggle: { isOpen in
                     if isOpen {
                         openGroups.insert(group.id)
@@ -284,7 +294,7 @@ struct GridScreen: View {
 
     private func folderTile(_ folder: Notebook, rank: Int, isDraggable: Bool, isResult: Bool = false) -> some View {
         let caption = isResult && library.parent(of: folder.id) != nil ? library.path(of: library.parent(of: folder.id) ?? "") : summary(folder.id)
-        return FolderTile(notebook: folder, caption: caption, firstPage: library.pages(in: folder.id).first, rank: rank)
+        return FolderTile(notebook: folder, caption: caption, rank: rank)
             .modifier(TileBehaviour(
                 key: "folder:\(folder.id)",
                 isDraggable: isDraggable,
@@ -322,7 +332,7 @@ struct GridScreen: View {
             switch drag.kind {
             case .folder:
                 if let folder = library.notebook(drag.id) {
-                    FolderTile(notebook: folder, caption: summary(folder.id), firstPage: library.pages(in: folder.id).first, rank: 0)
+                    FolderTile(notebook: folder, caption: summary(folder.id), rank: 0)
                 }
             case .note:
                 if let page = library.page(drag.id) {
@@ -528,7 +538,7 @@ private struct TileBehaviour: ViewModifier {
         var interaction = callbacks
         interaction.onPress = { pressed in isPressed = pressed }
         return content
-            .modifier(PressPop(isPressed: isPressed))
+            .modifier(HoldPop(isPressed: isPressed))
             .scaleEffect(isTarget ? 1.04 : 1)
             .overlay(Squircle.panel.stroke(Palette.accent, lineWidth: 2).opacity(isTarget ? 1 : 0))
             .opacity(isSource ? 0.25 : 1)
@@ -590,37 +600,29 @@ struct AddTile: View {
 struct FolderTile: View {
     let notebook: Notebook
     let caption: String
-    let firstPage: Page?
     let rank: Int
 
     var body: some View {
         let look = Looks.folder(notebook)
+        let color = Color(hex: look.color)
         VStack(alignment: .leading, spacing: 12) {
-            ZStack {
-                Squircle.tile.fill(Palette.sunkenDeep)
-                if let firstPage {
-                    PageThumbnail(page: firstPage)
-                        .padding(10)
-                } else {
-                    GlyphView(name: look.icon, color: Color(hex: look.color), size: 44)
-                }
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Palette.sunkenDeep)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.35), lineWidth: 1))
+                .overlay(GlyphView(name: look.icon, color: color, size: 44))
+                .aspectRatio(1.25, contentMode: .fit)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notebook.title)
+                    .font(Typography.heading(19))
+                    .foregroundColor(Palette.textBright)
+                    .lineLimit(1)
+                MicroLabel(text: caption)
             }
-            .aspectRatio(1.25, contentMode: .fit)
-            HStack(alignment: .top, spacing: 10) {
-                GlyphView(name: look.icon, color: Color(hex: look.color), size: 22)
-                    .frame(width: 24, height: 26)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(notebook.title)
-                        .font(Typography.heading(19))
-                        .foregroundColor(Palette.textBright)
-                        .lineLimit(1)
-                    MicroLabel(text: caption)
-                }
-            }
+            .frame(height: 44, alignment: .topLeading)
         }
         .padding(14)
         .background(Squircle.panel.fill(Palette.panelSolid))
-        .overlay(Squircle.panel.stroke(Palette.border, lineWidth: 1))
+        .overlay(Squircle.panel.stroke(color, lineWidth: 1.5))
         .modifier(Appear(rank: rank))
     }
 }
@@ -696,5 +698,54 @@ struct PageThumbnail: View {
         renderedKey = key
         let options = RenderOptions(showsGuides: preferences.showsGuides, showsDividers: preferences.showsDividers, paperStyle: preferences.paperStyle, pixelScale: UIScreen.main.scale)
         image = PageRenderer.thumbnail(of: page, size: size, options: options)
+    }
+}
+
+struct MasonrySpan: LayoutValueKey {
+    static let defaultValue = 1
+}
+
+struct MasonryLayout: Layout {
+    let minimumColumnWidth: CGFloat
+    let spacing: CGFloat
+
+    private func columns(for width: CGFloat) -> (count: Int, width: CGFloat) {
+        let count = max(1, Int((width + spacing) / (minimumColumnWidth + spacing)))
+        return (count, (width - spacing * CGFloat(count - 1)) / CGFloat(count))
+    }
+
+    private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        let grid = columns(for: width)
+        var heights = Array(repeating: CGFloat(0), count: grid.count)
+        return subviews.map { subview in
+            let span = min(grid.count, max(1, subview[MasonrySpan.self]))
+            let tileWidth = grid.width * CGFloat(span) + spacing * CGFloat(span - 1)
+            let size = subview.sizeThatFits(ProposedViewSize(width: tileWidth, height: nil))
+            var bestColumn = 0
+            var bestTop = CGFloat.infinity
+            for column in 0...(grid.count - span) {
+                let top = heights[column..<(column + span)].max() ?? 0
+                if top < bestTop - 0.5 {
+                    bestTop = top
+                    bestColumn = column
+                }
+            }
+            for column in bestColumn..<(bestColumn + span) {
+                heights[column] = bestTop + size.height + spacing
+            }
+            return CGRect(x: CGFloat(bestColumn) * (grid.width + spacing), y: bestTop, width: tileWidth, height: size.height)
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? minimumColumnWidth * 3
+        let height = frames(width: width, subviews: subviews).map(\.maxY).max() ?? 0
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (subview, frame) in zip(subviews, frames(width: bounds.width, subviews: subviews)) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY), proposal: ProposedViewSize(width: frame.width, height: frame.height))
+        }
     }
 }

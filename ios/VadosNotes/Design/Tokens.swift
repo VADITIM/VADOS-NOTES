@@ -136,6 +136,7 @@ struct Tokens: Decodable {
         let stack: Int
         let riseDelay: Int
         let riseStagger: Int
+        let sheetDrop: Int
     }
 
     struct SpringToken: Decodable {
@@ -153,6 +154,8 @@ struct Tokens: Decodable {
         let pressPop: Double
         let held: Double
         let folderEnter: Double
+        let holdGrow: Double
+        let holdPop: Double
     }
 
     struct ShareTokens: Decodable {

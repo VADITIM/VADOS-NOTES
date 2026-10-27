@@ -10,9 +10,17 @@ final class LassoTests: XCTestCase {
         XCTAssertFalse(Lasso.contains([Point(x: 0, y: 0), Point(x: 10, y: 10)], Point(x: 5, y: 5)))
     }
 
-    func testEnclosesStrokesThatAreMostlyInside() {
-        XCTAssertTrue(Lasso.encloses(square, points: [Point(x: 10, y: 10), Point(x: 90, y: 90), Point(x: 120, y: 90)]))
-        XCTAssertFalse(Lasso.encloses(square, points: [Point(x: 10, y: 10), Point(x: 120, y: 90), Point(x: 130, y: 90)]))
+    func testTouchesStrokesWithAnyPointInsideOrCrossingTheLoop() {
+        XCTAssertTrue(Lasso.touches(square, line: [Point(x: 90, y: 90), Point(x: 120, y: 90), Point(x: 130, y: 90)]))
+        XCTAssertTrue(Lasso.touches(square, line: [Point(x: -20, y: 50), Point(x: 120, y: 50)]))
+        XCTAssertFalse(Lasso.touches(square, line: [Point(x: 120, y: 10), Point(x: 130, y: 90)]))
+    }
+
+    func testTouchesAreasThatOverlapTheLoop() {
+        XCTAssertTrue(Lasso.touches(square, area: [Point(x: 90, y: 90), Point(x: 200, y: 90), Point(x: 200, y: 200), Point(x: 90, y: 200)]))
+        XCTAssertTrue(Lasso.touches(square, area: [Point(x: -50, y: -50), Point(x: 150, y: -50), Point(x: 150, y: 150), Point(x: -50, y: 150)]))
+        XCTAssertTrue(Lasso.touches(square, area: [Point(x: 40, y: -20), Point(x: 60, y: -20), Point(x: 60, y: 120), Point(x: 40, y: 120)]))
+        XCTAssertFalse(Lasso.touches(square, area: [Point(x: 120, y: 0), Point(x: 140, y: 0), Point(x: 140, y: 20), Point(x: 120, y: 20)]))
     }
 
     func testTranslatedMovesPointsAndBoxes() {

@@ -46,6 +46,7 @@ struct PageScreen: View {
     @State private var topBarBottom: CGFloat = 0
     @State private var chromeFrames: [String: CGRect] = [:]
     @State private var subNavKey: String?
+    @State private var lastSubNavKey: String?
     @State private var panelKey: String?
     @State private var isDeleteArmed = false
     @State private var textFocusRequest = 0
@@ -58,6 +59,7 @@ struct PageScreen: View {
     private static let millimetresPerPoint = 0.35278
     private static let minimumTextWidth = 20.0
     private static let handleSize = CGSize(width: 8, height: 36)
+    private static let editorInset = EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22)
     private static let armedSeconds = 2.4
     private static let createdFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -115,6 +117,11 @@ struct PageScreen: View {
         .onChange(of: session?.element.id) { _, _ in
             subNavKey = nil
             panelKey = nil
+        }
+        .onChange(of: subNavKey) { _, key in
+            if let key {
+                lastSubNavKey = key
+            }
         }
         .onAppear(perform: startFlight)
     }
@@ -208,7 +215,7 @@ struct PageScreen: View {
         )
         .frame(width: CGFloat(box.width) * camera.scale)
         .fixedSize(horizontal: false, vertical: true)
-        .padding(6)
+        .padding(Self.editorInset)
         .overlay(Rectangle().stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
         .simultaneousGesture(textDrag(box: box, camera: camera, extent: extent) { origin, translation in
             TextBox(x: origin.x + translation.x, y: origin.y + translation.y, width: origin.width)
@@ -228,7 +235,7 @@ struct PageScreen: View {
                     TextBox(x: origin.x, y: origin.y, width: max(Self.minimumTextWidth, origin.width + translation.x))
                 })
         }
-        .offset(x: CGFloat(box.x) * camera.scale + camera.offset.x - 6, y: CGFloat(box.y) * camera.scale + camera.offset.y - 6)
+        .offset(x: CGFloat(box.x) * camera.scale + camera.offset.x - Self.editorInset.leading, y: CGFloat(box.y) * camera.scale + camera.offset.y - Self.editorInset.top)
     }
 
     private var textHandle: some View {
@@ -285,10 +292,7 @@ struct PageScreen: View {
             },
             onTextMove: { elementId, box in library.moveText(elementId, on: pageId, to: box) },
             onMoveElements: { ids, offset in library.moveElements(ids, on: pageId, by: offset) },
-            onInput: {
-                library.noteInput(on: pageId)
-                closeSubNav()
-            },
+            onInput: { library.noteInput(on: pageId) },
             onHold: { point in showPageMenu(at: point) },
             onHoldMove: { point in menu.drag(to: point) },
             onHoldEnd: { point in menu.release(at: point) },
@@ -337,7 +341,7 @@ struct PageScreen: View {
         if let session {
             let color = Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)
             return [[
-                NavItem(id: "text-size", caption: Self.pointSize(session.element.fontSize ?? preferences.textFontSize), label: "Font size", action: { _ in toggleSubNav("text-size") }),
+                NavItem(id: "text-size", caption: Self.pointSize(session.element.fontSize ?? preferences.textFontSize), label: "Font size", sizing: textSizing(), action: { _ in toggleSubNav("text-size") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
                 NavItem(id: "edit-text", glyph: "keyboard", label: "Edit", tint: Palette.edit, isTinted: true, action: { _ in textFocusRequest += 1 }),
             ], [
@@ -350,9 +354,9 @@ struct PageScreen: View {
             case .pen, .marker:
                 guard let tool = active.inkTool else { return nil }
                 let color = displayColor(tool)
-                return NavItem(id: active.rawValue, glyph: active.rawValue, label: active.rawValue.capitalized, tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, swatch: Color(hex: color), action: { _ in press(active) })
+                return NavItem(id: active.rawValue, glyph: active.rawValue, label: active.rawValue.capitalized, tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, swatch: Color(hex: color), sizing: inkSizing(tool), action: { _ in press(active) })
             case .eraser:
-                return NavItem(id: "eraser", glyph: "eraser", label: "Eraser", tint: Palette.destructive, action: { _ in press(.eraser) })
+                return NavItem(id: "eraser", glyph: "eraser", label: "Eraser", tint: Palette.destructive, sizing: eraserSizing(), action: { _ in press(.eraser) })
             case .text:
                 return NavItem(id: "text", glyph: "text", label: "Text", tint: Palette.accent, action: { _ in press(.text) })
             case .lasso:
@@ -361,6 +365,39 @@ struct PageScreen: View {
         }
         let more = [NavItem(id: "page-menu", glyph: "more", label: "Page menu", isTinted: subNavKey == "page-menu", action: { _ in toggleSubNav("page-menu") })]
         return [tools, more]
+    }
+
+    private func inkSizing(_ tool: Tool) -> NavSizing {
+        let range = Preferences.inkTokens(tool).widthRange ?? [0.2, 2]
+        return NavSizing(
+            share: Self.share(preferences.width(tool), range),
+            color: Color(hex: displayColor(tool)).opacity(max(0.6, Preferences.inkTokens(tool).opacity)),
+            previewDiameter: Self.previewDiameter,
+            caption: { share in Self.pixelCaption(Self.value(share, range)) },
+            onChange: { share in preferences.setWidth(Self.value(share, range), for: tool) }
+        )
+    }
+
+    private func eraserSizing() -> NavSizing {
+        let range = Tokens.shared.tools.eraser.radiusRange
+        return NavSizing(
+            share: Self.share(preferences.eraserRadius, range),
+            color: Palette.destructive.opacity(0.85),
+            previewDiameter: Self.previewDiameter,
+            caption: { share in Self.pixelCaption(Self.value(share, range) * 2) },
+            onChange: { share in preferences.setEraserRadius(Self.value(share, range)) }
+        )
+    }
+
+    private func textSizing() -> NavSizing {
+        let range = Tokens.shared.text.fontSizeRange
+        return NavSizing(
+            share: Self.share(session?.element.fontSize ?? preferences.textFontSize, range),
+            color: Palette.textBright,
+            previewDiameter: Self.previewDiameter,
+            caption: { share in Self.pointSize(Self.value(share, range)) + "pt" },
+            onChange: { share in chooseTextSize(Self.value(share, range)) }
+        )
     }
 
     private func press(_ tool: ActiveTool) {
@@ -434,7 +471,7 @@ struct PageScreen: View {
     }
 
     private var orderedSubNavigationGroups: [SubNavigationGroup] {
-        guard let key = subNavKey else { return [] }
+        guard let key = subNavKey ?? lastSubNavKey else { return [] }
         let groups = subNavigationGroups(key)
         let order = preferences.subNavigationOrder(key)
         return order.compactMap { id in groups.first { $0.id == id } } + groups.filter { !order.contains($0.id) }
@@ -467,10 +504,6 @@ struct PageScreen: View {
         orientation == .horizontal ? AnyLayout(HStackLayout(spacing: spacing)) : AnyLayout(VStackLayout(spacing: spacing))
     }
 
-    private func crossStack(_ orientation: NavOrientation) -> AnyLayout {
-        orientation == .horizontal ? AnyLayout(VStackLayout(spacing: 4 * NavMetrics.scale)) : AnyLayout(HStackLayout(spacing: 4 * NavMetrics.scale))
-    }
-
     private func inkGroups(_ tool: Tool) -> [SubNavigationGroup] {
         let range = Preferences.inkTokens(tool).widthRange ?? [0.2, 2]
         let width = preferences.width(tool)
@@ -480,20 +513,14 @@ struct PageScreen: View {
         let colors = preferences.colorPresets(tool)
         return [
             group("\(tool.rawValue)-sizes") { orientation in
-                let crossLayout = crossStack(orientation)
-                crossLayout {
-                    SizeSlider(orientation: orientation, share: Self.share(width, range), previewDiameter: Self.previewDiameter(Self.share(width, range)), previewColor: inkColor) { share in
-                        preferences.setWidth(Self.value(share, range), for: tool)
+                let layout = stack(orientation)
+                layout {
+                    ForEach(presets, id: \.self) { preset in
+                        SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, caption: Self.pixelCaption(preset), orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
+                            .transition(.pop)
                     }
-                    let layout = stack(orientation)
-                    layout {
-                        ForEach(presets, id: \.self) { preset in
-                            SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, caption: Self.pixelCaption(preset), orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
-                                .transition(.pop)
-                        }
-                        NavIconButton(glyph: "plus", isEnabled: !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
-                            preferences.addWidthPreset(width, for: tool)
-                        }
+                    NavIconButton(glyph: "plus", isEnabled: !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
+                        preferences.addWidthPreset(width, for: tool)
                     }
                 }
             },
@@ -516,14 +543,7 @@ struct PageScreen: View {
     }
 
     private func eraserGroups() -> [SubNavigationGroup] {
-        let range = Tokens.shared.tools.eraser.radiusRange
-        let share = Self.share(preferences.eraserRadius, range)
-        return [
-            group("eraser-size") { orientation in
-                SizeSlider(orientation: orientation, share: share, previewDiameter: Self.previewDiameter(share), previewColor: Palette.destructive.opacity(0.85)) { next in
-                    preferences.setEraserRadius(Self.value(next, range))
-                }
-            },
+        [
             group("eraser-modes") { orientation in
                 let layout = stack(orientation)
                 layout {
@@ -544,21 +564,13 @@ struct PageScreen: View {
     }
 
     private func textSizeGroup() -> SubNavigationGroup {
-        let range = Tokens.shared.text.fontSizeRange
         let size = session?.element.fontSize ?? preferences.textFontSize
-        let share = Self.share(size, range)
         return group("text-sizes") { orientation in
-            let crossLayout = crossStack(orientation)
-            crossLayout {
-                SizeSlider(orientation: orientation, share: share, previewDiameter: Self.previewDiameter(share), previewColor: Palette.textBright) { next in
-                    chooseTextSize(Self.value(next, range))
-                }
-                let layout = stack(orientation)
-                layout {
-                    ForEach(Tokens.shared.text.fontSizePresets, id: \.self) { preset in
-                        CaptionButton(caption: Self.pointSize(preset), isSelected: Self.pointSize(preset) == Self.pointSize(size), ring: ("text-size-ring", ringSpace)) {
-                            chooseTextSize(preset)
-                        }
+            let layout = stack(orientation)
+            layout {
+                ForEach(Tokens.shared.text.fontSizePresets, id: \.self) { preset in
+                    CaptionButton(caption: Self.pointSize(preset), isSelected: Self.pointSize(preset) == Self.pointSize(size), ring: ("text-size-ring", ringSpace)) {
+                        chooseTextSize(preset)
                     }
                 }
             }

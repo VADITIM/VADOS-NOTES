@@ -24,10 +24,12 @@ final class TileTouchView: UIView, UIGestureRecognizerDelegate {
         addGestureRecognizer(tap)
         let secondary = UITapGestureRecognizer(target: self, action: #selector(handleSecondary(_:)))
         secondary.buttonMaskRequired = .secondary
+        secondary.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         addGestureRecognizer(secondary)
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(handleHold(_:)))
         hold.minimumPressDuration = Motion.seconds(Motion.menuHoldMilliseconds)
         hold.allowableMovement = 10
+        hold.cancelsTouchesInView = false
         hold.delegate = self
         addGestureRecognizer(hold)
     }

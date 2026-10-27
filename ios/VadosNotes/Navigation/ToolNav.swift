@@ -9,7 +9,16 @@ struct NavItem: Identifiable {
     var isTinted = false
     var isEnabled = true
     var swatch: Color?
+    var sizing: NavSizing?
     var action: (CGRect) -> Void
+}
+
+struct NavSizing {
+    let share: Double
+    let color: Color
+    let previewDiameter: (Double) -> CGFloat
+    let caption: (Double) -> String
+    let onChange: (Double) -> Void
 }
 
 struct SubNavigationGroup: Identifiable {
@@ -55,7 +64,7 @@ private struct GroupExtentKey: PreferenceKey {
 }
 
 enum NavMetrics {
-    static let scale: CGFloat = 1.7
+    static let scale: CGFloat = 1
     static let edgeMargin: CGFloat = 16
     static let bottomGap: CGFloat = 24
     static let besideGap: CGFloat = 10
@@ -64,6 +73,7 @@ enum NavMetrics {
     static let spacing: CGFloat = 2 * scale
     static let glyphSize: CGFloat = 22 * scale
     static let gripLength: CGFloat = 18 * scale
+    static let sizingSlop: CGFloat = 6
     static let layerSpace = "navLayer"
 
     static func itemSize(_ orientation: NavOrientation) -> CGSize {
@@ -84,9 +94,38 @@ enum NavSide {
 
 private struct Reordering {
     let id: String
+    let start: [String]
     var order: [String]
-    var anchor: CGFloat
+    let anchor: CGFloat
+    var drag: CGFloat
+
+    func positions(_ ids: [String], extent: (String) -> CGFloat) -> [String: CGFloat] {
+        var result: [String: CGFloat] = [:]
+        var position: CGFloat = 0
+        for id in ids {
+            result[id] = position
+            position += extent(id)
+        }
+        return result
+    }
+
+    func shift(_ itemId: String, extent: (String) -> CGFloat) -> CGFloat {
+        (positions(order, extent: extent)[itemId] ?? 0) - (positions(start, extent: extent)[itemId] ?? 0)
+    }
+
+    func offset(_ itemId: String, extent: (String) -> CGFloat) -> CGFloat {
+        itemId == id ? drag : shift(itemId, extent: extent)
+    }
+}
+
+private struct Settling {
+    let id: String
     var offset: CGFloat
+}
+
+private struct SizingDrag {
+    let id: String
+    let startShare: Double
 }
 
 struct ToolNav<PanelContent: View>: View {
@@ -114,9 +153,15 @@ struct ToolNav<PanelContent: View>: View {
     @State private var carryGrab: CGSize = .zero
     @State private var swallowUntil = Date.distantPast
     @State private var shownSubNavigationKey: String?
-    @State private var isRetracting = false
+    @State private var shellScale: CGFloat = 0
+    @State private var shellSpread: CGFloat = 0
+    @State private var areElementsShown = false
+    @State private var subNavigationStep = 0
     @State private var toolReordering: Reordering?
     @State private var groupReordering: Reordering?
+    @State private var toolSettling: Settling?
+    @State private var groupSettling: Settling?
+    @State private var sizingDrag: SizingDrag?
 
     private enum Entry: Identifiable {
         case item(NavItem)
@@ -131,7 +176,7 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private var toolIds: [String] {
-        toolReordering?.order ?? groups.first?.map(\.id) ?? []
+        toolReordering?.start ?? groups.first?.map(\.id) ?? []
     }
 
     private var entries: [Entry] {
@@ -150,8 +195,25 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private var orderedSubNavigationGroups: [SubNavigationGroup] {
-        guard let order = groupReordering?.order else { return subNavigationGroups }
+        guard let order = groupReordering?.start else { return subNavigationGroups }
         return order.compactMap { id in subNavigationGroups.first { $0.id == id } }
+    }
+
+    private var isSubNavigationWanted: Bool {
+        subNavKey != nil && carryPoint == nil && isShown
+    }
+
+    private var sizingItem: NavItem? {
+        guard let sizingDrag else { return nil }
+        return groups.joined().first { $0.id == sizingDrag.id }
+    }
+
+    private var toolExtent: CGFloat {
+        NavMetrics.along(NavMetrics.itemSize(orientation), orientation) + NavMetrics.spacing
+    }
+
+    private func groupExtent(_ id: String) -> CGFloat {
+        NavMetrics.along(groupSizes[id] ?? .zero, orientation) + NavSeparator.extent + NavMetrics.spacing * 2
     }
 
     var body: some View {
@@ -165,19 +227,22 @@ struct ToolNav<PanelContent: View>: View {
             let subNavCenter = placeBeside(navigationRect, size: subNavSize, side: side, layer: layer, blocked: blocked + [navigationRect])
             let subNavRect = rect(center: subNavCenter, size: subNavSize)
             ZStack(alignment: .topLeading) {
-                if shownSubNavigationKey != nil, carryPoint == nil, isShown {
-                    subNavBody
-                        .position(subNavCenter)
-                        .transition(.popTogether)
-                    if let panelKey, !isRetracting {
+                ZStack {
+                    if shownSubNavigationKey != nil {
+                        subNavBody
+                    }
+                }
+                .position(subNavCenter)
+                ZStack {
+                    if panelKey != nil, isSubNavigationWanted {
                         panel()
                             .fixedSize()
                             .background(GeometryReader { panelProxy in Color.clear.preference(key: PanelSizeKey.self, value: panelProxy.size) })
                             .id(panelKey)
-                            .position(placeBeside(subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
                             .transition(.popTogether)
                     }
                 }
+                .position(placeBeside(subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
                 navBody(layer: layer, center: center)
                     .position(center)
             }
@@ -192,31 +257,87 @@ struct ToolNav<PanelContent: View>: View {
         .onAppear {
             placement = Preferences.shared.navPlacement
             orientation = placement?.orientation == NavOrientation.vertical.rawValue ? .vertical : .horizontal
-            shownSubNavigationKey = subNavKey
+            if isSubNavigationWanted {
+                openSubNavigation()
+            }
+        }
+        .onChange(of: isSubNavigationWanted) { _, isWanted in
+            if isWanted {
+                openSubNavigation()
+            } else {
+                closeSubNavigation()
+            }
         }
         .onChange(of: subNavKey) { _, key in
-            if key != nil {
-                withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
-                    isRetracting = false
-                    shownSubNavigationKey = key
-                }
-                return
+            if key != nil, isSubNavigationWanted {
+                shownSubNavigationKey = key
+            }
+        }
+    }
+
+    private func openSubNavigation() {
+        subNavigationStep += 1
+        let wasHidden = shownSubNavigationKey == nil
+        shownSubNavigationKey = subNavKey
+        guard wasHidden else {
+            withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+                shellScale = 1
             }
             withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds)) {
-                isRetracting = true
+                shellSpread = 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.stateMilliseconds)) {
-                guard subNavKey == nil else { return }
-                withAnimation(Motion.backIn(Motion.stateMilliseconds)) {
-                    shownSubNavigationKey = nil
-                    isRetracting = false
-                }
+            areElementsShown = true
+            return
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            shellScale = 0
+            shellSpread = 0
+            areElementsShown = false
+        }
+        DispatchQueue.main.async {
+            withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+                shellScale = 1
             }
+            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds)) {
+                shellSpread = 1
+            }
+            areElementsShown = true
+        }
+    }
+
+    private func closeSubNavigation() {
+        guard shownSubNavigationKey != nil else { return }
+        subNavigationStep += 1
+        let step = subNavigationStep
+        let elementCount = max(1, subNavigationGroups.count * 2 - 1)
+        let elementsGone = Motion.stateMilliseconds + (elementCount - 1) * Motion.chromeStaggerMilliseconds
+        areElementsShown = false
+        func after(_ milliseconds: Int, _ change: @escaping () -> Void) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(milliseconds)) {
+                guard step == subNavigationStep else { return }
+                change()
+            }
+        }
+        after(elementsGone) {
+            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds)) {
+                shellSpread = 0
+            }
+        }
+        after(elementsGone + Motion.stateMilliseconds) {
+            withAnimation(Motion.backIn(Motion.stateMilliseconds)) {
+                shellScale = 0
+            }
+        }
+        after(elementsGone + Motion.stateMilliseconds * 2) {
+            shownSubNavigationKey = nil
         }
     }
 
     private func navBody(layer: CGSize, center: CGPoint) -> some View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
+        let isSizing = sizingDrag != nil
         return layout {
             grip(layer: layer, center: center)
             ForEach(entries) { entry in
@@ -231,8 +352,18 @@ struct ToolNav<PanelContent: View>: View {
             }
             grip(layer: layer, center: center)
         }
+        .opacity(isSizing ? 0 : 1)
+        .scaleEffect(isSizing ? 0.6 : 1)
+        .overlay {
+            ZStack {
+                if let item = sizingItem, let sizing = item.sizing {
+                    NavSizeSlider(orientation: orientation, share: sizing.share, color: sizing.color, previewDiameter: sizing.previewDiameter(sizing.share), caption: sizing.caption(sizing.share))
+                        .transition(.popTogether)
+                }
+            }
+        }
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSizing)
         .animation(Motion.wash, value: selectedId)
-        .animation(Motion.placement, value: toolIds)
         .padding(NavMetrics.padding)
         .background(Capsule().fill(Palette.panelSolid))
         .overlay(Capsule().stroke(carryPoint == nil ? Palette.border : Palette.accent, lineWidth: 1))
@@ -255,13 +386,21 @@ struct ToolNav<PanelContent: View>: View {
             .accessibilityLabel("Move the nav")
     }
 
+    private func toolOffset(_ id: String) -> CGFloat {
+        if let toolSettling, toolSettling.id == id {
+            return toolSettling.offset
+        }
+        return toolReordering?.offset(id) { _ in toolExtent } ?? 0
+    }
+
     private func itemButton(_ item: NavItem) -> some View {
         let isSelected = item.id == selectedId
         let color = isSelected || item.isTinted ? item.tint : Palette.textBody
         let size = NavMetrics.itemSize(orientation)
         let isTool = groups.first?.contains { $0.id == item.id } ?? false
         let isLifted = toolReordering?.id == item.id
-        return HoldableButton(action: {}, onTapAt: { frame in
+        let offset = isTool ? toolOffset(item.id) : 0
+        return HoldableButton(action: {}, isHoldable: isTool, onTapAt: { frame in
             guard Date() >= swallowUntil else { return }
             item.action(frame)
         }) {
@@ -292,53 +431,69 @@ struct ToolNav<PanelContent: View>: View {
         .disabled(!item.isEnabled)
         .opacity(item.isEnabled ? 1 : 0.38)
         .scaleEffect(isLifted ? CGFloat(Motion.scales.held) : 1)
-        .offset(x: isLifted && orientation == .horizontal ? toolReordering?.offset ?? 0 : 0, y: isLifted && orientation == .vertical ? toolReordering?.offset ?? 0 : 0)
-        .zIndex(isLifted ? 1 : 0)
-        .transaction { transaction in
-            if isLifted {
-                transaction.animation = nil
-            }
-        }
+        .offset(x: orientation == .horizontal ? offset : 0, y: orientation == .vertical ? offset : 0)
+        .zIndex(isLifted || toolSettling?.id == item.id ? 1 : 0)
+        .animation(isLifted ? nil : Motion.placement, value: offset)
         .simultaneousGesture(isTool ? toolReorderGesture(item.id) : nil)
+        .simultaneousGesture(item.sizing == nil ? nil : sizingGesture(item))
         .accessibilityLabel(item.label)
     }
 
     private var subNavBody: some View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
-        let shown = isRetracting ? [] : orderedSubNavigationGroups
+        let shown = orderedSubNavigationGroups
+        let count = max(1, shown.count * 2 - 1)
         return layout {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, group in
                 if index > 0 {
                     NavSeparator(orientation: orientation)
-                        .transition(.pop)
+                        .modifier(StaggeredRotatePop(isShown: areElementsShown, order: index * 2 - 1, count: count, enterDelay: Motion.stateMilliseconds * 2))
+                        .transition(.rotatePop)
                 }
                 subNavigationGroup(group)
-                    .transition(.pop)
+                    .modifier(StaggeredRotatePop(isShown: areElementsShown, order: index * 2, count: count, enterDelay: Motion.stateMilliseconds * 2))
+                    .transition(.rotatePop)
             }
         }
-        .animation(Motion.placement, value: groupReordering?.order)
         .padding(NavMetrics.padding)
-        .background(Capsule().fill(Palette.panelSolid))
-        .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
         .fixedSize()
         .animation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2), value: shown.map(\.id))
         .background(GeometryReader { subProxy in Color.clear.preference(key: SubNavSizeKey.self, value: subProxy.size) })
+        .background(subNavShell)
+    }
+
+    private var subNavShell: some View {
+        GeometryReader { proxy in
+            let full = proxy.size
+            let isWide = orientation == .horizontal
+            let thickness = isWide ? full.height : full.width
+            let along = thickness + ((isWide ? full.width : full.height) - thickness) * shellSpread
+            Capsule()
+                .fill(Palette.panelSolid)
+                .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
+                .frame(width: isWide ? along : thickness, height: isWide ? thickness : along)
+                .scaleEffect(shellScale)
+                .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
+                .frame(width: full.width, height: full.height)
+        }
+    }
+
+    private func groupOffset(_ id: String) -> CGFloat {
+        if let groupSettling, groupSettling.id == id {
+            return groupSettling.offset
+        }
+        return groupReordering?.offset(id, extent: groupExtent) ?? 0
     }
 
     private func subNavigationGroup(_ group: SubNavigationGroup) -> some View {
         let isLifted = groupReordering?.id == group.id
-        let offset = isLifted ? groupReordering?.offset ?? 0 : 0
+        let offset = groupOffset(group.id)
         return group.content(orientation)
             .background(GeometryReader { groupProxy in Color.clear.preference(key: GroupExtentKey.self, value: [group.id: groupProxy.size]) })
             .scaleEffect(isLifted ? CGFloat(Motion.scales.held) : 1)
             .offset(x: orientation == .horizontal ? offset : 0, y: orientation == .vertical ? offset : 0)
-            .zIndex(isLifted ? 1 : 0)
-            .transaction { transaction in
-                if isLifted {
-                    transaction.animation = nil
-                }
-            }
+            .zIndex(isLifted || groupSettling?.id == group.id ? 1 : 0)
+            .animation(isLifted ? nil : Motion.placement, value: offset)
             .simultaneousGesture(groupReorderGesture(group.id))
     }
 
@@ -346,29 +501,48 @@ struct ToolNav<PanelContent: View>: View {
         orientation == .horizontal ? point.x : point.y
     }
 
+    private func sizingGesture(_ item: NavItem) -> some Gesture {
+        DragGesture(minimumDistance: NavMetrics.sizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+            .onChanged { value in
+                guard toolReordering == nil, let sizing = item.sizing else { return }
+                if sizingDrag == nil {
+                    swallowUntil = .distantFuture
+                    Haptics.tick()
+                    sizingDrag = SizingDrag(id: item.id, startShare: sizing.share)
+                }
+                guard let sizingDrag else { return }
+                let delta = orientation == .horizontal ? value.translation.width : -value.translation.height
+                let travel = max(1, NavMetrics.along(navSize, orientation) - NavMetrics.padding * 2 - NavSizeSlider.knob)
+                sizing.onChange(min(1, max(0, sizingDrag.startShare + Double(delta / travel))))
+            }
+            .onEnded { _ in
+                guard sizingDrag != nil else { return }
+                Haptics.landed()
+                sizingDrag = nil
+                swallowUntil = Date().addingTimeInterval(0.6)
+            }
+    }
+
     private func toolReorderGesture(_ id: String) -> some Gesture {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.menuHoldMilliseconds), maximumDistance: 10)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
             .onChanged { value in
-                guard case .second(true, let drag) = value, let drag else { return }
+                guard case .second(true, let drag) = value, let drag, sizingDrag == nil else { return }
                 if toolReordering == nil {
                     swallowUntil = .distantFuture
                     Haptics.hold()
-                    toolReordering = Reordering(id: id, order: toolIds, anchor: axisValue(drag.location), offset: 0)
+                    toolReordering = Reordering(id: id, start: toolIds, order: toolIds, anchor: axisValue(drag.location), drag: 0)
                 }
                 guard var reordering = toolReordering else { return }
-                let extent = NavMetrics.along(NavMetrics.itemSize(orientation), orientation) + NavMetrics.spacing
-                reordering.offset = axisValue(drag.location) - reordering.anchor
-                stepReordering(&reordering, extentAfter: { _ in extent }, extentBefore: { _ in extent })
+                reordering.drag = axisValue(drag.location) - reordering.anchor
+                stepReordering(&reordering) { _ in toolExtent }
                 toolReordering = reordering
             }
             .onEnded { _ in
-                if let order = toolReordering?.order {
-                    onReorderTools(order)
-                    Haptics.landed()
-                }
-                withAnimation(Motion.placement) {
-                    toolReordering = nil
+                guard let reordering = toolReordering else { return }
+                let residual = reordering.drag - reordering.shift(reordering.id) { _ in toolExtent }
+                settle(id: reordering.id, residual: residual, isTool: true) {
+                    onReorderTools(reordering.order)
                 }
                 swallowUntil = Date().addingTimeInterval(0.6)
             }
@@ -381,43 +555,69 @@ struct ToolNav<PanelContent: View>: View {
                 guard case .second(true, let drag) = value, let drag else { return }
                 if groupReordering == nil {
                     Haptics.hold()
-                    groupReordering = Reordering(id: id, order: subNavigationGroups.map(\.id), anchor: axisValue(drag.location), offset: 0)
+                    let order = subNavigationGroups.map(\.id)
+                    groupReordering = Reordering(id: id, start: order, order: order, anchor: axisValue(drag.location), drag: 0)
                 }
                 guard var reordering = groupReordering else { return }
-                let separator = NavSeparator.extent + NavMetrics.spacing * 2
-                let extent: (String) -> CGFloat = { groupId in NavMetrics.along(groupSizes[groupId] ?? .zero, orientation) + separator }
-                reordering.offset = axisValue(drag.location) - reordering.anchor
-                stepReordering(&reordering, extentAfter: extent, extentBefore: extent)
+                reordering.drag = axisValue(drag.location) - reordering.anchor
+                stepReordering(&reordering, extent: groupExtent)
                 groupReordering = reordering
             }
             .onEnded { _ in
-                if let order = groupReordering?.order {
-                    onReorderSubNavigation(order)
-                    Haptics.landed()
-                }
-                withAnimation(Motion.placement) {
-                    groupReordering = nil
+                guard let reordering = groupReordering else { return }
+                let residual = reordering.drag - reordering.shift(reordering.id, extent: groupExtent)
+                settle(id: reordering.id, residual: residual, isTool: false) {
+                    onReorderSubNavigation(reordering.order)
                 }
             }
     }
 
-    private func stepReordering(_ reordering: inout Reordering, extentAfter: (String) -> CGFloat, extentBefore: (String) -> CGFloat) {
+    private func settle(id: String, residual: CGFloat, isTool: Bool, commit: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            commit()
+            if isTool {
+                toolReordering = nil
+                toolSettling = Settling(id: id, offset: residual)
+            } else {
+                groupReordering = nil
+                groupSettling = Settling(id: id, offset: residual)
+            }
+        }
+        Haptics.landed()
+        DispatchQueue.main.async {
+            withAnimation(Motion.placement) {
+                if isTool {
+                    toolSettling?.offset = 0
+                } else {
+                    groupSettling?.offset = 0
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.stateMilliseconds * 2)) {
+                if isTool {
+                    toolSettling = nil
+                } else {
+                    groupSettling = nil
+                }
+            }
+        }
+    }
+
+    private func stepReordering(_ reordering: inout Reordering, extent: (String) -> CGFloat) {
+        func relative(_ reordering: Reordering) -> CGFloat {
+            reordering.drag - reordering.shift(reordering.id, extent: extent)
+        }
         while let index = reordering.order.firstIndex(of: reordering.id), index < reordering.order.count - 1 {
             let neighbour = reordering.order[index + 1]
-            let extent = extentAfter(neighbour)
-            guard reordering.offset > extent / 2 else { break }
+            guard relative(reordering) > extent(neighbour) / 2 else { break }
             reordering.order.swapAt(index, index + 1)
-            reordering.anchor += extent
-            reordering.offset -= extent
             Haptics.segment()
         }
         while let index = reordering.order.firstIndex(of: reordering.id), index > 0 {
             let neighbour = reordering.order[index - 1]
-            let extent = extentBefore(neighbour)
-            guard reordering.offset < -extent / 2 else { break }
+            guard relative(reordering) < -extent(neighbour) / 2 else { break }
             reordering.order.swapAt(index, index - 1)
-            reordering.anchor -= extent
-            reordering.offset += extent
             Haptics.segment()
         }
     }

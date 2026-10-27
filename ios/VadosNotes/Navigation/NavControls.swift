@@ -69,6 +69,51 @@ struct SizeSlider: View {
     }
 }
 
+struct NavSizeSlider: View {
+    let orientation: NavOrientation
+    let share: Double
+    let color: Color
+    let previewDiameter: CGFloat
+    let caption: String
+
+    static let knob: CGFloat = 34
+
+    private var isVertical: Bool { orientation == .vertical }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let length = isVertical ? proxy.size.height : proxy.size.width
+            let travel = max(1, length - Self.knob)
+            ZStack(alignment: isVertical ? .bottom : .leading) {
+                Capsule()
+                    .fill(Palette.borderStrong)
+                    .frame(width: isVertical ? 6 : travel, height: isVertical ? travel : 6)
+                    .overlay(alignment: isVertical ? .bottom : .leading) {
+                        Capsule()
+                            .fill(Palette.accent)
+                            .frame(width: isVertical ? nil : travel * share, height: isVertical ? travel * share : nil)
+                    }
+                    .padding(isVertical ? .vertical : .horizontal, Self.knob / 2)
+                Circle()
+                    .fill(Palette.raised)
+                    .overlay(Circle().stroke(Palette.accent, lineWidth: 1.5))
+                    .overlay(Circle().fill(color).frame(width: previewDiameter, height: previewDiameter))
+                    .frame(width: Self.knob, height: Self.knob)
+                    .overlay(alignment: isVertical ? .leading : .top) {
+                        Text(caption)
+                            .font(Typography.mono(10))
+                            .foregroundColor(Palette.textBright)
+                            .fixedSize()
+                            .offset(x: isVertical ? Self.knob + 6 : 0, y: isVertical ? 0 : -16)
+                    }
+                    .offset(x: isVertical ? 0 : travel * share, y: isVertical ? -travel * share : 0)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: isVertical ? .bottom : .leading)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 struct SelectionRing: View {
     let id: String
     let space: Namespace.ID

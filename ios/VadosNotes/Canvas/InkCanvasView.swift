@@ -182,17 +182,18 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
 
         let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap))
         undoTap.numberOfTouchesRequired = 2
-        undoTap.numberOfTapsRequired = 2
+        undoTap.numberOfTapsRequired = 1
         undoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         undoTap.delegate = self
         addGestureRecognizer(undoTap)
 
         let redoTap = UITapGestureRecognizer(target: self, action: #selector(handleRedoTap))
         redoTap.numberOfTouchesRequired = 3
-        redoTap.numberOfTapsRequired = 2
+        redoTap.numberOfTapsRequired = 1
         redoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         redoTap.delegate = self
         addGestureRecognizer(redoTap)
+        undoTap.require(toFail: redoTap)
 
         importObserver = NotificationCenter.default.addObserver(forName: ImportImages.didRender, object: nil, queue: .main) { [weak self] _ in
             self?.setNeedsDisplay()
@@ -492,7 +493,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         if activeTouch != nil {
             cancelActiveGesture()
         }
-        camera = camera.zoomed(by: pinch.scale, around: pinch.location(in: self))
+        let smallest = page.map { CanvasCamera.smallestScale(for: $0.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset) } ?? 0
+        let factor = max(pinch.scale, smallest / camera.scale)
+        if abs(factor - 1) > 1e-6 {
+            camera = camera.zoomed(by: factor, around: pinch.location(in: self))
+        }
         pinch.scale = 1
         cameraChanged()
     }
@@ -715,11 +720,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private func isEnclosed(_ element: Element, by polygon: [Point]) -> Bool {
         switch element.type {
         case .stroke:
-            return Lasso.encloses(polygon, points: element.points ?? [])
+            return Lasso.touches(polygon, line: element.points ?? [])
         case .text, .importPage:
             guard let rect = elementBounds(element) else { return false }
-            let corners = [Point(x: rect.minX, y: rect.minY), Point(x: rect.maxX, y: rect.minY), Point(x: rect.maxX, y: rect.maxY), Point(x: rect.minX, y: rect.maxY), Point(x: rect.midX, y: rect.midY)]
-            return Lasso.encloses(polygon, points: corners)
+            let corners = [Point(x: rect.minX, y: rect.minY), Point(x: rect.maxX, y: rect.minY), Point(x: rect.maxX, y: rect.maxY), Point(x: rect.minX, y: rect.maxY)]
+            return Lasso.touches(polygon, area: corners)
         }
     }
 

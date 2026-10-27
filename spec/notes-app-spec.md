@@ -414,8 +414,10 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Text blocks are Markdown, rendered on the canvas and stored raw. New notes start from a sheet: a name and Blank or PDF. PDF notes place one page per A4 cell; on dark paper white PDF pages display inverted without changing the asset.
 - The camera stays near the paper. Cell lines can be turned off. One release ships the Windows exe and the unsigned iPad IPA.
 - The iPad app is edge to edge with a transparent status bar. A finger pans the canvas and the Pencil draws; text and the lasso take either. The page fits centred and can be pushed well past its edges.
-- Renaming lives only in the haptic menu, except the open note's name, which edits in place in its top bar next to its created date (DD/MM/YY, read from the page ID). Back sits beside settings on every screen. Undo and redo sit at the bottom left.
-- The haptic menu is a vertical list beside the finger. The page's "…" opens a secondary nav (delete, import | add column, add row | guides, cell lines).
+- Folders and notes rename in the haptic menu or in place in their top bar; a note shows its created date (DD/MM/YY, read from the page ID) beside its name. Back sits beside settings on every screen. Undo and redo sit at the bottom left.
+- The haptic menu is a narrow vertical list whose corner sits at the finger, with icons, divided sections and delete last. The page's "…" opens a secondary nav (delete, import | add column, add row | guides, cell lines), which opens and closes like GALLERY's viewer date pill and stays open while drawing.
+- Tool sizes are set by sliding along the tool, which turns the nav into a slider; the secondary nav keeps only presets. Two- and three-finger single taps undo and redo.
 - The nav is carried by its end grips, never collapses, steers clear of the other UI and the keyboard, and its tools and secondary-nav groups reorder by holding them.
-- A lasso selects strokes, text and imported pages and moves them as one undo step.
+- A lasso selects every stroke, text and imported page it touches and moves them as one undo step.
+- Folder tiles show their icon in the centre and their colour as the outline; notes lie in a masonry grid sized by their page columns and rows.
 - Folders and notes can be grouped inside a folder as GALLERY-style stacks, kept on the device. Opening a note flies out of its tile.

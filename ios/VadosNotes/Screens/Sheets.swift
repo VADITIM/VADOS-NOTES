@@ -12,7 +12,7 @@ struct SheetHost: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.opacity(0.45)
+            Color.black.opacity(isShown ? 0.45 : 0)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
             if isShown {
@@ -24,8 +24,14 @@ struct SheetHost: View {
             }
         }
         .onAppear {
-            withAnimation(Motion.backOut(Motion.overlayEnterMilliseconds)) {
+            withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
                 isShown = true
+            }
+        }
+        .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
+            guard isLeaving else { return }
+            withAnimation(Motion.powerTwoIn(request == .settings ? Motion.sheetDropMilliseconds : Motion.overlayLeaveMilliseconds)) {
+                isShown = false
             }
         }
     }

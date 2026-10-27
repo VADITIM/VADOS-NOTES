@@ -42,9 +42,22 @@ enum SheetRequest: Identifiable, Equatable {
 final class Navigator: ObservableObject {
     @Published private(set) var route: Route = .library
     @Published private(set) var sheet: SheetRequest?
+    @Published private(set) var isSheetLeaving = false
     var openingTile: CGRect?
 
     func show(_ sheet: SheetRequest?) {
+        guard let sheet else {
+            guard let current = self.sheet, !isSheetLeaving else { return }
+            isSheetLeaving = true
+            let leave = current == .settings ? Motion.sheetDropMilliseconds : Motion.overlayLeaveMilliseconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(leave)) { [weak self] in
+                guard let self, self.isSheetLeaving else { return }
+                self.isSheetLeaving = false
+                self.sheet = nil
+            }
+            return
+        }
+        isSheetLeaving = false
         withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
             self.sheet = sheet
         }
@@ -87,7 +100,8 @@ struct RootView: View {
                 MenuOverlay(controller: menu)
                 if let sheet = navigator.sheet {
                     SheetHost(request: sheet)
-                        .transition(.opacity.animation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)))
+                        .id(sheet.id)
+                        .transition(.identity)
                         .zIndex(2)
                 }
             }

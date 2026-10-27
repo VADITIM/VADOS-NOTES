@@ -26,6 +26,7 @@ enum Motion {
     static let stackMilliseconds = durations.stack
     static let riseDelayMilliseconds = durations.riseDelay
     static let riseStaggerMilliseconds = durations.riseStagger
+    static let sheetDropMilliseconds = durations.sheetDrop
 
     static var placement: Animation { spring(springs.placement) }
     static var wash: Animation { spring(springs.wash) }
@@ -109,8 +110,13 @@ extension AnyTransition {
     )
 
     static let fromTopEdge: AnyTransition = .asymmetric(
-        insertion: AnyTransition.move(edge: .top).animation(Motion.backOut(Motion.overlayEnterMilliseconds)),
-        removal: AnyTransition.move(edge: .top).animation(Motion.powerTwoIn(Motion.overlayLeaveMilliseconds))
+        insertion: AnyTransition.move(edge: .top).animation(Motion.backOut(Motion.sheetDropMilliseconds)),
+        removal: AnyTransition.move(edge: .top).animation(Motion.backIn(Motion.sheetDropMilliseconds))
+    )
+
+    static let rotatePop: AnyTransition = .asymmetric(
+        insertion: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.backOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds)),
+        removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.backIn(Motion.stateMilliseconds))
     )
 
     static let flight: AnyTransition = .asymmetric(
@@ -127,6 +133,73 @@ extension AnyTransition {
         insertion: AnyTransition.opacity.combined(with: .scale(scale: 0.94)).combined(with: .offset(y: 24)).animation(Motion.backOut(Motion.overlayEnterMilliseconds)),
         removal: AnyTransition.opacity.combined(with: .scale(scale: 0.96)).animation(Motion.powerTwoIn(Motion.overlayLeaveMilliseconds))
     )
+}
+
+struct RotatePop: ViewModifier {
+    let isShown: Bool
+
+    static let turn = Angle.degrees(-90)
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isShown ? 1 : 0.001)
+            .rotationEffect(isShown ? .zero : Self.turn)
+            .opacity(isShown ? 1 : 0)
+    }
+}
+
+struct StaggeredRotatePop: ViewModifier {
+    let isShown: Bool
+    let order: Int
+    let count: Int
+    let enterDelay: Int
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(RotatePop(isShown: isShown))
+            .animation(
+                isShown
+                    ? Motion.backOut(Motion.stateMilliseconds, delay: enterDelay + order * Motion.chromeStaggerMilliseconds)
+                    : Motion.backIn(Motion.stateMilliseconds, delay: (count - 1 - order) * Motion.chromeStaggerMilliseconds),
+                value: isShown
+            )
+    }
+}
+
+struct HoldPop: ViewModifier {
+    let isPressed: Bool
+    var isHoldable = true
+
+    @State private var isHeld = false
+    @State private var holdWork: DispatchWorkItem?
+
+    private var scale: CGFloat {
+        if isHeld { return CGFloat(Motion.scales.holdPop) }
+        if isPressed { return isHoldable ? CGFloat(Motion.scales.holdGrow) : CGFloat(Motion.scales.pressPop) }
+        return 1
+    }
+
+    private var animation: Animation {
+        if isHeld { return Motion.backOut(Motion.stateMilliseconds) }
+        if isPressed { return isHoldable ? .linear(duration: Motion.seconds(Motion.menuHoldMilliseconds)) : Motion.powerTwoOut(Motion.pressMilliseconds) }
+        return Motion.backOut(Motion.releaseMilliseconds)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(scale)
+            .animation(animation, value: scale)
+            .onChange(of: isPressed) { _, pressed in
+                holdWork?.cancel()
+                guard pressed, isHoldable else {
+                    isHeld = false
+                    return
+                }
+                let work = DispatchWorkItem { isHeld = true }
+                holdWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.menuHoldMilliseconds), execute: work)
+            }
+    }
 }
 
 struct ChromePop: ViewModifier {

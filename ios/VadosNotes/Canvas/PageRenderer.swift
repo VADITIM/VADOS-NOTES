@@ -39,13 +39,16 @@ struct CanvasCamera: Equatable {
         return CanvasCamera(scale: newScale, offset: CGPoint(x: anchor.x - CGFloat(pagePoint.x) * newScale, y: anchor.y - CGFloat(pagePoint.y) * newScale))
     }
 
-    func constrained(to extent: Extent, in bounds: CGSize, margin: CGFloat, topInset: CGFloat) -> CanvasCamera {
-        let top = topInset + margin
+    static func smallestScale(for extent: Extent, in bounds: CGSize, margin: CGFloat, topInset: CGFloat) -> CGFloat {
         let availableWidth = max(1, bounds.width - margin * 2)
-        let availableHeight = max(1, bounds.height - top * 2)
+        let availableHeight = max(1, bounds.height - (topInset + margin) * 2)
+        return min(maximumScale, min(availableWidth / CGFloat(PaperGeometry.width(of: extent)), availableHeight / CGFloat(PaperGeometry.height(of: extent))))
+    }
+
+    func constrained(to extent: Extent, in bounds: CGSize, margin: CGFloat, topInset: CGFloat) -> CanvasCamera {
         let paperWidth = CGFloat(PaperGeometry.width(of: extent))
         let paperHeight = CGFloat(PaperGeometry.height(of: extent))
-        let smallest = min(availableWidth / paperWidth, availableHeight / paperHeight)
+        let smallest = Self.smallestScale(for: extent, in: bounds, margin: margin, topInset: topInset)
         var camera = self
         if camera.scale < smallest {
             camera = camera.zoomed(by: smallest / camera.scale, around: CGPoint(x: bounds.width / 2, y: bounds.height / 2))
