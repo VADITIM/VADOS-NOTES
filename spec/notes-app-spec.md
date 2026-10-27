@@ -416,8 +416,8 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The iPad app is edge to edge with a transparent status bar. A finger pans the canvas and the Pencil draws; text and the lasso take either. The page fits centred and can be pushed well past its edges.
 - Folders and notes rename in the haptic menu or in place in their top bar; a note shows its created date (DD/MM/YY, read from the page ID) beside its name. Back sits beside settings on every screen. Undo and redo sit at the bottom left.
 - The haptic menu is a narrow vertical list whose corner sits at the finger, with icons, divided sections and delete last. The page's "…" opens a secondary nav (delete, import | add column, add row | guides, cell lines), which opens and closes like GALLERY's viewer date pill and stays open while drawing.
-- Tool sizes are set by sliding along the tool, which turns the nav into a slider; the secondary nav keeps only presets. Two- and three-finger single taps undo and redo.
+- Tool sizes are set by a quick slide along the nav, which turns it into a slider for the selected tool; the secondary nav keeps only presets. Two- and three-finger single taps undo and redo; there are no undo buttons. A note opens fitted whole, and the colour wheel opens beside its button.
 - The nav is carried by its end grips, never collapses, steers clear of the other UI and the keyboard, and its tools and secondary-nav groups reorder by holding them.
-- A lasso selects every stroke, text and imported page it touches and moves them as one undo step.
+- A lasso selects every stroke, text and imported page it touches and moves them as one undo step. The selection stays across tool changes until a finger presses the canvas.
 - Folder tiles show their icon in the centre and their colour as the outline; notes lie in a masonry grid sized by their page columns and rows.
 - Folders and notes can be grouped inside a folder as GALLERY-style stacks, kept on the device. Opening a note flies out of its tile.

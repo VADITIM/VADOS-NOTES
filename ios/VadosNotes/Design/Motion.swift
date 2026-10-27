@@ -114,9 +114,19 @@ extension AnyTransition {
         removal: AnyTransition.move(edge: .top).animation(Motion.backIn(Motion.sheetDropMilliseconds))
     )
 
-    static let rotatePop: AnyTransition = .asymmetric(
-        insertion: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.backOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds)),
+    static let elementLeave: AnyTransition = .asymmetric(
+        insertion: .identity,
         removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.backIn(Motion.stateMilliseconds))
+    )
+
+    static let groupLeave: AnyTransition = .asymmetric(
+        insertion: .identity,
+        removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.pressMilliseconds))
+    )
+
+    static let sliderEnter: AnyTransition = .asymmetric(
+        insertion: AnyTransition.scale(scale: CGFloat(Motion.scales.sliderEnter)).combined(with: .opacity).animation(Motion.backOut(Motion.overlayLeaveMilliseconds, delay: Motion.pressMilliseconds)),
+        removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.pressMilliseconds))
     )
 
     static let flight: AnyTransition = .asymmetric(
@@ -148,21 +158,48 @@ struct RotatePop: ViewModifier {
     }
 }
 
-struct StaggeredRotatePop: ViewModifier {
-    let isShown: Bool
-    let order: Int
-    let count: Int
-    let enterDelay: Int
+private struct ElementRevealKey: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
 
+extension EnvironmentValues {
+    var isElementRevealed: Bool? {
+        get { self[ElementRevealKey.self] }
+        set { self[ElementRevealKey.self] = newValue }
+    }
+}
+
+struct ElementReveal: ViewModifier {
+    @Environment(\.isElementRevealed) private var isRevealed
+    @State private var hasAppeared = false
+    @State private var enterDelay = Int.random(in: 0...Motion.stateMilliseconds)
+    @State private var leaveDelay = Int.random(in: 0...Motion.stateMilliseconds / 2)
+
+    private var isShown: Bool { (isRevealed ?? true) && hasAppeared }
+
+    @ViewBuilder
     func body(content: Content) -> some View {
+        if isRevealed == nil {
+            content
+        } else {
+            revealed(content)
+        }
+    }
+
+    private func revealed(_ content: Content) -> some View {
         content
             .modifier(RotatePop(isShown: isShown))
             .animation(
-                isShown
-                    ? Motion.backOut(Motion.stateMilliseconds, delay: enterDelay + order * Motion.chromeStaggerMilliseconds)
-                    : Motion.backIn(Motion.stateMilliseconds, delay: (count - 1 - order) * Motion.chromeStaggerMilliseconds),
+                isShown ? Motion.backOut(Motion.stateMilliseconds, delay: enterDelay) : Motion.backIn(Motion.stateMilliseconds, delay: leaveDelay),
                 value: isShown
             )
+            .onAppear { hasAppeared = true }
+    }
+}
+
+extension View {
+    func revealedElement() -> some View {
+        modifier(ElementReveal())
     }
 }
 

@@ -23,14 +23,10 @@ struct CanvasCamera: Equatable {
     static let panSlackShare: CGFloat = 0.45
 
     static func fitting(_ extent: Extent, in bounds: CGSize, margin: CGFloat, topInset: CGFloat) -> CanvasCamera {
-        let width = CGFloat(PaperGeometry.cellWidth)
-        let height = CGFloat(PaperGeometry.cellHeight)
-        let available = CGSize(width: max(1, bounds.width - margin * 2), height: max(1, bounds.height - (topInset + margin) * 2))
-        let scale = min(available.width / width, available.height / height)
-        let shownWidth = CGFloat(extent.columns) * width * scale
-        let shownHeight = height * scale
-        let horizontalOffset = shownWidth < bounds.width ? (bounds.width - shownWidth) / 2 : margin
-        return CanvasCamera(scale: scale, offset: CGPoint(x: horizontalOffset, y: (bounds.height - shownHeight) / 2))
+        let scale = smallestScale(for: extent, in: bounds, margin: margin, topInset: topInset)
+        let shownWidth = CGFloat(PaperGeometry.width(of: extent)) * scale
+        let shownHeight = CGFloat(PaperGeometry.height(of: extent)) * scale
+        return CanvasCamera(scale: scale, offset: CGPoint(x: (bounds.width - shownWidth) / 2, y: (bounds.height - shownHeight) / 2))
     }
 
     func zoomed(by factor: CGFloat, around anchor: CGPoint) -> CanvasCamera {

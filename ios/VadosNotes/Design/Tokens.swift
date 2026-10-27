@@ -156,6 +156,7 @@ struct Tokens: Decodable {
         let folderEnter: Double
         let holdGrow: Double
         let holdPop: Double
+        let sliderEnter: Double
     }
 
     struct ShareTokens: Decodable {

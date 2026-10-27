@@ -38,7 +38,6 @@ struct PageScreen: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var menu: MenuController
     @EnvironmentObject private var preferences: Preferences
-    @Environment(\.screenInsets) private var insets
     @StateObject private var keyboard = KeyboardObserver()
     @Namespace private var ringSpace
     @State private var overlayCamera: CanvasCamera?
@@ -106,8 +105,6 @@ struct PageScreen: View {
                 .modifier(TileFlight(progress: flightProgress, tile: flightTile))
                 topBar
                     .modifier(ChromePop(isShown: isChromeShown, order: 0, anchor: .top))
-                historyButtons
-                    .modifier(ChromePop(isShown: isChromeShown, order: 2, anchor: .bottomLeading))
                 toolNav
             }
             .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
@@ -163,20 +160,6 @@ struct PageScreen: View {
                 MicroLabel(text: "Read only", color: Palette.destructive)
             }
         }
-    }
-
-    private var historyButtons: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 14) {
-                RoundIconButton(glyph: "undo", color: Palette.undo, isTinted: true, isEnabled: library.canUndo(pageId)) { library.undo(pageId) }
-                RoundIconButton(glyph: "redo", color: Palette.redo, isTinted: true, isEnabled: library.canRedo(pageId)) { library.redo(pageId) }
-            }
-            .chromeFrame("history")
-            .padding(.leading, 24 + insets.leading)
-            .padding(.bottom, 24 + insets.bottom)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
     @ViewBuilder
@@ -517,7 +500,7 @@ struct PageScreen: View {
                 layout {
                     ForEach(presets, id: \.self) { preset in
                         SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, caption: Self.pixelCaption(preset), orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
-                            .transition(.pop)
+                            .transition(.elementLeave)
                     }
                     NavIconButton(glyph: "plus", isEnabled: !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
                         preferences.addWidthPreset(width, for: tool)
@@ -529,7 +512,7 @@ struct PageScreen: View {
                 layout {
                     ForEach(colors, id: \.self) { color in
                         SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), onSelect: { preferences.setColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
-                            .transition(.pop)
+                            .transition(.elementLeave)
                     }
                     NavIconButton(glyph: "plus", isEnabled: !colors.contains(current), orientation: orientation) {
                         preferences.addColorPreset(current, for: tool)

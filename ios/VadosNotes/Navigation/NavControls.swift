@@ -203,6 +203,7 @@ struct SwatchButton: View {
         }
         .animation(Motion.selection, value: isSelected)
         .animation(Motion.backOut(Motion.stateMilliseconds), value: isArmed)
+        .revealedElement()
     }
 }
 
@@ -242,6 +243,7 @@ struct NavIconButton: View {
         .buttonStyle(PressableStyle())
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.38)
+        .revealedElement()
     }
 }
 
@@ -269,6 +271,7 @@ struct CaptionButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
+        .revealedElement()
     }
 }
 
@@ -290,6 +293,15 @@ struct WheelButton: View {
         }
         .buttonStyle(PressableStyle())
         .animation(Motion.backOut(Motion.stateMilliseconds), value: isOpen)
+        .background(GeometryReader { proxy in Color.clear.preference(key: WheelAnchorKey.self, value: proxy.frame(in: .named(NavMetrics.layerSpace))) })
+        .revealedElement()
+    }
+}
+
+struct WheelAnchorKey: PreferenceKey {
+    static var defaultValue: CGRect?
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
     }
 }
 

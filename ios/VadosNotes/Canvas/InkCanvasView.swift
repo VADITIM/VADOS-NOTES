@@ -53,14 +53,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             setNeedsDisplay()
         }
     }
-    var tool: CanvasTool = .ink(.pen) {
-        didSet {
-            if tool != .lasso, !selectedIds.isEmpty {
-                selectedIds = []
-                refreshSelection()
-            }
-        }
-    }
+    var tool: CanvasTool = .ink(.pen)
     var inkColor = "#1A1A1A"
     var inkWidth = 0.5
     var eraserRadius = 2.0
@@ -272,9 +265,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         lastPanLocation = gestureStart
         onInput?()
         let point = camera.toPage(gestureStart)
-        if tool == .lasso, !isReadOnly, let rect = selectionScreenRect(), rect.contains(gestureStart) {
+        let isInsideSelection = selectionScreenRect()?.contains(gestureStart) ?? false
+        if !isReadOnly, isInsideSelection, tool == .lasso || isFingerTouch {
             selectionStart = point
             return
+        }
+        if isFingerTouch, !selectedIds.isEmpty {
+            clearSelection()
         }
         if tool == .text, !isReadOnly, let element = textElement(at: point), let box = element.box, let rect = PageRenderer.textRect(for: element) {
             pressedText = PressedText(id: element.id, origin: box, start: point, height: Double(rect.height))

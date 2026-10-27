@@ -150,7 +150,8 @@ struct ToolNav<PanelContent: View>: View {
     @State private var panelSize: CGSize = .zero
     @State private var groupSizes: [String: CGSize] = [:]
     @State private var carryPoint: CGPoint?
-    @State private var carryGrab: CGSize = .zero
+    @State private var carryGrab: CGSize?
+    @State private var wheelAnchor: CGRect?
     @State private var swallowUntil = Date.distantPast
     @State private var shownSubNavigationKey: String?
     @State private var shellScale: CGFloat = 0
@@ -200,12 +201,20 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private var isSubNavigationWanted: Bool {
-        subNavKey != nil && carryPoint == nil && isShown
+        subNavKey != nil && isShown
     }
 
     private var sizingItem: NavItem? {
         guard let sizingDrag else { return nil }
         return groups.joined().first { $0.id == sizingDrag.id }
+    }
+
+    private var sizableItem: NavItem? {
+        let items = Array(groups.joined())
+        if let selectedId {
+            return items.first { $0.id == selectedId && $0.sizing != nil }
+        }
+        return items.first { $0.sizing != nil }
     }
 
     private var toolExtent: CGFloat {
@@ -242,17 +251,18 @@ struct ToolNav<PanelContent: View>: View {
                             .transition(.popTogether)
                     }
                 }
-                .position(placeBeside(subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
+                .position(placeBeside(wheelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
                 navBody(layer: layer, center: center)
                     .position(center)
             }
             .animation(carryPoint == nil ? Motion.placement : nil, value: center)
-            .animation(Motion.placement, value: subNavCenter)
+            .animation(carryPoint == nil ? Motion.placement : nil, value: subNavCenter)
             .coordinateSpace(name: NavMetrics.layerSpace)
             .onPreferenceChange(NavSizeKey.self) { navSize = $0 }
             .onPreferenceChange(SubNavSizeKey.self) { subNavSize = $0 }
             .onPreferenceChange(PanelSizeKey.self) { panelSize = $0 }
             .onPreferenceChange(GroupExtentKey.self) { groupSizes = $0 }
+            .onPreferenceChange(WheelAnchorKey.self) { wheelAnchor = $0 }
         }
         .onAppear {
             placement = Preferences.shared.navPlacement
@@ -280,7 +290,7 @@ struct ToolNav<PanelContent: View>: View {
         let wasHidden = shownSubNavigationKey == nil
         shownSubNavigationKey = subNavKey
         guard wasHidden else {
-            withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+            withAnimation(Motion.backOut(Motion.stateMilliseconds / 2)) {
                 shellScale = 1
             }
             withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds)) {
@@ -297,10 +307,10 @@ struct ToolNav<PanelContent: View>: View {
             areElementsShown = false
         }
         DispatchQueue.main.async {
-            withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+            withAnimation(Motion.backOut(Motion.stateMilliseconds / 2)) {
                 shellScale = 1
             }
-            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds)) {
+            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds / 4)) {
                 shellSpread = 1
             }
             areElementsShown = true
@@ -311,8 +321,7 @@ struct ToolNav<PanelContent: View>: View {
         guard shownSubNavigationKey != nil else { return }
         subNavigationStep += 1
         let step = subNavigationStep
-        let elementCount = max(1, subNavigationGroups.count * 2 - 1)
-        let elementsGone = Motion.stateMilliseconds + (elementCount - 1) * Motion.chromeStaggerMilliseconds
+        let elementsGone = Motion.stateMilliseconds
         areElementsShown = false
         func after(_ milliseconds: Int, _ change: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(milliseconds)) {
@@ -325,12 +334,12 @@ struct ToolNav<PanelContent: View>: View {
                 shellSpread = 0
             }
         }
-        after(elementsGone + Motion.stateMilliseconds) {
-            withAnimation(Motion.backIn(Motion.stateMilliseconds)) {
+        after(elementsGone + Motion.stateMilliseconds * 3 / 4) {
+            withAnimation(Motion.backIn(Motion.stateMilliseconds / 2)) {
                 shellScale = 0
             }
         }
-        after(elementsGone + Motion.stateMilliseconds * 2) {
+        after(elementsGone + Motion.stateMilliseconds * 5 / 4) {
             shownSubNavigationKey = nil
         }
     }
@@ -353,19 +362,21 @@ struct ToolNav<PanelContent: View>: View {
             grip(layer: layer, center: center)
         }
         .opacity(isSizing ? 0 : 1)
-        .scaleEffect(isSizing ? 0.6 : 1)
+        .scaleEffect(isSizing ? CGFloat(Motion.scales.sliderEnter) : 1)
+        .animation(isSizing ? Motion.powerTwoIn(Motion.pressMilliseconds) : Motion.powerTwoOut(Motion.stateMilliseconds, delay: Motion.pressMilliseconds), value: isSizing)
         .overlay {
             ZStack {
                 if let item = sizingItem, let sizing = item.sizing {
                     NavSizeSlider(orientation: orientation, share: sizing.share, color: sizing.color, previewDiameter: sizing.previewDiameter(sizing.share), caption: sizing.caption(sizing.share))
-                        .transition(.popTogether)
+                        .transition(.sliderEnter)
                 }
             }
         }
-        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSizing)
         .animation(Motion.wash, value: selectedId)
         .padding(NavMetrics.padding)
         .background(Capsule().fill(Palette.panelSolid))
+        .contentShape(Capsule())
+        .simultaneousGesture(sizableItem == nil ? nil : sizingGesture())
         .overlay(Capsule().stroke(carryPoint == nil ? Palette.border : Palette.accent, lineWidth: 1))
         .fixedSize()
         .background(GeometryReader { navProxy in Color.clear.preference(key: NavSizeKey.self, value: navProxy.size) })
@@ -400,7 +411,7 @@ struct ToolNav<PanelContent: View>: View {
         let isTool = groups.first?.contains { $0.id == item.id } ?? false
         let isLifted = toolReordering?.id == item.id
         let offset = isTool ? toolOffset(item.id) : 0
-        return HoldableButton(action: {}, isHoldable: isTool, onTapAt: { frame in
+        return HoldableButton(action: {}, onTapAt: { frame in
             guard Date() >= swallowUntil else { return }
             item.action(frame)
         }) {
@@ -435,26 +446,24 @@ struct ToolNav<PanelContent: View>: View {
         .zIndex(isLifted || toolSettling?.id == item.id ? 1 : 0)
         .animation(isLifted ? nil : Motion.placement, value: offset)
         .simultaneousGesture(isTool ? toolReorderGesture(item.id) : nil)
-        .simultaneousGesture(item.sizing == nil ? nil : sizingGesture(item))
         .accessibilityLabel(item.label)
     }
 
     private var subNavBody: some View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
         let shown = orderedSubNavigationGroups
-        let count = max(1, shown.count * 2 - 1)
         return layout {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, group in
                 if index > 0 {
                     NavSeparator(orientation: orientation)
-                        .modifier(StaggeredRotatePop(isShown: areElementsShown, order: index * 2 - 1, count: count, enterDelay: Motion.stateMilliseconds * 2))
-                        .transition(.rotatePop)
+                        .revealedElement()
+                        .transition(.elementLeave)
                 }
                 subNavigationGroup(group)
-                    .modifier(StaggeredRotatePop(isShown: areElementsShown, order: index * 2, count: count, enterDelay: Motion.stateMilliseconds * 2))
-                    .transition(.rotatePop)
+                    .transition(.groupLeave)
             }
         }
+        .environment(\.isElementRevealed, areElementsShown)
         .padding(NavMetrics.padding)
         .fixedSize()
         .animation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2), value: shown.map(\.id))
@@ -501,10 +510,10 @@ struct ToolNav<PanelContent: View>: View {
         orientation == .horizontal ? point.x : point.y
     }
 
-    private func sizingGesture(_ item: NavItem) -> some Gesture {
+    private func sizingGesture() -> some Gesture {
         DragGesture(minimumDistance: NavMetrics.sizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .onChanged { value in
-                guard toolReordering == nil, let sizing = item.sizing else { return }
+                guard toolReordering == nil, carryPoint == nil, let item = sizingItem ?? sizableItem, let sizing = item.sizing else { return }
                 if sizingDrag == nil {
                     swallowUntil = .distantFuture
                     Haptics.tick()
@@ -706,15 +715,17 @@ struct ToolNav<PanelContent: View>: View {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.navigationGripHoldMilliseconds), maximumDistance: 10)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
             .onChanged { value in
-                guard case .second(true, let drag) = value else { return }
+                guard case .second(true, let drag) = value, sizingDrag == nil else { return }
                 if carryPoint == nil {
                     swallowUntil = .distantFuture
                     Haptics.hold()
-                    let start = drag?.startLocation ?? center
-                    carryGrab = CGSize(width: start.x - center.x, height: start.y - center.y)
+                    carryGrab = nil
+                    carryPoint = center
                 }
-                let location = drag?.location ?? center
-                carryPoint = CGPoint(x: location.x - carryGrab.width, y: location.y - carryGrab.height)
+                guard let drag else { return }
+                let grab = carryGrab ?? CGSize(width: drag.startLocation.x - center.x, height: drag.startLocation.y - center.y)
+                carryGrab = grab
+                carryPoint = CGPoint(x: drag.location.x - grab.width, y: drag.location.y - grab.height)
             }
             .onEnded { _ in
                 guard let point = carryPoint else { return }
