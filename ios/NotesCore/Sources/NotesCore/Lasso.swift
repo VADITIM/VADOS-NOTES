@@ -69,4 +69,23 @@ public enum Lasso {
         }
         return moved
     }
+
+    public static func scaled(_ element: Element, about anchor: Point, by factor: Double) -> Element {
+        func scale(_ x: Double, _ y: Double) -> Point {
+            Point(x: anchor.x + (x - anchor.x) * factor, y: anchor.y + (y - anchor.y) * factor)
+        }
+        var scaled = element
+        scaled.points = element.points?.map { StrokeGeometry.rounded(scale($0.x, $0.y)) }
+        scaled.width = element.width.map { $0 * factor }
+        scaled.fontSize = element.fontSize.map { $0 * factor }
+        if let box = element.box {
+            let origin = scale(box.x, box.y)
+            scaled.box = TextBox(x: origin.x, y: origin.y, width: box.width * factor)
+        }
+        if let placement = element.placement {
+            let origin = scale(placement.x, placement.y)
+            scaled.placement = Placement(x: origin.x, y: origin.y, scale: placement.scale * factor)
+        }
+        return scaled
+    }
 }

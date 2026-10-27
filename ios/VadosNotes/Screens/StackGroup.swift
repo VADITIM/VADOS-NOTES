@@ -158,15 +158,19 @@ private struct StackGroupFrame: View, Animatable {
             heading
                 .opacity(Double(arrowShown))
                 .frame(height: Self.headingHeight, alignment: .leading)
+                .allowsHitTesting(time >= 1)
+                .zIndex(Double(count + 1))
             GlyphView(name: "back", color: Palette.accent)
                 .frame(width: Self.arrowSize, height: Self.arrowSize)
                 .rotationEffect(.degrees(180 * Double(1 - turn)))
-                .offset(x: arrowShutX + (arrowOpenX - arrowShutX) * arrowShown, y: (Self.shutHeight / 2 - Self.arrowSize / 2) * (1 - arrowShown) + (Self.headingHeight - Self.arrowSize) / 2 * arrowShown)
                 .contentShape(Rectangle())
-                .onTapGesture { onToggle(time < 0.5) }
+                .onTapGesture { onToggle(!isOpening) }
+                .offset(x: arrowShutX + (arrowOpenX - arrowShutX) * arrowShown, y: (Self.shutHeight / 2 - Self.arrowSize / 2) * (1 - arrowShown) + (Self.headingHeight - Self.arrowSize) / 2 * arrowShown)
+                .zIndex(Double(count + 2))
             if time <= 0 {
                 TileInteraction(callbacks: TileCallbacks(onTap: { _ in onToggle(true) }, onMenu: onMenu))
                     .frame(width: max(0, width), height: Self.shutHeight)
+                    .zIndex(Double(count + 1))
             }
         }
         .frame(width: max(0, width), height: frameHeight, alignment: .topLeading)

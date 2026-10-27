@@ -367,6 +367,43 @@ final class Library: ObservableObject {
         }
     }
 
+    func scaleElements(_ elementIds: [String], on pageId: String, about anchor: Point, by factor: Double) {
+        guard let page = page(pageId), !isReadOnly(pageId) else { return }
+        let now = store.timestamp()
+        var step = UndoStep(before: [], after: [])
+        for id in elementIds {
+            guard let element = page.element(withId: id), !element.deleted else { continue }
+            var scaled = Lasso.scaled(element, about: anchor, by: factor)
+            scaled.updated = now
+            scaled.device = device
+            apply(.element(pageId: pageId, element: scaled), page: pageId)
+            step.before.append(element)
+            step.after.append(scaled)
+        }
+        if !step.after.isEmpty {
+            record(step, on: pageId)
+        }
+    }
+
+    func setStrokeWidth(_ elementIds: [String], on pageId: String, to width: Double) {
+        guard let page = page(pageId), !isReadOnly(pageId) else { return }
+        let now = store.timestamp()
+        var step = UndoStep(before: [], after: [])
+        for id in elementIds {
+            guard let element = page.element(withId: id), !element.deleted, element.type == .stroke, element.width != width else { continue }
+            var resized = element
+            resized.width = width
+            resized.updated = now
+            resized.device = device
+            apply(.element(pageId: pageId, element: resized), page: pageId)
+            step.before.append(element)
+            step.after.append(resized)
+        }
+        if !step.after.isEmpty {
+            record(step, on: pageId)
+        }
+    }
+
     func placeText(_ box: TextBox) {
         guard var session = textEditing, session.element.box != box else { return }
         session.element.box = box

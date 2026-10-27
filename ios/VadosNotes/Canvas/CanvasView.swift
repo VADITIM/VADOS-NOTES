@@ -2,6 +2,11 @@ import NotesCore
 import SwiftUI
 import UIKit
 
+struct SelectionMenuRequest: Equatable {
+    let ids: [String]
+    let frame: CGRect
+}
+
 struct CanvasCallbacks {
     var onCameraChange: (CanvasCamera) -> Void
     var onStroke: (Tool, String, [[Point]], Double) -> Void
@@ -10,6 +15,8 @@ struct CanvasCallbacks {
     var onTextTap: (Point, String?) -> Void
     var onTextMove: (String, TextBox) -> Void
     var onMoveElements: ([String], Point) -> Void
+    var onScaleElements: ([String], Point, Double) -> Void
+    var onSelectionMenu: (SelectionMenuRequest?) -> Void
     var onInput: () -> Void
     var onHold: (CGPoint) -> Void
     var onHoldMove: (CGPoint) -> Void
@@ -61,6 +68,8 @@ struct CanvasView: UIViewRepresentable {
         view.onTextTap = callbacks.onTextTap
         view.onTextMove = callbacks.onTextMove
         view.onMoveElements = callbacks.onMoveElements
+        view.onScaleElements = callbacks.onScaleElements
+        view.onSelectionMenu = callbacks.onSelectionMenu
         view.onInput = callbacks.onInput
         view.onHold = callbacks.onHold
         view.onHoldMove = callbacks.onHoldMove

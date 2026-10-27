@@ -5,6 +5,13 @@ enum Route: Hashable {
     case library
     case notebook(String)
     case page(notebookId: String, pageId: String)
+
+    var isPage: Bool {
+        if case .page = self {
+            return true
+        }
+        return false
+    }
 }
 
 enum TileTarget: Hashable {
@@ -36,6 +43,13 @@ enum SheetRequest: Identifiable, Equatable {
         case .settings: return "settings"
         }
     }
+
+    var isNaming: Bool {
+        switch self {
+        case .newFolder, .renameFolder, .renameNote, .newNote, .pickGroup, .renameGroup: return true
+        case .appearance, .move, .settings: return false
+        }
+    }
 }
 
 @MainActor
@@ -43,13 +57,14 @@ final class Navigator: ObservableObject {
     @Published private(set) var route: Route = .library
     @Published private(set) var sheet: SheetRequest?
     @Published private(set) var isSheetLeaving = false
+    private(set) var isReturningFromPage = false
     var openingTile: CGRect?
 
     func show(_ sheet: SheetRequest?) {
         guard let sheet else {
             guard let current = self.sheet, !isSheetLeaving else { return }
             isSheetLeaving = true
-            let leave = current == .settings ? Motion.sheetDropMilliseconds : Motion.overlayLeaveMilliseconds
+            let leave = current == .settings ? Motion.sheetDropMilliseconds : current.isNaming ? Motion.keyboardMilliseconds : Motion.overlayLeaveMilliseconds
             DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(leave)) { [weak self] in
                 guard let self, self.isSheetLeaving else { return }
                 self.isSheetLeaving = false
@@ -66,6 +81,7 @@ final class Navigator: ObservableObject {
     func go(_ route: Route, from tile: CGRect? = nil) {
         guard route != self.route else { return }
         openingTile = tile
+        isReturningFromPage = self.route.isPage && !route.isPage
         withAnimation(Motion.powerTwoOut(Motion.sectionEnterMilliseconds)) {
             self.route = route
         }
@@ -94,9 +110,13 @@ struct RootView: View {
         GeometryReader { proxy in
             ZStack {
                 Palette.ground
+                if preferences.showsAsciiBackground {
+                    AsciiBackground(color: Color(hex: preferences.asciiBackgroundColor), isMoving: preferences.isAsciiBackgroundMoving)
+                        .allowsHitTesting(false)
+                }
                 screen
                     .id(screenIdentity)
-                    .transition(isFlight ? .flight : .section)
+                    .transition(isFlight ? .flight : navigator.isReturningFromPage ? .returning : .section)
                 MenuOverlay(controller: menu)
                 if let sheet = navigator.sheet {
                     SheetHost(request: sheet)
@@ -231,6 +251,7 @@ struct TopBar<Trailing: View>: View {
     let title: String
     var label: String?
     var detail: String?
+    var chromeShown: Bool?
     var onBack: (() -> Void)?
     var onRename: ((String) -> Void)?
     @ViewBuilder var trailing: () -> Trailing
@@ -240,10 +261,12 @@ struct TopBar<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             titles
+                .modifier(ChromePop(isShown: chromeShown ?? true, order: 0))
                 .chromeFrame("title")
             Spacer(minLength: 12)
             HStack(spacing: 14) {
                 trailing()
+                    .modifier(ChromePop(isShown: chromeShown ?? true, order: 1))
                 if let onBack {
                     HoldableButton(action: onBack) {
                         GlyphView(name: "back", color: Palette.navigation)
@@ -252,9 +275,11 @@ struct TopBar<Trailing: View>: View {
                             .overlay(Circle().stroke(Palette.border, lineWidth: 1))
                     }
                     .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
+                    .modifier(ChromePop(isShown: chromeShown ?? true, order: 2))
                     .transition(.popTogether)
                 }
                 SettingsButton()
+                    .modifier(ChromePop(isShown: chromeShown ?? true, order: 3))
             }
             .chromeFrame("controls")
         }
@@ -332,11 +357,17 @@ struct InlineTitle: View {
 struct SearchField: View {
     @Binding var text: String
     @FocusState private var isFocused: Bool
+    @StateObject private var motion = PillMotion()
+    @State private var typedCount = 0
+
+    private static let prompt = "Search"
 
     var body: some View {
         HStack(spacing: 10) {
             GlyphView(name: "search", color: Palette.textMuted, size: 18)
-            TextField("", text: $text, prompt: Text("Search").foregroundColor(Palette.textMuted))
+                .revealedElement()
+            TextField("", text: $text, prompt: Text(String(Self.prompt.prefix(typedCount))).foregroundColor(Palette.textMuted))
+                .opacity(motion.areElementsShown ? 1 : 0)
                 .font(Typography.mono(14))
                 .foregroundColor(Palette.textPrimary)
                 .tint(Palette.accent)
@@ -355,12 +386,23 @@ struct SearchField: View {
                 .transition(.scale.combined(with: .opacity))
             }
         }
+        .environment(\.isElementRevealed, motion.areElementsShown)
         .padding(.leading, 16)
         .padding(.trailing, 8)
         .frame(width: 260, height: 48)
-        .background(Capsule().fill(Palette.panel))
-        .overlay(Capsule().stroke(isFocused ? Palette.accent : Palette.borderControl, lineWidth: 1))
+        .background(PillShell(scale: motion.shellScale, spread: motion.shellSpread, isWide: true, stroke: isFocused ? Palette.accent : Palette.borderControl))
+        .allowsHitTesting(motion.areElementsShown)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: text.isEmpty)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isFocused)
+        .onAppear { motion.enter() }
+        .onChange(of: motion.areElementsShown) { _, shown in
+            guard shown, typedCount == 0 else { return }
+            Task { @MainActor in
+                for count in 1...Self.prompt.count {
+                    try? await Task.sleep(nanoseconds: UInt64(Motion.typeMilliseconds) * 1_000_000)
+                    typedCount = count
+                }
+            }
+        }
     }
 }

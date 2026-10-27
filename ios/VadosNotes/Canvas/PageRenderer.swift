@@ -156,6 +156,7 @@ struct RenderOptions {
     var paperStyle: PaperStyle = .dark
     var hiddenElementIds: Set<String> = []
     var elementOffsets: [String: CGVector] = [:]
+    var elementTransforms: [String: CGAffineTransform] = [:]
     var pixelScale: CGFloat = 2
 }
 
@@ -304,11 +305,15 @@ enum PageRenderer {
         }
         for element in page.liveElements where !options.hiddenElementIds.contains(element.id) {
             let offset = options.elementOffsets[element.id] ?? .zero
+            let transform = options.elementTransforms[element.id]
             context.saveGState()
             context.translateBy(x: offset.dx, y: offset.dy)
+            if let transform {
+                context.concatenate(transform)
+            }
             switch element.type {
             case .stroke:
-                drawStroke(element, in: context, visiblePage: visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy), cache: cache, style: options.paperStyle)
+                drawStroke(element, in: context, visiblePage: transform == nil ? visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy) : .infinite, cache: cache, style: options.paperStyle)
             case .text:
                 drawText(element, in: context, style: options.paperStyle)
             case .importPage:
@@ -379,11 +384,13 @@ enum PageRenderer {
             context.addLine(to: CGPoint(x: x, y: visiblePage.maxY))
             x += spacing
         }
-        var y = (visiblePage.minY / spacing).rounded(.down) * spacing
-        while y <= visiblePage.maxY {
-            context.move(to: CGPoint(x: visiblePage.minX, y: y))
-            context.addLine(to: CGPoint(x: visiblePage.maxX, y: y))
-            y += spacing
+        let cellHeight = CGFloat(PaperGeometry.cellHeight)
+        let rowSpacing = cellHeight / max(1, (cellHeight / spacing).rounded())
+        var row = (visiblePage.minY / rowSpacing).rounded(.down)
+        while row * rowSpacing <= visiblePage.maxY {
+            context.move(to: CGPoint(x: visiblePage.minX, y: row * rowSpacing))
+            context.addLine(to: CGPoint(x: visiblePage.maxX, y: row * rowSpacing))
+            row += 1
         }
         context.strokePath()
         context.restoreGState()

@@ -110,7 +110,7 @@ final class MenuController: ObservableObject {
         origin.y = min(max(Self.screenMargin, origin.y), screenSize.height - size.height - Self.screenMargin)
         armedPosition = nil
         highlightedPosition = nil
-        withAnimation(Motion.backOut(Motion.overlayEnterMilliseconds)) {
+        withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
             presentation = Presentation(slots: ordered, rows: rows, dividers: dividers, size: size, origin: origin, isOnLeft: isOnLeft, title: title)
         }
     }
@@ -177,7 +177,7 @@ struct MenuOverlay: View {
                     controller.activate(position)
                 }
                 .transition(.asymmetric(
-                    insertion: AnyTransition.scale(scale: 0.001, anchor: presentation.isOnLeft ? .topTrailing : .topLeading).combined(with: .opacity).animation(Motion.backOut(Motion.overlayEnterMilliseconds)),
+                    insertion: AnyTransition.scale(scale: 0.001, anchor: presentation.isOnLeft ? .topTrailing : .topLeading).combined(with: .opacity).animation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)),
                     removal: AnyTransition.scale(scale: 0.001, anchor: presentation.isOnLeft ? .topTrailing : .topLeading).combined(with: .opacity).animation(Motion.backIn(Motion.overlayLeaveMilliseconds))
                 ))
                 .alignmentGuide(.leading) { _ in -presentation.origin.x }
@@ -223,7 +223,7 @@ private struct MenuPanel: View {
                     .onTapGesture { onSelect(slot.position) }
                     .scaleEffect(isShown ? 1 : 0.001)
                     .opacity(isShown ? 1 : 0)
-                    .animation(Motion.backOut(Motion.stateMilliseconds, delay: Motion.riseDelayMilliseconds + index * Motion.riseStaggerMilliseconds), value: isShown)
+                    .animation(Motion.powerTwoOut(Motion.stateMilliseconds, delay: Motion.riseDelayMilliseconds + index * Motion.riseStaggerMilliseconds), value: isShown)
                     .offset(x: row.minX, y: row.minY)
             }
         }

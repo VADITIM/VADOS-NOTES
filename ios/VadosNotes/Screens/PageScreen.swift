@@ -52,7 +52,10 @@ struct PageScreen: View {
     @State private var textDragOrigin: TextBox?
     @State private var flightTile: CGRect?
     @State private var flightProgress: CGFloat = 1
-    @State private var isChromeShown = true
+    @State private var isChromeShown = false
+    @State private var selectionMenu: SelectionMenuRequest?
+    @State private var equalWidth = Tokens.shared.tools.pen.width
+    @State private var equalWidthStart: Double?
 
     private static let previewDiameterRange: (CGFloat, CGFloat) = (4 * NavMetrics.scale, 20 * NavMetrics.scale)
     private static let millimetresPerPoint = 0.35278
@@ -60,6 +63,7 @@ struct PageScreen: View {
     private static let handleSize = CGSize(width: 8, height: 36)
     private static let editorInset = EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22)
     private static let armedSeconds = 2.4
+    private static let equalWidthTravel: CGFloat = 240
     private static let createdFormat: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd/MM/yy"
@@ -103,8 +107,13 @@ struct PageScreen: View {
                     }
                 }
                 .modifier(TileFlight(progress: flightProgress, tile: flightTile))
+                ZStack {
+                    if let selectionMenu {
+                        selectionNav(selectionMenu, layer: proxy.size, origin: proxy.frame(in: .global).origin)
+                            .transition(.popTogether)
+                    }
+                }
                 topBar
-                    .modifier(ChromePop(isShown: isChromeShown, order: 0, anchor: .top))
                 toolNav
             }
             .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
@@ -124,7 +133,12 @@ struct PageScreen: View {
     }
 
     private func startFlight() {
-        guard let tile = navigator.openingTile else { return }
+        guard let tile = navigator.openingTile else {
+            DispatchQueue.main.async {
+                isChromeShown = true
+            }
+            return
+        }
         navigator.openingTile = nil
         flightTile = tile
         flightProgress = 0
@@ -150,6 +164,7 @@ struct PageScreen: View {
             title: library.page(pageId).map { library.noteTitle($0) } ?? "Note",
             label: library.notebook(notebookId)?.title ?? "Folder",
             detail: createdText,
+            chromeShown: isChromeShown,
             onBack: { navigator.go(.notebook(notebookId)) },
             onRename: { title in
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -275,6 +290,13 @@ struct PageScreen: View {
             },
             onTextMove: { elementId, box in library.moveText(elementId, on: pageId, to: box) },
             onMoveElements: { ids, offset in library.moveElements(ids, on: pageId, by: offset) },
+            onScaleElements: { ids, anchor, factor in library.scaleElements(ids, on: pageId, about: anchor, by: factor) },
+            onSelectionMenu: { request in
+                guard request != selectionMenu else { return }
+                withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                    selectionMenu = request
+                }
+            },
             onInput: { library.noteInput(on: pageId) },
             onHold: { point in showPageMenu(at: point) },
             onHoldMove: { point in menu.drag(to: point) },
@@ -289,8 +311,59 @@ struct PageScreen: View {
         panelKey = nil
     }
 
+    private func selectionNav(_ request: SelectionMenuRequest, layer: CGSize, origin: CGPoint) -> some View {
+        let range = Tokens.shared.tools.pen.widthRange ?? [0.2, 2]
+        let halfWidth: CGFloat = 150
+        let x = min(layer.width - halfWidth - NavMetrics.edgeMargin, max(halfWidth + NavMetrics.edgeMargin, request.frame.midX - origin.x))
+        let above = request.frame.minY - origin.y - NavMetrics.besideGap - 27
+        let y = above > max(topBarBottom - origin.y, 0) + 27 ? above : request.frame.maxY - origin.y + NavMetrics.besideGap + 27
+        return HStack(spacing: NavMetrics.spacing) {
+            Button {
+                Haptics.landed()
+                library.setStrokeWidth(request.ids, on: pageId, to: equalWidth)
+            } label: {
+                Text("Resize to equal px".uppercased())
+                    .font(Typography.monoBold(12))
+                    .tracking(1)
+                    .foregroundColor(Palette.textBright)
+                    .padding(.horizontal, 16)
+                    .frame(height: NavMetrics.itemSize(.horizontal).height)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle())
+            NavSeparator(orientation: .horizontal)
+            Text(Self.pixelCaption(equalWidth))
+                .font(Typography.monoBold(15))
+                .foregroundColor(Palette.accent)
+                .frame(width: 84, height: NavMetrics.itemSize(.horizontal).height)
+                .background(Capsule().fill(Palette.pressedWash))
+                .contentShape(Capsule())
+                .gesture(
+                    DragGesture(minimumDistance: NavMetrics.sizingSlop)
+                        .onChanged { value in
+                            let start = equalWidthStart ?? Self.share(equalWidth, range)
+                            if equalWidthStart == nil {
+                                equalWidthStart = start
+                                Haptics.tick()
+                            }
+                            equalWidth = Self.value(min(1, max(0, start + Double(value.translation.width / Self.equalWidthTravel))), range)
+                        }
+                        .onEnded { _ in
+                            equalWidthStart = nil
+                            Haptics.landed()
+                        }
+                )
+                .accessibilityLabel("Stroke width")
+        }
+        .padding(NavMetrics.padding)
+        .background(Capsule().fill(Palette.panelSolid))
+        .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
+        .fixedSize()
+        .position(x: x, y: y)
+    }
+
     private func toggleSubNav(_ key: String) {
-        withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             panelKey = nil
             subNavKey = subNavKey == key ? nil : key
             isDeleteArmed = false
@@ -298,7 +371,7 @@ struct PageScreen: View {
     }
 
     private func togglePanel() {
-        withAnimation(Motion.backOut(Motion.overlayEnterMilliseconds)) {
+        withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
             panelKey = panelKey == nil ? "wheel-\(subNavKey ?? "")" : nil
         }
     }
@@ -391,7 +464,7 @@ struct PageScreen: View {
         }
         preferences.setActiveTool(tool)
         if subNavKey != nil, subNavKey != "page-menu", tool != .lasso {
-            withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                 panelKey = nil
                 subNavKey = tool == .text ? "text-size" : tool.rawValue
             }

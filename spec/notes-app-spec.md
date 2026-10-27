@@ -421,3 +421,6 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - A lasso selects every stroke, text and imported page it touches and moves them as one undo step. The selection stays across tool changes until a finger presses the canvas.
 - Folder tiles show their icon in the centre and their colour as the outline; notes lie in a masonry grid sized by their page columns and rows.
 - Folders and notes can be grouped inside a folder as GALLERY-style stacks, kept on the device. Opening a note flies out of its tile.
+- An optional ASCII background drifts behind the folder screens, tilted to 14:10, still or moving, in a chosen colour. Guides keep their phase across vertically joined cells. Stroke ranges: pen 0.5–50 px, marker 1–100 px, eraser 1–80 px.
+- The lasso starts only with the Pencil; a selection moves with one finger anywhere, scales by pinching on it, and a tap on it offers "Resize to equal px".
+- Both navs share one enter (circle pop, widen, then elements) and one leave; pops turn on the vertical axis instead of bouncing. Returning from a note keeps the shared chrome still. Add folder sits under Add note; a 1×2 note is never shorter than a 2×2 one; naming sheets ride up on the keyboard with the name selected.

@@ -107,6 +107,7 @@ struct Tokens: Decodable {
         let powerTwoOut: [Double]
         let powerTwoIn: [Double]
         let powerThreeInOut: [Double]
+        let keyboard: [Double]
     }
 
     struct DurationTokens: Decodable {
@@ -137,6 +138,16 @@ struct Tokens: Decodable {
         let riseDelay: Int
         let riseStagger: Int
         let sheetDrop: Int
+        let navigationPop: Int
+        let navigationSpread: Int
+        let navigationSpreadDelay: Int
+        let navigationElement: Int
+        let navigationSwitch: Int
+        let navigationLeaveElement: Int
+        let navigationLeaveSpread: Int
+        let navigationLeavePop: Int
+        let keyboard: Int
+        let type: Int
     }
 
     struct SpringToken: Decodable {
@@ -171,6 +182,15 @@ struct Tokens: Decodable {
         let springs: SpringTokens
         let scales: ScaleTokens
         let shares: ShareTokens
+    }
+
+    struct BackgroundTokens: Decodable {
+        let fontSize: Double
+        let opacity: Double
+        let angleDegrees: Double
+        let speed: Double
+        let gap: Double
+        let colors: [String]
     }
 
     struct SyncTokens: Decodable {
@@ -213,6 +233,7 @@ struct Tokens: Decodable {
     let ink: InkTokens
     let text: TextTokens
     let motion: MotionTokens
+    let background: BackgroundTokens
     let sync: SyncTokens
     let menus: MenuTokens
     let folders: FolderTokens
@@ -227,6 +248,7 @@ struct Tokens: Decodable {
         case ink
         case text
         case motion
+        case background
         case sync
         case menus
         case folders

@@ -83,6 +83,30 @@ final class Preferences: ObservableObject {
         write("paperStyle", style.rawValue)
     }
 
+    var showsAsciiBackground: Bool {
+        read("showsAsciiBackground", false)
+    }
+
+    func setShowsAsciiBackground(_ value: Bool) {
+        write("showsAsciiBackground", value)
+    }
+
+    var isAsciiBackgroundMoving: Bool {
+        read("isAsciiBackgroundMoving", true)
+    }
+
+    func setAsciiBackgroundMoving(_ value: Bool) {
+        write("isAsciiBackgroundMoving", value)
+    }
+
+    var asciiBackgroundColor: String {
+        read("asciiBackgroundColor", tokens.background.colors[0])
+    }
+
+    func setAsciiBackgroundColor(_ color: String) {
+        write("asciiBackgroundColor", color.uppercased())
+    }
+
     var showsGuides: Bool {
         read("showsGuides", true)
     }

@@ -1,5 +1,6 @@
 import NotesCore
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct SheetHost: View {
@@ -9,27 +10,79 @@ struct SheetHost: View {
     @EnvironmentObject private var navigator: Navigator
     @Environment(\.screenInsets) private var insets
     @State private var isShown = false
+    @State private var isRaised = false
+    @State private var keyboardHeight: CGFloat = 0
+    @State private var panelHeight: CGFloat = 0
+
+    private var isBackdropShown: Bool {
+        request.isNaming ? isRaised : isShown
+    }
+
+    private var keyboardLift: CGFloat {
+        max(keyboardHeight, insets.bottom) + 24
+    }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(isShown ? 0.45 : 0)
+        ZStack(alignment: request.isNaming ? .bottom : .top) {
+            Color.black.opacity(isBackdropShown ? 0.45 : 0)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
             if isShown {
-                content
-                    .frame(maxWidth: 560)
-                    .padding(.horizontal, 24)
-                    .padding(.top, insets.top + 24)
-                    .transition(request == .settings ? .fromTopEdge : .overlay)
+                if request.isNaming {
+                    content
+                        .frame(maxWidth: 560)
+                        .padding(.horizontal, 24)
+                        .background(GeometryReader { proxy in
+                            Color.clear
+                                .onAppear { panelHeight = proxy.size.height }
+                                .onChange(of: proxy.size.height) { _, height in panelHeight = height }
+                        })
+                        .padding(.bottom, keyboardLift)
+                        .offset(y: isRaised ? 0 : panelHeight + keyboardLift)
+                        .opacity(panelHeight > 0 ? 1 : 0)
+                } else {
+                    content
+                        .frame(maxWidth: 560)
+                        .padding(.horizontal, 24)
+                        .padding(.top, insets.top + 24)
+                        .transition(request == .settings ? .fromTopEdge : .overlay)
+                }
             }
         }
         .onAppear {
+            guard !request.isNaming else {
+                isShown = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.keyboardMilliseconds * 2)) {
+                    guard !isRaised, !navigator.isSheetLeaving else { return }
+                    withAnimation(Motion.keyboard()) {
+                        isRaised = true
+                    }
+                }
+                return
+            }
             withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
                 isShown = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            guard request.isNaming, let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let seconds = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? Motion.seconds(Motion.keyboardMilliseconds)
+            withAnimation(Motion.keyboard(Int(seconds * 1000))) {
+                keyboardHeight = max(0, UIScreen.main.bounds.height - frame.minY)
+                if !navigator.isSheetLeaving {
+                    isRaised = true
+                }
+            }
+        }
         .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
             guard isLeaving else { return }
+            guard !request.isNaming else {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                withAnimation(Motion.keyboard()) {
+                    isRaised = false
+                }
+                return
+            }
             withAnimation(Motion.powerTwoIn(request == .settings ? Motion.sheetDropMilliseconds : Motion.overlayLeaveMilliseconds)) {
                 isShown = false
             }
@@ -40,7 +93,7 @@ struct SheetHost: View {
     private var content: some View {
         switch request {
         case .newFolder(let parentId):
-            NameSheet(heading: "New folder", initial: "", confirmTitle: "Create", confirmColor: Palette.create) { title in
+            NameSheet(heading: "New folder", initial: "Folder \(library.folders(in: parentId).count + 1)", confirmTitle: "Create", confirmColor: Palette.create, selectsAll: true) { title in
                 let notebook = library.createNotebook(title: title, parent: parentId)
                 navigator.show(nil)
                 navigator.go(.notebook(notebook.id))
@@ -102,6 +155,20 @@ struct FieldStyle: ViewModifier {
             .frame(height: 48)
             .background(Squircle.slot.fill(Palette.sunkenDeep))
             .overlay(Squircle.slot.stroke(Palette.borderControl, lineWidth: 1))
+    }
+}
+
+struct SelectAllOnFocus: ViewModifier {
+    let isActive: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidBeginEditingNotification)) { notification in
+                guard isActive, let field = notification.object as? UITextField else { return }
+                DispatchQueue.main.async {
+                    field.selectAll(nil)
+                }
+            }
     }
 }
 
@@ -173,6 +240,7 @@ struct NameSheet: View {
     let initial: String
     let confirmTitle: String
     let confirmColor: Color
+    var selectsAll = false
     let confirm: (String) -> Void
 
     @State private var title = ""
@@ -190,6 +258,7 @@ struct NameSheet: View {
                 .focused($isFocused)
                 .submitLabel(.done)
                 .onSubmit(submit)
+                .modifier(SelectAllOnFocus(isActive: selectsAll))
             SlabButton(title: confirmTitle, color: confirmColor, isEnabled: !trimmed.isEmpty, action: submit)
         }
         .onAppear {
@@ -467,6 +536,7 @@ struct NewNoteSheet: View {
                 .focused($isFocused)
                 .submitLabel(.done)
                 .onSubmit(create)
+                .modifier(SelectAllOnFocus(isActive: true))
             Segmented(options: [SegmentOption(value: false, title: "Blank"), SegmentOption(value: true, title: "PDF")], selected: isPdf) { value in
                 isPdf = value
                 if value && document == nil {
@@ -552,6 +622,23 @@ struct SettingsSheet: View {
                     preferences.setPaperStyle(style)
                 }
             }
+            VStack(alignment: .leading, spacing: 12) {
+                MicroLabel(text: "ASCII background", color: Palette.textMuted)
+                Segmented(options: [SegmentOption(value: false, title: "Off"), SegmentOption(value: true, title: "On")], selected: preferences.showsAsciiBackground) { isOn in
+                    preferences.setShowsAsciiBackground(isOn)
+                }
+                if preferences.showsAsciiBackground {
+                    Segmented(options: [SegmentOption(value: false, title: "Still"), SegmentOption(value: true, title: "Moving")], selected: preferences.isAsciiBackgroundMoving) { isMoving in
+                        preferences.setAsciiBackgroundMoving(isMoving)
+                    }
+                    HStack(spacing: 4) {
+                        ForEach(Tokens.shared.background.colors, id: \.self) { color in
+                            SwatchButton(color: Color(hex: color), isSelected: color.uppercased() == preferences.asciiBackgroundColor.uppercased(), orientation: .horizontal, onSelect: { preferences.setAsciiBackgroundColor(color) })
+                        }
+                    }
+                }
+            }
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: preferences.showsAsciiBackground)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     MicroLabel(text: "GitHub sync", color: Palette.textMuted)

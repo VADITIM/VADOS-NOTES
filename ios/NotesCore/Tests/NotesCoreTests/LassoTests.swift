@@ -30,6 +30,14 @@ final class LassoTests: XCTestCase {
         XCTAssertEqual(text.box, TextBox(x: 25, y: 28, width: 80))
     }
 
+    func testScaledGrowsAroundTheAnchor() {
+        let stroke = Lasso.scaled(Fixtures.stroke("e_1"), about: Point(x: 0, y: 0), by: 2)
+        XCTAssertEqual(stroke.points?.first, Point(x: 20, y: 20))
+        XCTAssertEqual(stroke.width ?? 0, (Fixtures.stroke("e_1").width ?? 0) * 2, accuracy: 1e-9)
+        let text = Lasso.scaled(Fixtures.text("e_2", "a", at: 0, device: "ipad-01"), about: Point(x: 20, y: 30), by: 0.5)
+        XCTAssertEqual(text.box, TextBox(x: 20, y: 30, width: 40))
+    }
+
     func testCreationDateComesBackFromTheIdentifier() {
         let date = Date(timeIntervalSince1970: 1_793_000_000.123)
         let identifier = Identifier.make(prefix: Identifier.pagePrefix, date: date)

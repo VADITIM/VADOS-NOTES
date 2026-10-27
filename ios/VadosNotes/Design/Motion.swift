@@ -27,6 +27,16 @@ enum Motion {
     static let riseDelayMilliseconds = durations.riseDelay
     static let riseStaggerMilliseconds = durations.riseStagger
     static let sheetDropMilliseconds = durations.sheetDrop
+    static let navigationPopMilliseconds = durations.navigationPop
+    static let navigationSpreadMilliseconds = durations.navigationSpread
+    static let navigationSpreadDelayMilliseconds = durations.navigationSpreadDelay
+    static let navigationElementMilliseconds = durations.navigationElement
+    static let navigationSwitchMilliseconds = durations.navigationSwitch
+    static let navigationLeaveElementMilliseconds = durations.navigationLeaveElement
+    static let navigationLeaveSpreadMilliseconds = durations.navigationLeaveSpread
+    static let navigationLeavePopMilliseconds = durations.navigationLeavePop
+    static let keyboardMilliseconds = durations.keyboard
+    static let typeMilliseconds = durations.type
 
     static var placement: Animation { spring(springs.placement) }
     static var wash: Animation { spring(springs.wash) }
@@ -50,6 +60,10 @@ enum Motion {
 
     static func powerThreeInOut(_ milliseconds: Int, delay: Int = 0) -> Animation {
         animation(curves.powerThreeInOut, milliseconds, delay)
+    }
+
+    static func keyboard(_ milliseconds: Int = keyboardMilliseconds) -> Animation {
+        animation(curves.keyboard, milliseconds, 0)
     }
 
     static func backOutValue(_ progress: CGFloat) -> CGFloat {
@@ -95,13 +109,13 @@ enum Motion {
 
 extension AnyTransition {
     static let pop: AnyTransition = .asymmetric(
-        insertion: AnyTransition.scale(scale: 0.001).combined(with: .opacity).animation(Motion.backOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds)),
-        removal: AnyTransition.scale(scale: 0.001).combined(with: .opacity).animation(Motion.backIn(Motion.stateMilliseconds))
+        insertion: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds)),
+        removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoIn(Motion.navigationSwitchMilliseconds))
     )
 
     static let popTogether: AnyTransition = .asymmetric(
-        insertion: AnyTransition.scale(scale: 0.001).combined(with: .opacity).animation(Motion.backOut(Motion.stateMilliseconds)),
-        removal: AnyTransition.scale(scale: 0.001).combined(with: .opacity).animation(Motion.backIn(Motion.stateMilliseconds))
+        insertion: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoOut(Motion.stateMilliseconds)),
+        removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoIn(Motion.stateMilliseconds))
     )
 
     static let folder: AnyTransition = .asymmetric(
@@ -110,13 +124,13 @@ extension AnyTransition {
     )
 
     static let fromTopEdge: AnyTransition = .asymmetric(
-        insertion: AnyTransition.move(edge: .top).animation(Motion.backOut(Motion.sheetDropMilliseconds)),
-        removal: AnyTransition.move(edge: .top).animation(Motion.backIn(Motion.sheetDropMilliseconds))
+        insertion: AnyTransition.move(edge: .top).animation(Motion.powerTwoOut(Motion.sheetDropMilliseconds)),
+        removal: AnyTransition.move(edge: .top).animation(Motion.powerTwoIn(Motion.sheetDropMilliseconds))
     )
 
     static let elementLeave: AnyTransition = .asymmetric(
         insertion: .identity,
-        removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.backIn(Motion.stateMilliseconds))
+        removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoIn(Motion.navigationSwitchMilliseconds))
     )
 
     static let groupLeave: AnyTransition = .asymmetric(
@@ -125,11 +139,16 @@ extension AnyTransition {
     )
 
     static let sliderEnter: AnyTransition = .asymmetric(
-        insertion: AnyTransition.scale(scale: CGFloat(Motion.scales.sliderEnter)).combined(with: .opacity).animation(Motion.backOut(Motion.overlayLeaveMilliseconds, delay: Motion.pressMilliseconds)),
+        insertion: AnyTransition.scale(scale: CGFloat(Motion.scales.sliderEnter)).combined(with: .opacity).animation(Motion.powerTwoOut(Motion.overlayLeaveMilliseconds, delay: Motion.pressMilliseconds)),
         removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.pressMilliseconds))
     )
 
     static let flight: AnyTransition = .asymmetric(
+        insertion: .identity,
+        removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.sectionLeaveMilliseconds))
+    )
+
+    static let returning: AnyTransition = .asymmetric(
         insertion: .identity,
         removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.sectionLeaveMilliseconds))
     )
@@ -140,7 +159,7 @@ extension AnyTransition {
     )
 
     static let overlay: AnyTransition = .asymmetric(
-        insertion: AnyTransition.opacity.combined(with: .scale(scale: 0.94)).combined(with: .offset(y: 24)).animation(Motion.backOut(Motion.overlayEnterMilliseconds)),
+        insertion: AnyTransition.opacity.combined(with: .scale(scale: 0.94)).combined(with: .offset(y: 24)).animation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)),
         removal: AnyTransition.opacity.combined(with: .scale(scale: 0.96)).animation(Motion.powerTwoIn(Motion.overlayLeaveMilliseconds))
     )
 }
@@ -149,11 +168,12 @@ struct RotatePop: ViewModifier {
     let isShown: Bool
 
     static let turn = Angle.degrees(-90)
+    static let perspective: CGFloat = 0.5
 
     func body(content: Content) -> some View {
         content
             .scaleEffect(isShown ? 1 : 0.001)
-            .rotationEffect(isShown ? .zero : Self.turn)
+            .rotation3DEffect(isShown ? .zero : Self.turn, axis: (x: 0, y: 1, z: 0), perspective: Self.perspective)
             .opacity(isShown ? 1 : 0)
     }
 }
@@ -172,10 +192,19 @@ extension EnvironmentValues {
 struct ElementReveal: ViewModifier {
     @Environment(\.isElementRevealed) private var isRevealed
     @State private var hasAppeared = false
-    @State private var enterDelay = Int.random(in: 0...Motion.stateMilliseconds)
-    @State private var leaveDelay = Int.random(in: 0...Motion.stateMilliseconds / 2)
+    @State private var isSwitchedIn = false
+    @State private var enterDelay = Int.random(in: 0...Motion.navigationElementMilliseconds)
+    @State private var leaveDelay = Int.random(in: 0...Motion.navigationLeaveElementMilliseconds / 2)
 
     private var isShown: Bool { (isRevealed ?? true) && hasAppeared }
+
+    private var enterAnimation: Animation {
+        guard isSwitchedIn else {
+            return Motion.powerTwoOut(Motion.navigationElementMilliseconds, delay: enterDelay)
+        }
+        let spread = enterDelay * Motion.navigationSwitchMilliseconds / 2 / max(1, Motion.navigationElementMilliseconds)
+        return Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds + spread)
+    }
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -190,10 +219,18 @@ struct ElementReveal: ViewModifier {
         content
             .modifier(RotatePop(isShown: isShown))
             .animation(
-                isShown ? Motion.backOut(Motion.stateMilliseconds, delay: enterDelay) : Motion.backIn(Motion.stateMilliseconds, delay: leaveDelay),
+                isShown ? enterAnimation : Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds, delay: leaveDelay),
                 value: isShown
             )
-            .onAppear { hasAppeared = true }
+            .onAppear {
+                isSwitchedIn = isRevealed == true
+                hasAppeared = true
+            }
+            .onChange(of: isRevealed) { _, revealed in
+                if revealed == false {
+                    isSwitchedIn = false
+                }
+            }
     }
 }
 
@@ -242,16 +279,105 @@ struct HoldPop: ViewModifier {
 struct ChromePop: ViewModifier {
     let isShown: Bool
     let order: Int
-    let anchor: UnitPoint
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isShown ? 1 : 0.001, anchor: anchor)
-            .opacity(isShown ? 1 : 0)
+            .modifier(RotatePop(isShown: isShown))
             .animation(
-                isShown ? Motion.backOut(Motion.stateMilliseconds, delay: order * Motion.chromeStaggerMilliseconds) : Motion.backIn(Motion.stateMilliseconds),
+                isShown ? Motion.powerTwoOut(Motion.stateMilliseconds, delay: order * Motion.chromeStaggerMilliseconds) : Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds),
                 value: isShown
             )
+    }
+}
+
+@MainActor
+final class PillMotion: ObservableObject {
+    @Published private(set) var shellScale: CGFloat = 0
+    @Published private(set) var shellSpread: CGFloat = 0
+    @Published private(set) var areElementsShown = false
+    @Published private(set) var isPresent = false
+    private var step = 0
+
+    private static var enterMilliseconds: Int {
+        max(Motion.navigationPopMilliseconds, Motion.navigationSpreadDelayMilliseconds + Motion.navigationSpreadMilliseconds)
+    }
+
+    private func after(_ milliseconds: Int, _ change: @escaping () -> Void) {
+        let current = step
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(milliseconds)) { [weak self] in
+            guard let self, current == self.step else { return }
+            change()
+        }
+    }
+
+    func enter() {
+        step += 1
+        let isMidLeave = isPresent && shellScale > 0
+        if !isMidLeave {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                shellScale = 0
+                shellSpread = 0
+                areElementsShown = false
+                isPresent = true
+            }
+        }
+        after(0) { [weak self] in
+            withAnimation(Motion.powerTwoOut(Motion.navigationPopMilliseconds)) {
+                self?.shellScale = 1
+            }
+            withAnimation(Motion.powerThreeInOut(Motion.navigationSpreadMilliseconds, delay: isMidLeave ? 0 : Motion.navigationSpreadDelayMilliseconds)) {
+                self?.shellSpread = 1
+            }
+        }
+        after(isMidLeave ? Motion.navigationSpreadMilliseconds : Self.enterMilliseconds) { [weak self] in
+            self?.areElementsShown = true
+        }
+    }
+
+    func leave(then finish: @escaping () -> Void = {}) {
+        guard isPresent else { return }
+        step += 1
+        areElementsShown = false
+        let elementsGone = Motion.navigationLeaveElementMilliseconds
+        let narrowed = elementsGone + Motion.navigationLeaveSpreadMilliseconds * 3 / 4
+        after(elementsGone) { [weak self] in
+            withAnimation(Motion.powerThreeInOut(Motion.navigationLeaveSpreadMilliseconds)) {
+                self?.shellSpread = 0
+            }
+        }
+        after(narrowed) { [weak self] in
+            withAnimation(Motion.powerTwoIn(Motion.navigationLeavePopMilliseconds)) {
+                self?.shellScale = 0
+            }
+        }
+        after(narrowed + Motion.navigationLeavePopMilliseconds) { [weak self] in
+            self?.isPresent = false
+            finish()
+        }
+    }
+}
+
+struct PillShell: View {
+    let scale: CGFloat
+    let spread: CGFloat
+    let isWide: Bool
+    var stroke: Color = Palette.border
+
+    var body: some View {
+        GeometryReader { proxy in
+            let full = proxy.size
+            let thickness = isWide ? full.height : full.width
+            let along = thickness + ((isWide ? full.width : full.height) - thickness) * spread
+            Capsule()
+                .fill(Palette.panelSolid)
+                .overlay(Capsule().stroke(stroke, lineWidth: 1))
+                .frame(width: isWide ? along : thickness, height: isWide ? thickness : along)
+                .scaleEffect(scale)
+                .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
+                .frame(width: full.width, height: full.height)
+        }
     }
 }
 

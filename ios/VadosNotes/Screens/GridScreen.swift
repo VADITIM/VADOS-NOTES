@@ -178,39 +178,76 @@ struct GridScreen: View {
         }
     }
 
+    private func hasGroups(isFolders: Bool) -> Bool {
+        groups.contains { $0.isFolders == isFolders }
+    }
+
     @ViewBuilder
     private var browse: some View {
-        if notebookId != nil {
-            heading("Folders")
-        }
-        groupRows(isFolders: true)
-        LazyVGrid(columns: folderColumns, alignment: .leading, spacing: 18) {
-            AddTile(glyph: "folder", title: "Add folder", aspect: 1.25, isFolder: true) {
-                navigator.show(.newFolder(parentId: notebookId))
-            }
-            ForEach(Array(folders.enumerated()), id: \.element.id) { index, folder in
-                folderTile(folder, rank: index + 1, isDraggable: true)
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, notebookId == nil ? 24 : 12)
         if let notebookId {
-            heading("Notes")
-                .padding(.top, 12)
-            groupRows(isFolders: false)
-            MasonryLayout(minimumColumnWidth: Self.noteColumnWidth, spacing: 18) {
-                AddTile(glyph: "note", title: "Add note", aspect: PaperGeometry.cellWidth / PaperGeometry.cellHeight, isFolder: false) {
+            if notes.isEmpty && !hasGroups(isFolders: false) {
+                notesSection(notebookId)
+                foldersSection
+            } else {
+                foldersSection
+                notesSection(notebookId)
+            }
+        } else {
+            foldersSection
+        }
+    }
+
+    @ViewBuilder
+    private var foldersSection: some View {
+        if notebookId == nil || !folders.isEmpty || hasGroups(isFolders: true) {
+            if notebookId != nil {
+                heading("Folders")
+            }
+            groupRows(isFolders: true)
+            LazyVGrid(columns: folderColumns, alignment: .leading, spacing: 18) {
+                if notebookId == nil {
+                    AddTile(glyph: "folder", title: "Add folder", aspect: 1.25, isFolder: true) {
+                        navigator.show(.newFolder(parentId: nil))
+                    }
+                }
+                ForEach(Array(folders.enumerated()), id: \.element.id) { index, folder in
+                    folderTile(folder, rank: index + 1, isDraggable: true)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, notebookId == nil ? 24 : 12)
+        }
+    }
+
+    @ViewBuilder
+    private func notesSection(_ notebookId: String) -> some View {
+        let noteAspect = PaperGeometry.cellWidth / PaperGeometry.cellHeight
+        heading("Notes")
+            .padding(.top, 12)
+        groupRows(isFolders: false)
+        MasonryLayout(minimumColumnWidth: Self.noteColumnWidth, spacing: 18, unitHeight: Self.noteUnitHeight) {
+            VStack(spacing: 18) {
+                AddTile(glyph: "note", title: "Add note", aspect: noteAspect, isFolder: false) {
                     navigator.show(.newNote(notebookId: notebookId))
                 }
-                ForEach(Array(notes.enumerated()), id: \.element.id) { index, page in
-                    noteTile(page, rank: index + 1, isDraggable: true)
-                        .layoutValue(key: MasonrySpan.self, value: page.extent.columns)
+                AddTile(glyph: "folder", title: "Add folder", aspect: noteAspect, isFolder: false) {
+                    navigator.show(.newFolder(parentId: notebookId))
                 }
             }
-            .animation(Motion.placement, value: notes.map(\.id))
-            .padding(.horizontal, 28)
-            .padding(.top, 12)
+            .layoutValue(key: MasonryRows.self, value: 2)
+            ForEach(Array(notes.enumerated()), id: \.element.id) { index, page in
+                noteTile(page, rank: index + 1, isDraggable: true)
+                    .layoutValue(key: MasonrySpan.self, value: page.extent.columns)
+                    .layoutValue(key: MasonryRows.self, value: page.extent.rows)
+            }
         }
+        .animation(Motion.placement, value: notes.map(\.id))
+        .padding(.horizontal, 28)
+        .padding(.top, 12)
+    }
+
+    static func noteUnitHeight(_ width: CGFloat) -> CGFloat {
+        (width - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + 18
     }
 
     @ViewBuilder
@@ -225,7 +262,7 @@ struct GridScreen: View {
                 group: group,
                 caption: "\(group.members.count) \(isFolders ? "folder" : "note")\(group.members.count == 1 ? "" : "s")",
                 isOpen: openGroups.contains(group.id),
-                cardHeight: { cell in isFolders ? (cell - 28) / 1.25 + 28 + 12 + 44 : (cell - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + 18 },
+                cardHeight: { cell in isFolders ? (cell - 28) / 1.25 + 28 + 12 + 44 : Self.noteUnitHeight(cell) },
                 onToggle: { isOpen in
                     if isOpen {
                         openGroups.insert(group.id)
@@ -340,7 +377,7 @@ struct GridScreen: View {
                 }
             }
         }
-        .frame(width: drag.size.width)
+        .frame(width: drag.size.width, height: drag.size.height)
         .scaleEffect(1.04)
         .shadow(color: .black.opacity(0.6), radius: 18, y: 14)
         .opacity(isIntoTarget(drag.target) ? 0.85 : 1)
@@ -636,10 +673,6 @@ struct NoteTile: View {
     var body: some View {
         let look = Looks.note(page)
         VStack(alignment: .leading, spacing: 10) {
-            PageThumbnail(page: page)
-                .aspectRatio(CGFloat(PaperGeometry.width(of: page.extent) / PaperGeometry.height(of: page.extent)), contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .clipShape(Squircle(radius: 6))
             HStack(spacing: 8) {
                 GlyphView(name: look.icon, color: Color(hex: look.color), size: 16)
                 Text(title)
@@ -652,6 +685,10 @@ struct NoteTile: View {
                 }
             }
             .frame(minHeight: 18)
+            PageThumbnail(page: page)
+                .aspectRatio(CGFloat(PaperGeometry.width(of: page.extent) / PaperGeometry.height(of: page.extent)), contentMode: .fit)
+                .clipShape(Squircle(radius: 6))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(12)
         .background(Squircle.tile.fill(Palette.panelSolid))
@@ -705,9 +742,14 @@ struct MasonrySpan: LayoutValueKey {
     static let defaultValue = 1
 }
 
+struct MasonryRows: LayoutValueKey {
+    static let defaultValue = 1
+}
+
 struct MasonryLayout: Layout {
     let minimumColumnWidth: CGFloat
     let spacing: CGFloat
+    let unitHeight: (CGFloat) -> CGFloat
 
     private func columns(for width: CGFloat) -> (count: Int, width: CGFloat) {
         let count = max(1, Int((width + spacing) / (minimumColumnWidth + spacing)))
@@ -719,8 +761,9 @@ struct MasonryLayout: Layout {
         var heights = Array(repeating: CGFloat(0), count: grid.count)
         return subviews.map { subview in
             let span = min(grid.count, max(1, subview[MasonrySpan.self]))
+            let rows = max(1, subview[MasonryRows.self])
             let tileWidth = grid.width * CGFloat(span) + spacing * CGFloat(span - 1)
-            let size = subview.sizeThatFits(ProposedViewSize(width: tileWidth, height: nil))
+            let size = CGSize(width: tileWidth, height: unitHeight(grid.width) * CGFloat(rows) + spacing * CGFloat(rows - 1))
             var bestColumn = 0
             var bestTop = CGFloat.infinity
             for column in 0...(grid.count - span) {

@@ -87,6 +87,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     var onTextTap: ((Point, String?) -> Void)?
     var onTextMove: ((String, TextBox) -> Void)?
     var onMoveElements: (([String], Point) -> Void)?
+    var onScaleElements: (([String], Point, Double) -> Void)?
+    var onSelectionMenu: ((SelectionMenuRequest?) -> Void)?
     var onInput: (() -> Void)?
     var onHold: ((CGPoint) -> Void)?
     var onHoldMove: ((CGPoint) -> Void)?
@@ -124,6 +126,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private var selectionBounds: CGRect?
     private var selectionStart: Point?
     private var selectionOffset: CGVector = .zero
+    private var isSelectionTouchInside = false
+    private var selectionScaleAnchor: CGPoint?
+    private var selectionScale: CGFloat = 1
     private var hasFitted = false
     private var fittedSize: CGSize = .zero
     private var importObserver: NSObjectProtocol?
@@ -135,6 +140,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private static let minimumStraightLength: CGFloat = 24
     private static let selectionPadding: CGFloat = 8
     private static let lassoDash: [NSNumber] = [6, 5]
+    private static let selectionScaleRange: ClosedRange<CGFloat> = 0.1...10
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -239,6 +245,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
                 options.elementOffsets[id] = selectionOffset
             }
         }
+        if let selectionScaleAnchor {
+            for id in selectedIds {
+                options.elementTransforms[id] = scaling(about: selectionScaleAnchor)
+            }
+        }
         if !areaErase.isEmpty {
             var elements = page.elements.filter { areaErase[$0.id] == nil }
             for (elementId, entry) in areaErase {
@@ -265,13 +276,12 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         lastPanLocation = gestureStart
         onInput?()
         let point = camera.toPage(gestureStart)
+        onSelectionMenu?(nil)
         let isInsideSelection = selectionScreenRect()?.contains(gestureStart) ?? false
-        if !isReadOnly, isInsideSelection, tool == .lasso || isFingerTouch {
+        if !isReadOnly, !selectedIds.isEmpty, isFingerTouch || (isInsideSelection && tool == .lasso) {
             selectionStart = point
+            isSelectionTouchInside = isInsideSelection
             return
-        }
-        if isFingerTouch, !selectedIds.isEmpty {
-            clearSelection()
         }
         if tool == .text, !isReadOnly, let element = textElement(at: point), let box = element.box, let rect = PageRenderer.textRect(for: element) {
             pressedText = PressedText(id: element.id, origin: box, start: point, height: Double(rect.height))
@@ -303,6 +313,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         case .text:
             isPanning = isFingerTouch
         case .lasso:
+            guard !isFingerTouch else {
+                isPanning = true
+                return
+            }
             lassoPoints = [point]
         }
     }
@@ -392,7 +406,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             return
         }
         if selectionStart != nil {
-            finishSelectionMove()
+            finishSelectionMove(isMoved: wasMoved)
             return
         }
         if let pressedText {
@@ -414,9 +428,6 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             liveLayer.path = nil
             if tool == .text, !wasMoved, !isReadOnly, Ink.isInsidePaper(point, extent: page.extent) {
                 onTextTap?(point, nil)
-            }
-            if tool == .lasso, !wasMoved {
-                clearSelection()
             }
             return
         }
@@ -486,6 +497,17 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePinch(_ pinch: UIPinchGestureRecognizer) {
+        if pinch.state == .began {
+            onSelectionMenu?(nil)
+            if !isReadOnly, let selectionBounds, selectionScreenRect()?.contains(pinch.location(in: self)) ?? false {
+                selectionScaleAnchor = CGPoint(x: selectionBounds.midX, y: selectionBounds.midY)
+                selectionScale = 1
+            }
+        }
+        if selectionScaleAnchor != nil {
+            scaleSelection(with: pinch)
+            return
+        }
         guard pinch.state == .began || pinch.state == .changed else { return }
         if activeTouch != nil {
             cancelActiveGesture()
@@ -499,8 +521,45 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         cameraChanged()
     }
 
+    private func scaleSelection(with pinch: UIPinchGestureRecognizer) {
+        switch pinch.state {
+        case .began, .changed:
+            if activeTouch != nil {
+                cancelActiveGesture()
+            }
+            selectionScale = min(Self.selectionScaleRange.upperBound, max(Self.selectionScaleRange.lowerBound, selectionScale * pinch.scale))
+            pinch.scale = 1
+            showSelection()
+            setNeedsDisplay()
+        case .ended:
+            finishSelectionScale()
+        default:
+            selectionScaleAnchor = nil
+            selectionScale = 1
+            showSelection()
+            setNeedsDisplay()
+        }
+    }
+
+    private func scaling(about anchor: CGPoint) -> CGAffineTransform {
+        CGAffineTransform(translationX: anchor.x, y: anchor.y).scaledBy(x: selectionScale, y: selectionScale).translatedBy(x: -anchor.x, y: -anchor.y)
+    }
+
+    private func finishSelectionScale() {
+        guard let anchor = selectionScaleAnchor else { return }
+        let factor = Double(selectionScale)
+        selectionScaleAnchor = nil
+        selectionScale = 1
+        if abs(factor - 1) > 0.001 {
+            Haptics.landed()
+            onScaleElements?(selectedIds, Point(x: Double(anchor.x), y: Double(anchor.y)), factor)
+        }
+        refreshSelection()
+        setNeedsDisplay()
+    }
+
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
-        guard pan.state == .began || pan.state == .changed else { return }
+        guard pan.state == .began || pan.state == .changed, selectionScaleAnchor == nil else { return }
         if activeTouch != nil {
             cancelActiveGesture()
         }
@@ -753,7 +812,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
 
     private func selectionScreenRect() -> CGRect? {
         guard let selectionBounds else { return nil }
-        let moved = selectionBounds.offsetBy(dx: selectionOffset.dx, dy: selectionOffset.dy)
+        var moved = selectionBounds.offsetBy(dx: selectionOffset.dx, dy: selectionOffset.dy)
+        if let selectionScaleAnchor {
+            moved = moved.applying(scaling(about: selectionScaleAnchor))
+        }
         let origin = camera.toScreen(Point(x: moved.minX, y: moved.minY))
         return CGRect(x: origin.x, y: origin.y, width: moved.width * camera.scale, height: moved.height * camera.scale).insetBy(dx: -Self.selectionPadding, dy: -Self.selectionPadding)
     }
@@ -765,20 +827,25 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         CATransaction.commit()
     }
 
-    private func finishSelectionMove() {
+    private func finishSelectionMove(isMoved: Bool) {
         let offset = selectionOffset
         selectionStart = nil
-        if offset != .zero {
+        selectionOffset = .zero
+        if isMoved, offset != .zero {
             Haptics.landed()
             onMoveElements?(selectedIds, Point(x: Double(offset.dx), y: Double(offset.dy)))
+        } else if !isMoved, isSelectionTouchInside, let rect = selectionScreenRect() {
+            onSelectionMenu?(SelectionMenuRequest(ids: selectedIds, frame: convert(rect, to: nil)))
+        } else if !isMoved {
+            clearSelection()
         }
-        selectionOffset = .zero
         refreshSelection()
         setNeedsDisplay()
     }
 
     private func clearSelection() {
         selectedIds = []
+        onSelectionMenu?(nil)
         refreshSelection()
     }
 

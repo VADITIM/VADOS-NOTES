@@ -143,8 +143,10 @@ struct ToolNav<PanelContent: View>: View {
     @ViewBuilder var panel: () -> PanelContent
 
     @Namespace private var washSpace
-    @State private var orientation: NavOrientation = .horizontal
-    @State private var placement: NavPlacement?
+    @StateObject private var navigationMotion = PillMotion()
+    @StateObject private var subNavigationMotion = PillMotion()
+    @State private var orientation: NavOrientation = Preferences.shared.navPlacement?.orientation == NavOrientation.vertical.rawValue ? .vertical : .horizontal
+    @State private var placement: NavPlacement? = Preferences.shared.navPlacement
     @State private var navSize: CGSize = .zero
     @State private var subNavSize: CGSize = .zero
     @State private var panelSize: CGSize = .zero
@@ -154,10 +156,6 @@ struct ToolNav<PanelContent: View>: View {
     @State private var wheelAnchor: CGRect?
     @State private var swallowUntil = Date.distantPast
     @State private var shownSubNavigationKey: String?
-    @State private var shellScale: CGFloat = 0
-    @State private var shellSpread: CGFloat = 0
-    @State private var areElementsShown = false
-    @State private var subNavigationStep = 0
     @State private var toolReordering: Reordering?
     @State private var groupReordering: Reordering?
     @State private var toolSettling: Settling?
@@ -255,8 +253,8 @@ struct ToolNav<PanelContent: View>: View {
                 navBody(layer: layer, center: center)
                     .position(center)
             }
-            .animation(carryPoint == nil ? Motion.placement : nil, value: center)
-            .animation(carryPoint == nil ? Motion.placement : nil, value: subNavCenter)
+            .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: center)
+            .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: subNavCenter)
             .coordinateSpace(name: NavMetrics.layerSpace)
             .onPreferenceChange(NavSizeKey.self) { navSize = $0 }
             .onPreferenceChange(SubNavSizeKey.self) { subNavSize = $0 }
@@ -265,10 +263,18 @@ struct ToolNav<PanelContent: View>: View {
             .onPreferenceChange(WheelAnchorKey.self) { wheelAnchor = $0 }
         }
         .onAppear {
-            placement = Preferences.shared.navPlacement
-            orientation = placement?.orientation == NavOrientation.vertical.rawValue ? .vertical : .horizontal
+            if isShown {
+                navigationMotion.enter()
+            }
             if isSubNavigationWanted {
                 openSubNavigation()
+            }
+        }
+        .onChange(of: isShown) { _, shown in
+            if shown {
+                navigationMotion.enter()
+            } else {
+                navigationMotion.leave()
             }
         }
         .onChange(of: isSubNavigationWanted) { _, isWanted in
@@ -286,60 +292,13 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private func openSubNavigation() {
-        subNavigationStep += 1
-        let wasHidden = shownSubNavigationKey == nil
         shownSubNavigationKey = subNavKey
-        guard wasHidden else {
-            withAnimation(Motion.backOut(Motion.stateMilliseconds / 2)) {
-                shellScale = 1
-            }
-            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds)) {
-                shellSpread = 1
-            }
-            areElementsShown = true
-            return
-        }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            shellScale = 0
-            shellSpread = 0
-            areElementsShown = false
-        }
-        DispatchQueue.main.async {
-            withAnimation(Motion.backOut(Motion.stateMilliseconds / 2)) {
-                shellScale = 1
-            }
-            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds, delay: Motion.stateMilliseconds / 4)) {
-                shellSpread = 1
-            }
-            areElementsShown = true
-        }
+        subNavigationMotion.enter()
     }
 
     private func closeSubNavigation() {
         guard shownSubNavigationKey != nil else { return }
-        subNavigationStep += 1
-        let step = subNavigationStep
-        let elementsGone = Motion.stateMilliseconds
-        areElementsShown = false
-        func after(_ milliseconds: Int, _ change: @escaping () -> Void) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(milliseconds)) {
-                guard step == subNavigationStep else { return }
-                change()
-            }
-        }
-        after(elementsGone) {
-            withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds)) {
-                shellSpread = 0
-            }
-        }
-        after(elementsGone + Motion.stateMilliseconds * 3 / 4) {
-            withAnimation(Motion.backIn(Motion.stateMilliseconds / 2)) {
-                shellScale = 0
-            }
-        }
-        after(elementsGone + Motion.stateMilliseconds * 5 / 4) {
+        subNavigationMotion.leave {
             shownSubNavigationKey = nil
         }
     }
@@ -349,18 +308,23 @@ struct ToolNav<PanelContent: View>: View {
         let isSizing = sizingDrag != nil
         return layout {
             grip(layer: layer, center: center)
+                .revealedElement()
             ForEach(entries) { entry in
                 switch entry {
                 case .item(let item):
                     itemButton(item)
-                        .transition(.pop)
+                        .revealedElement()
+                        .transition(.elementLeave)
                 case .separator:
                     NavSeparator(orientation: orientation)
-                        .transition(.pop)
+                        .revealedElement()
+                        .transition(.elementLeave)
                 }
             }
             grip(layer: layer, center: center)
+                .revealedElement()
         }
+        .environment(\.isElementRevealed, navigationMotion.areElementsShown)
         .opacity(isSizing ? 0 : 1)
         .scaleEffect(isSizing ? CGFloat(Motion.scales.sliderEnter) : 1)
         .animation(isSizing ? Motion.powerTwoIn(Motion.pressMilliseconds) : Motion.powerTwoOut(Motion.stateMilliseconds, delay: Motion.pressMilliseconds), value: isSizing)
@@ -374,16 +338,14 @@ struct ToolNav<PanelContent: View>: View {
         }
         .animation(Motion.wash, value: selectedId)
         .padding(NavMetrics.padding)
-        .background(Capsule().fill(Palette.panelSolid))
+        .background(PillShell(scale: navigationMotion.shellScale, spread: navigationMotion.shellSpread, isWide: orientation == .horizontal, stroke: carryPoint == nil ? Palette.border : Palette.accent))
         .contentShape(Capsule())
         .simultaneousGesture(sizableItem == nil ? nil : sizingGesture())
-        .overlay(Capsule().stroke(carryPoint == nil ? Palette.border : Palette.accent, lineWidth: 1))
         .fixedSize()
         .background(GeometryReader { navProxy in Color.clear.preference(key: NavSizeKey.self, value: navProxy.size) })
         .scaleEffect(carryPoint == nil ? 1 : CGFloat(Motion.scales.held))
-        .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
-        .modifier(ChromePop(isShown: isShown, order: 1, anchor: .center))
-        .animation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2), value: face)
+        .allowsHitTesting(navigationMotion.areElementsShown)
+        .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: face)
         .animation(Motion.backOut(Motion.stateMilliseconds), value: carryPoint == nil)
     }
 
@@ -463,28 +425,12 @@ struct ToolNav<PanelContent: View>: View {
                     .transition(.groupLeave)
             }
         }
-        .environment(\.isElementRevealed, areElementsShown)
+        .environment(\.isElementRevealed, subNavigationMotion.areElementsShown)
         .padding(NavMetrics.padding)
         .fixedSize()
-        .animation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2), value: shown.map(\.id))
+        .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: shown.map(\.id))
         .background(GeometryReader { subProxy in Color.clear.preference(key: SubNavSizeKey.self, value: subProxy.size) })
-        .background(subNavShell)
-    }
-
-    private var subNavShell: some View {
-        GeometryReader { proxy in
-            let full = proxy.size
-            let isWide = orientation == .horizontal
-            let thickness = isWide ? full.height : full.width
-            let along = thickness + ((isWide ? full.width : full.height) - thickness) * shellSpread
-            Capsule()
-                .fill(Palette.panelSolid)
-                .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
-                .frame(width: isWide ? along : thickness, height: isWide ? thickness : along)
-                .scaleEffect(shellScale)
-                .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
-                .frame(width: full.width, height: full.height)
-        }
+        .background(PillShell(scale: subNavigationMotion.shellScale, spread: subNavigationMotion.shellSpread, isWide: orientation == .horizontal))
     }
 
     private func groupOffset(_ id: String) -> CGFloat {
