@@ -1,5 +1,6 @@
-import { axisSnapped, clampBox, clipToPaper, cutStroke, isInsidePaper, isStrokeSwept, liveElements, smoothStroke, straightened } from "./model.js"
+import { axisSnapped, clampBox, clipToPaper, cutStroke, isInsidePaper, isStrokeSwept, liveElements, paperHeight, paperWidth, smoothStroke, straightened } from "./model.js"
 import { Camera, StrokePathCache, clipToPaper as clipContextToPaper, drawPage, strokePath, textRect } from "./renderer.js"
+import { subscribeImports } from "./imports.js"
 import { duration, tween } from "./motion.js"
 import { inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
@@ -108,22 +109,25 @@ export class InkCanvas {
         }
         window.addEventListener("keydown", this.keyDown)
         window.addEventListener("keyup", this.keyUp)
+        this.unsubscribeImports = subscribeImports(() => this.requestDraw())
     }
 
     destroy() {
+        this.unsubscribeImports()
         window.removeEventListener("keydown", this.keyDown)
         window.removeEventListener("keyup", this.keyUp)
         clearTimeout(this.holdTimer)
         this.endStroke()
     }
 
-    configure({ page, tool, paperStyle, showsGuides, hiddenElementIds, isReadOnly }) {
+    configure({ page, tool, paperStyle, showsGuides, showsDividers, hiddenElementIds, isReadOnly }) {
         const isNewPage = this.page?.id !== page.id
-        const needsDraw = this.page !== page || this.showsGuides !== showsGuides || this.paperStyle !== paperStyle || !sameSet(this.hiddenElementIds, hiddenElementIds)
+        const needsDraw = this.page !== page || this.showsGuides !== showsGuides || this.showsDividers !== showsDividers || this.paperStyle !== paperStyle || !sameSet(this.hiddenElementIds, hiddenElementIds)
         this.page = page
         this.tool = tool
         this.paperStyle = paperStyle
         this.showsGuides = showsGuides
+        this.showsDividers = showsDividers
         this.hiddenElementIds = hiddenElementIds
         this.isReadOnly = isReadOnly
         if (isNewPage) {
@@ -216,6 +220,7 @@ export class InkCanvas {
             height: this.height,
             pixelRatio: this.pixelRatio,
             showsGuides: this.showsGuides,
+            showsDividers: this.showsDividers,
             paperStyle: this.paperStyle,
             hiddenElementIds: new Set([...this.hiddenElementIds, ...this.pendingErased]),
             textOffsets,
@@ -352,7 +357,25 @@ export class InkCanvas {
         context.restore()
     }
 
+    constrainCamera() {
+        if (!this.page || this.width === 0) {
+            return
+        }
+        const extent = this.page.extent
+        const top = this.topInset + fitMargin
+        const availableWidth = Math.max(1, this.width - fitMargin * 2)
+        const availableHeight = Math.max(1, this.height - top - fitMargin)
+        const smallest = Math.min(availableWidth / paperWidth(extent), availableHeight / paperHeight(extent))
+        if (this.camera.scale < smallest) {
+            this.camera = this.camera.zoomed(smallest / this.camera.scale, this.width / 2, top + availableHeight / 2)
+        }
+        const axis = (offset, size, start, end) => (size <= end - start ? start + (end - start - size) / 2 : Math.min(start, Math.max(end - size, offset)))
+        this.camera.offsetX = axis(this.camera.offsetX, paperWidth(extent) * this.camera.scale, fitMargin, this.width - fitMargin)
+        this.camera.offsetY = axis(this.camera.offsetY, paperHeight(extent) * this.camera.scale, top, this.height - fitMargin)
+    }
+
     cameraChanged() {
+        this.constrainCamera()
         this.drawLive()
         this.requestDraw()
         this.callbacks.onCameraChange?.(this.camera)

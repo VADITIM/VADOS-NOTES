@@ -1,9 +1,10 @@
 import { InkCanvas } from "./canvas.js"
+import { subscribeImports } from "./imports.js"
 import { create, microLabel, roundIconButton, searchField, settingsButton, topBar } from "./components.js"
 import { slotsFromTokens } from "./menu.js"
 import { cellCount, clampBox, paperHeight, paperWidth } from "./model.js"
 import { tileAppear } from "./motion.js"
-import { fontMetrics, renderThumbnail, textLayout } from "./renderer.js"
+import { fontMetrics, lineHeightOf, renderThumbnail } from "./renderer.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { PageTools } from "./pageTools.js"
 import { TileDrag, tileGestures } from "./tileDrag.js"
@@ -40,15 +41,25 @@ function thumbnail(page) {
     canvas.renderKey = null
     canvas.refresh = (nextPage) => {
         const showsGuides = readSetting("showsGuides", true)
+        const showsDividers = readSetting("showsDividers", true)
         const style = paperStyle()
-        const key = `${nextPage.id}-${nextPage.updated}-${nextPage.extent.cols}x${nextPage.extent.rows}-${showsGuides}-${style}-${canvas.clientWidth}x${canvas.clientHeight}`
+        const key = `${nextPage.id}-${nextPage.updated}-${nextPage.extent.cols}x${nextPage.extent.rows}-${showsGuides}-${showsDividers}-${style}-${canvas.clientWidth}x${canvas.clientHeight}`
         if (key === canvas.renderKey) {
             return
         }
         canvas.renderKey = key
-        renderThumbnail(canvas, nextPage, showsGuides, style)
+        renderThumbnail(canvas, nextPage, { showsGuides, showsDividers, paperStyle: style })
     }
     new ResizeObserver(() => canvas.refresh(canvas.page)).observe(canvas)
+    const unsubscribe = subscribeImports(() => {
+        if (canvas.isConnected) {
+            canvas.wasConnected = true
+            canvas.renderKey = null
+            canvas.refresh(canvas.page)
+        } else if (canvas.wasConnected) {
+            unsubscribe()
+        }
+    })
     canvas.page = page
     return canvas
 }
@@ -92,7 +103,7 @@ class GridScreen {
         this.drag?.end(false)
     }
 
-    mount({ title, label, onBack }) {
+    mount({ title, label, onBack, onTitle }) {
         this.search = searchField({
             placeholder: "Search",
             onChange: (value) => {
@@ -100,7 +111,7 @@ class GridScreen {
                 this.update()
             },
         })
-        this.header = topBar({ title, label, onBack, trailing: [this.search, settingsControl(this.app)] })
+        this.header = topBar({ title, label, onBack, onTitle, trailing: [this.search, settingsControl(this.app)] })
         this.content = create("div", "grid-content")
         this.scroller = create("div", "screen-scroll", this.content)
         this.element.append(this.scroller, this.header)
@@ -458,7 +469,7 @@ export class NotebookScreen extends GridScreen {
         this.noteGrid = this.makeGrid("page-grid", 170, 240)
         this.addFolder = this.addTile({ glyphName: "folder", title: "Add folder", aspect: folderAspect, className: "add-folder", action: () => app.showSheet({ kind: "new-folder", parentId: this.notebookId }) })
         this.addNote = this.addTile({ glyphName: "note", title: "Add note", aspect: `${paperWidth({ cols: 1, rows: 1 })} / ${paperHeight({ cols: 1, rows: 1 })}`, className: "add-note", action: () => this.addPage() })
-        this.mount({ title: app.library.notebook(notebookId)?.title ?? "Folder", label: "", onBack: () => this.goBack() })
+        this.mount({ title: app.library.notebook(notebookId)?.title ?? "Folder", label: "", onBack: () => this.goBack(), onTitle: () => app.showSheet({ kind: "rename-folder", notebookId: this.notebookId }) })
         this.browse.append(create("div", "grid-heading", microLabel("Folders")), this.folderGrid, create("div", "grid-heading", microLabel("Notes")), this.noteGrid)
         this.update()
     }
@@ -469,8 +480,7 @@ export class NotebookScreen extends GridScreen {
     }
 
     addPage() {
-        const page = this.app.library.createPage(this.notebookId)
-        this.app.go({ kind: "page", notebookId: this.notebookId, pageId: page.id })
+        this.app.showSheet({ kind: "new-note", notebookId: this.notebookId })
     }
 
     update() {
@@ -507,9 +517,9 @@ export class PageScreen {
         this.notebookId = notebookId
         this.pageId = pageId
         this.element = create("section", "screen page-screen")
-        this.undoButton = roundIconButton({ glyphName: "undo", label: "Undo", action: () => app.library.undo(this.pageId) })
-        this.redoButton = roundIconButton({ glyphName: "redo", label: "Redo", action: () => app.library.redo(this.pageId) })
-        this.header = topBar({ title: "", label: "", onBack: () => app.go({ kind: "notebook", notebookId }), trailing: [], below: [this.undoButton, this.redoButton] })
+        this.undoButton = roundIconButton({ glyphName: "undo", label: "Undo", color: tokens.semantic.navigation, action: () => app.library.undo(this.pageId) })
+        this.redoButton = roundIconButton({ glyphName: "redo", label: "Redo", color: tokens.semantic.import, action: () => app.library.redo(this.pageId) })
+        this.header = topBar({ title: "", label: "", onBack: () => app.go({ kind: "notebook", notebookId }), onTitle: () => app.showSheet({ kind: "rename-note", pageId: this.pageId }), trailing: [], below: [this.undoButton, this.redoButton] })
         this.canvas = new InkCanvas(this.callbacks())
         this.editorHost = create("div", "text-editor-host")
         this.deletedNotice = create("div", "deleted-notice", microLabel("This note was deleted"))
@@ -534,6 +544,7 @@ export class PageScreen {
     get settings() {
         return {
             showsGuides: readSetting("showsGuides", true),
+            showsDividers: readSetting("showsDividers", true),
         }
     }
 
@@ -561,6 +572,7 @@ export class PageScreen {
                 tool: this.tools.canvasTool(),
                 paperStyle: paperStyle(),
                 showsGuides: this.settings.showsGuides,
+                showsDividers: this.settings.showsDividers,
                 hiddenElementIds: session ? new Set([session.element.id]) : new Set(),
                 isReadOnly: library.isReadOnly(this.pageId),
             })
@@ -583,14 +595,24 @@ export class PageScreen {
         const page = library.page(this.pageId)
         const isReadOnly = library.isReadOnly(this.pageId)
         const showsGuides = this.settings.showsGuides
+        const showsDividers = this.settings.showsDividers
         const slots = slotsFromTokens(tokens.menus.page, {
-            title: (action) => (action === "toggle_guides" ? (showsGuides ? "Guides off" : "Guides on") : menuTitles[action] ?? action),
+            title: (action) => {
+                if (action === "toggle_guides") {
+                    return showsGuides ? "Guides off" : "Guides on"
+                }
+                if (action === "toggle_dividers") {
+                    return showsDividers ? "Cell lines off" : "Cell lines on"
+                }
+                return menuTitles[action] ?? action
+            },
             isEnabled: (action) => {
                 switch (action) {
                 case "previous_page": return index > 0
                 case "next_page": return index >= 0 && index < pages.length - 1
                 case "expand_columns":
                 case "expand_rows": return Boolean(page) && !isReadOnly
+                case "toggle_dividers": return Boolean(page) && cellCount(page.extent) > 1
                 case "import": return false
                 case "delete_page": return Boolean(page)
                 default: return true
@@ -608,11 +630,9 @@ export class PageScreen {
                         this.app.go({ kind: "page", notebookId: this.notebookId, pageId: pages[index + 1].id })
                     }
                     break
-                case "new_page": {
-                    const created = library.createPage(this.notebookId)
-                    this.app.go({ kind: "page", notebookId: this.notebookId, pageId: created.id })
+                case "new_page":
+                    this.app.showSheet({ kind: "new-note", notebookId: this.notebookId })
                     break
-                }
                 case "expand_columns":
                     library.expand(this.pageId, true)
                     break
@@ -621,6 +641,9 @@ export class PageScreen {
                     break
                 case "toggle_guides":
                     this.setSettings({ showsGuides: !showsGuides })
+                    break
+                case "toggle_dividers":
+                    this.setSettings({ showsDividers: !showsDividers })
                     break
                 case "fit_page":
                     this.canvas.fit()
@@ -660,7 +683,7 @@ export class PageScreen {
                 } else {
                     const page = library.page(this.pageId)
                     const fontSize = textFontSize()
-                    const height = textLayout({ font_size: fontSize, content: "" }).lineHeight
+                    const height = lineHeightOf(fontSize)
                     const box = clampBox({ x: point[0], y: point[1], width: tokens.text.box_width }, page.extent, height)
                     library.beginText(this.pageId, [box.x, box.y], fontSize)
                 }

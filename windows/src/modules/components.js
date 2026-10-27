@@ -125,11 +125,17 @@ export function backButton(onBack) {
     return holdable(button, { action: onBack })
 }
 
-export function topBar({ title, label, onBack, trailing = [], below = [] }) {
+export function topBar({ title, label, onBack, onTitle, trailing = [], below = [] }) {
     const labelElement = label === undefined ? null : microLabel(label)
     const titleElement = sweepTitle(title)
     const trailingElement = create("div", "top-bar-trailing", ...trailing)
     const titles = create("div", "top-bar-titles", labelElement, titleElement)
+    if (onTitle) {
+        titles.classList.add("is-editable", "pressable-soft")
+        titles.setAttribute("role", "button")
+        titles.title = "Rename"
+        titles.addEventListener("click", onTitle)
+    }
     const back = onBack ? backButton(onBack) : null
     const bar = create(
         "header",
@@ -163,6 +169,7 @@ export function settingsButton(onOpen) {
 
 export function roundIconButton({ glyphName, label, color = tokens.palette.text_body, action }) {
     const button = create("button", "round-button pressable", glyph(glyphName, { color }))
+    button.style.setProperty("--button-tint", color)
     button.type = "button"
     button.setAttribute("aria-label", label)
     button.title = label

@@ -225,7 +225,20 @@ svg.squircle {
 .top-bar-below {
     display: flex;
     gap: 10px;
-    padding-left: 62px;
+}
+
+.top-bar .top-bar-below .round-button {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--button-tint) 55%, transparent);
+    background: color-mix(in srgb, var(--button-tint) 14%, var(--palette-panel-solid));
+}
+
+.top-bar-titles.is-editable {
+    cursor: pointer;
+    transition: box-shadow var(--duration-state) var(--curve-power-two-out), transform var(--duration-release) var(--curve-back-out);
+}
+
+.top-bar.is-overlay .top-bar-titles.is-editable:hover {
+    box-shadow: inset 0 0 0 1px var(--palette-border-hover);
 }
 
 .round-button.is-disabled {
@@ -348,11 +361,11 @@ svg.squircle {
     min-height: 16px;
 }
 
-.add-tile-wrapper {
+.add-tile-wrapper:has(.add-folder) {
     align-self: stretch;
 }
 
-.add-tile-wrapper .add-tile {
+.add-tile-wrapper .add-folder {
     height: 100%;
 }
 
@@ -1448,4 +1461,42 @@ svg.squircle {
 
 .segmented-option.is-selected {
     color: var(--palette-text-bright);
+}
+
+.file-picker {
+    display: none;
+}
+
+.pdf-section {
+    flex-direction: row;
+}
+
+.pdf-choice {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    min-height: 60px;
+    padding: 10px 16px;
+    border-radius: 16px;
+    background: var(--palette-sunken-deep);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--semantic-import) 45%, transparent);
+    text-align: left;
+}
+
+.pdf-choice-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.pdf-choice-title {
+    font-family: "Space Mono", monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--palette-text-bright);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }

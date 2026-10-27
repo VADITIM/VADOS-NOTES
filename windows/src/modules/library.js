@@ -1,4 +1,6 @@
 import {
+    cellHeight,
+    cellWidth,
     decodeFile,
     encodeNotebook,
     encodePage,
@@ -22,6 +24,32 @@ import { deviceIdentity, loadFiles, writeFile } from "./storage.js"
 import { tokens } from "./tokens.js"
 
 const undoLimit = 200
+
+const importMarginMillimetres = 5
+const sizeTolerance = 1
+
+function rounded(value) {
+    return Math.round(value * 100) / 100
+}
+
+function importElement(asset, index, [width, height], now, device) {
+    const isA4 = Math.abs(width - cellWidth) <= sizeTolerance && Math.abs(height - cellHeight) <= sizeTolerance
+    const scale = isA4 ? 1 : Math.min((cellWidth - importMarginMillimetres * 2) / width, (cellHeight - importMarginMillimetres * 2) / height)
+    return {
+        id: makeIdentifier("e", timestampMilliseconds(now)),
+        type: "import",
+        layer: "import",
+        order: index,
+        asset,
+        source_page: index,
+        source_size_mm: [width, height],
+        placement: { x: rounded((cellWidth - width * scale) / 2), y: rounded(index * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
+        fit: isA4 ? "original" : "fit_cell",
+        updated: now,
+        device,
+        deleted: false,
+    }
+}
 
 function endOrder(items) {
     return items.reduce((highest, item, index) => Math.max(highest, Number.isFinite(item.order) ? item.order : index), -1) + 1
@@ -193,20 +221,21 @@ export class Library {
         this.applyNotebook({ ...notebook, deleted: true, updated: this.timestamp(), device: this.device })
     }
 
-    createPage(notebookId) {
+    createPage(notebookId, { title = null, pdf = null } = {}) {
         const now = this.timestamp()
         const header = {
             schema_version: schemaVersion,
             id: makeIdentifier("p", timestampMilliseconds(now)),
             notebook: notebookId,
-            title: `Note ${this.pages(notebookId).length + 1}`,
+            title: title ?? `Note ${this.pages(notebookId).length + 1}`,
             order: endOrder(this.pages(notebookId)),
             updated: now,
             device: this.device,
             deleted: false,
-            extent: { cols: 1, rows: 1 },
+            extent: { cols: 1, rows: Math.max(1, pdf?.pages.length ?? 1) },
         }
         this.applyHeader(header)
+        pdf?.pages.forEach((size, index) => this.applyElement(header.id, importElement(pdf.asset, index, size, now, this.device)))
         return this.pagesById.get(header.id)
     }
 

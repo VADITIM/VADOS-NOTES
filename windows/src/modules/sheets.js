@@ -1,4 +1,5 @@
 import { create, field, microLabel, slabButton } from "./components.js"
+import { readPdf } from "./imports.js"
 import { paperStyle, setPaperStyle } from "./preferences.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { readSetting, writeSetting } from "./storage.js"
@@ -237,6 +238,84 @@ function settingsSheet(app) {
     return panel
 }
 
+function newNoteSheet(app, notebookId) {
+    const library = app.library
+    const title = field({ placeholder: "Name", value: `Note ${library.pages(notebookId).length + 1}` })
+    let source = "blank"
+    let pdf = null
+    let isReading = false
+    const picker = create("input", "file-picker")
+    picker.type = "file"
+    picker.accept = "application/pdf,.pdf"
+    const pickerTitle = create("span", "pdf-choice-title", "Choose PDF")
+    const pickerDetail = microLabel("No file chosen", tokens.palette.text_muted)
+    const choose = create("button", "pdf-choice pressable", glyph("note_add", { color: tokens.semantic.import }), create("span", "pdf-choice-text", pickerTitle, pickerDetail))
+    choose.type = "button"
+    choose.addEventListener("click", () => picker.click())
+    const pdfSection = create("div", "settings-section pdf-section", choose, picker)
+    const submit = () => {
+        const name = title.input.value.trim()
+        if (!name || (source === "pdf" && !pdf)) {
+            return
+        }
+        const page = library.createPage(notebookId, { title: name, pdf: source === "pdf" ? pdf : null })
+        app.showSheet(null)
+        app.go({ kind: "page", notebookId, pageId: page.id })
+    }
+    const button = slabButton("Create", tokens.semantic.create, submit)
+    const refresh = () => {
+        pdfSection.style.display = source === "pdf" ? "flex" : "none"
+        button.setEnabled(title.input.value.trim().length > 0 && !isReading && (source === "blank" || Boolean(pdf)))
+    }
+    picker.addEventListener("change", async () => {
+        const file = picker.files?.[0]
+        if (!file) {
+            return
+        }
+        pdf = null
+        isReading = true
+        pickerTitle.textContent = file.name
+        pickerDetail.textContent = "Reading…"
+        pickerDetail.style.color = tokens.palette.text_muted
+        refresh()
+        try {
+            pdf = await readPdf(file)
+            pickerDetail.textContent = `${pdf.pages.length} page${pdf.pages.length === 1 ? "" : "s"}`
+            if (title.input.value.trim() === "" || /^Note \d+$/.test(title.input.value.trim())) {
+                title.input.value = file.name.replace(/\.pdf$/i, "")
+            }
+        } catch (error) {
+            pickerDetail.textContent = "Not a readable PDF"
+            pickerDetail.style.color = tokens.semantic.destructive
+        }
+        isReading = false
+        refresh()
+    })
+    title.input.addEventListener("input", refresh)
+    title.input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            submit()
+        }
+    })
+    const panel = sheetPanel(
+        "New note",
+        title,
+        segmented([{ value: "blank", title: "Blank" }, { value: "pdf", title: "PDF" }], source, (value) => {
+            source = value
+            refresh()
+            if (value === "pdf" && !pdf) {
+                picker.click()
+            }
+        }),
+        pdfSection,
+        button,
+    )
+    refresh()
+    panel.focusTarget = title.input
+    panel.selectsAll = true
+    return panel
+}
+
 export function buildSheet(app, request) {
     const library = app.library
     switch (request.kind) {
@@ -252,6 +331,8 @@ export function buildSheet(app, request) {
                 app.go({ kind: "notebook", notebookId: notebook.id })
             },
         })
+    case "new-note":
+        return newNoteSheet(app, request.notebookId)
     case "rename-folder":
         return nameSheet(app, {
             heading: "Rename folder",

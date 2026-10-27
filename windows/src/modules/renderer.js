@@ -1,4 +1,6 @@
 import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth } from "./model.js"
+import { importImage } from "./imports.js"
+import { markdownBlocks } from "./markdown.js"
 import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
 export const monoFamily = "\"Space Mono\""
@@ -134,34 +136,76 @@ export function fontMetrics(fontSizePixels) {
     return { ascent, descent, lineHeight: (ascent + descent) * tokens.text.line_height }
 }
 
-function wrap(content, fontSizePixels, widthPixels) {
-    measuringContext.font = `${fontSizePixels}px ${monoFamily}`
-    const lines = []
-    for (const paragraph of content.split("\n")) {
-        const words = paragraph.split(/(\s+)/)
-        let line = ""
-        for (const word of words) {
-            const candidate = line + word
-            if (measuringContext.measureText(candidate.trimEnd()).width <= widthPixels || line.length === 0) {
-                if (line.length === 0 && measuringContext.measureText(word).width > widthPixels) {
-                    let piece = ""
-                    for (const character of word) {
-                        if (measuringContext.measureText(piece + character).width > widthPixels && piece.length) {
-                            lines.push(piece)
-                            piece = ""
-                        }
-                        piece += character
-                    }
-                    line = piece
-                } else {
-                    line = candidate
-                }
-            } else {
-                lines.push(line.trimEnd())
-                line = /^\s+$/.test(word) ? "" : word
-            }
+const indentCharacters = 3
+const markerGapCharacters = 1
+
+function runFont(style, sizePixels) {
+    return `${style.isItalic ? "italic " : ""}${style.isBold ? "700" : "400"} ${sizePixels}px ${monoFamily}`
+}
+
+function measure(text, style, sizePixels) {
+    measuringContext.font = runFont(style, sizePixels)
+    return measuringContext.measureText(text).width
+}
+
+const plainRunStyle = { isBold: false, isItalic: false, isCode: false, isStruck: false, isLink: false }
+
+function wrapRuns(runs, sizePixels, startX, widthPixels) {
+    const lines = [[]]
+    let x = startX
+    const place = (text, style) => {
+        const width = measure(text, style, sizePixels)
+        const line = lines[lines.length - 1]
+        const last = line[line.length - 1]
+        if (last && last.style === style && last.x + last.width === x) {
+            last.text += text
+            last.width += width
+        } else {
+            line.push({ text, style, x, width })
         }
-        lines.push(line.trimEnd())
+        x += width
+    }
+    const newLine = () => {
+        const line = lines[lines.length - 1]
+        while (line.length && /^\s+$/.test(line[line.length - 1].text)) {
+            line.pop()
+        }
+        lines.push([])
+        x = startX
+    }
+    for (const run of runs) {
+        for (const piece of run.text.split(/(\s+)/)) {
+            if (!piece) {
+                continue
+            }
+            const isSpace = /^\s+$/.test(piece)
+            const width = measure(piece, run.style, sizePixels)
+            const isLineEmpty = lines[lines.length - 1].length === 0
+            if (isSpace && isLineEmpty) {
+                continue
+            }
+            if (x + width <= startX + widthPixels || isSpace) {
+                place(piece, run.style)
+                continue
+            }
+            if (!isLineEmpty) {
+                newLine()
+            }
+            if (width <= widthPixels) {
+                place(piece, run.style)
+                continue
+            }
+            let chunk = ""
+            for (const character of piece) {
+                if (chunk && x + measure(chunk + character, run.style, sizePixels) > startX + widthPixels) {
+                    place(chunk, run.style)
+                    newLine()
+                    chunk = ""
+                }
+                chunk += character
+            }
+            place(chunk, run.style)
+        }
     }
     return lines
 }
@@ -175,20 +219,42 @@ export function textLayout(element) {
     if (cached) {
         return cached
     }
-    const metrics = fontMetrics(fontSize * layoutScale)
-    const lines = content.length ? wrap(content, fontSize * layoutScale, width * layoutScale) : []
-    const layout = {
-        lines,
-        fontSize,
-        lineHeight: metrics.lineHeight / layoutScale,
-        descent: metrics.descent / layoutScale,
-        height: (lines.length * metrics.lineHeight) / layoutScale,
+    const lines = []
+    let top = 0
+    const widthPixels = width * layoutScale
+    const blocks = content.length ? markdownBlocks(content) : []
+    for (const block of blocks) {
+        const sizePixels = fontSize * block.scale * layoutScale
+        const metrics = fontMetrics(sizePixels)
+        const characterWidth = measure("0", plainRunStyle, sizePixels)
+        const startX = block.indent * indentCharacters * characterWidth
+        const wrapped = block.kind === "rule" ? [[]] : wrapRuns(block.runs, sizePixels, startX, Math.max(characterWidth, widthPixels - startX))
+        wrapped.forEach((segments, index) => {
+            lines.push({
+                top: top / layoutScale,
+                height: metrics.lineHeight / layoutScale,
+                descent: metrics.descent / layoutScale,
+                fontSize: fontSize * block.scale,
+                kind: block.kind,
+                isFirst: index === 0,
+                isChecked: Boolean(block.isChecked),
+                marker: index === 0 && block.marker ? { text: block.marker, x: (startX - (block.marker.length + markerGapCharacters) * characterWidth) / layoutScale } : null,
+                quoteX: block.kind === "quote" ? (characterWidth * 0.8) / layoutScale : null,
+                segments: segments.map((segment) => ({ text: segment.text, style: segment.style, x: segment.x / layoutScale, width: segment.width / layoutScale })),
+            })
+            top += metrics.lineHeight
+        })
     }
+    const layout = { lines, fontSize, height: top / layoutScale }
     if (layoutCache.size > 2000) {
         layoutCache.clear()
     }
     layoutCache.set(key, layout)
     return layout
+}
+
+export function lineHeightOf(fontSize) {
+    return fontMetrics(fontSize * layoutScale).lineHeight / layoutScale
 }
 
 export function textRect(element) {
@@ -265,19 +331,75 @@ function drawText(context, element, camera, offset, pixelRatio, style) {
     }
     const layout = textLayout(element)
     const scale = camera.scale * pixelRatio
-    const fontPixels = layout.fontSize * scale
-    context.save()
-    context.setTransform(1, 0, 0, 1, 0, 0)
-    context.font = `${fontPixels}px ${monoFamily}`
-    context.fillStyle = inkOnPaper(element.color ?? tokens.text.color, style)
-    context.textBaseline = "alphabetic"
+    const color = inkOnPaper(element.color ?? tokens.text.color, style)
+    const faint = withAlpha(color, 0.14)
     const left = ((element.box.x + offset[0]) * camera.scale + camera.offsetX) * pixelRatio
     const top = ((element.box.y + offset[1]) * camera.scale + camera.offsetY) * pixelRatio
-    layout.lines.forEach((line, index) => {
-        const baseline = top + ((index + 1) * layout.lineHeight - layout.descent) * scale
-        context.fillText(line, left, baseline)
-    })
+    const boxWidth = element.box.width * scale
+    context.save()
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.textBaseline = "alphabetic"
+    for (const line of layout.lines) {
+        const lineTop = top + line.top * scale
+        const lineHeight = line.height * scale
+        const baseline = top + (line.top + line.height - line.descent) * scale
+        const sizePixels = line.fontSize * scale
+        context.globalAlpha = line.isChecked ? 0.55 : 1
+        if (line.kind === "code") {
+            context.fillStyle = faint
+            context.fillRect(left, lineTop, boxWidth, lineHeight)
+        }
+        if (line.kind === "rule") {
+            context.fillStyle = withAlpha(color, 0.45)
+            context.fillRect(left, lineTop + lineHeight / 2 - Math.max(1, scale * 0.15) / 2, boxWidth, Math.max(1, scale * 0.15))
+        }
+        if (line.quoteX !== null) {
+            context.fillStyle = withAlpha(color, 0.5)
+            context.fillRect(left + line.quoteX * scale, lineTop, Math.max(1, sizePixels * 0.12), lineHeight)
+        }
+        if (line.marker) {
+            context.font = runFont({ isBold: true }, sizePixels)
+            context.fillStyle = color
+            context.fillText(line.marker.text, left + line.marker.x * scale, baseline)
+        }
+        for (const segment of line.segments) {
+            const x = left + segment.x * scale
+            const width = segment.width * scale
+            if (segment.style.isCode && line.kind !== "code") {
+                context.fillStyle = faint
+                context.fillRect(x, lineTop + lineHeight * 0.08, width, lineHeight * 0.84)
+            }
+            context.font = runFont(segment.style, sizePixels)
+            context.fillStyle = color
+            context.fillText(segment.text, x, baseline)
+            const thickness = Math.max(1, sizePixels * 0.07)
+            if (segment.style.isStruck) {
+                context.fillRect(x, baseline - sizePixels * 0.3, width, thickness)
+            }
+            if (segment.style.isLink) {
+                context.fillRect(x, baseline + sizePixels * 0.14, width, thickness)
+            }
+        }
+    }
     context.restore()
+}
+
+function drawImport(context, element, camera, pixelRatio, paperStyle, colors) {
+    if (!element.source_size_mm || !element.placement) {
+        return
+    }
+    const scale = element.placement.scale ?? 1
+    const width = element.source_size_mm[0] * scale
+    const height = element.source_size_mm[1] * scale
+    const image = importImage(element, camera.scale * pixelRatio, paperStyle === "dark")
+    if (!image) {
+        context.fillStyle = colors.guide
+        context.fillRect(element.placement.x, element.placement.y, width, height)
+        return
+    }
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = "high"
+    context.drawImage(image, element.placement.x, element.placement.y, width, height)
 }
 
 export function clipToPaper(context, extent) {
@@ -286,7 +408,7 @@ export function clipToPaper(context, extent) {
     context.clip()
 }
 
-export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, paperStyle, hiddenElementIds = new Set(), textOffsets = new Map(), cache }) {
+export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), textOffsets = new Map(), cache }) {
     const colors = paperColors(paperStyle)
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
     context.fillStyle = tokens.page.outside
@@ -314,12 +436,16 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     if (showsGuides) {
         drawGuides(context, visible, camera, colors)
     }
-    drawCellBoundaries(context, page.extent, camera, colors)
+    if (showsDividers) {
+        drawCellBoundaries(context, page.extent, camera, colors)
+    }
     for (const element of liveElements(page)) {
         if (hiddenElementIds.has(element.id)) {
             continue
         }
-        if (element.type === "stroke") {
+        if (element.type === "import") {
+            drawImport(context, element, camera, pixelRatio, paperStyle, colors)
+        } else if (element.type === "stroke") {
             drawStroke(context, element, visible, cache, paperStyle)
         } else if (element.type === "text") {
             drawText(context, element, camera, textOffsets.get(element.id) ?? [0, 0], pixelRatio, paperStyle)
@@ -328,7 +454,7 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     context.restore()
 }
 
-export function renderThumbnail(canvas, page, showsGuides, paperStyle) {
+export function renderThumbnail(canvas, page, { showsGuides, showsDividers, paperStyle }) {
     const width = canvas.clientWidth
     const height = canvas.clientHeight
     if (width === 0 || height === 0) {
@@ -342,5 +468,5 @@ export function renderThumbnail(canvas, page, showsGuides, paperStyle) {
     const scale = Math.min(width / pageWidth, height / pageHeight)
     const camera = new Camera(scale, (width - pageWidth * scale) / 2, (height - pageHeight * scale) / 2)
     const context = canvas.getContext("2d")
-    drawPage(context, page, camera, { width, height, pixelRatio, showsGuides, paperStyle, cache: new StrokePathCache() })
+    drawPage(context, page, camera, { width, height, pixelRatio, showsGuides, showsDividers, paperStyle, cache: new StrokePathCache() })
 }

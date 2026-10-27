@@ -57,3 +57,26 @@ export function deviceIdentity() {
     writeSetting("deviceId", created)
     return created
 }
+
+const browserAssets = new Map()
+
+export async function writeAsset(path, bytes) {
+    const tauri = window.__TAURI__
+    if (tauri) {
+        await tauri.core.invoke("write_asset", bytes, { headers: { "asset-path": path } })
+        return
+    }
+    browserAssets.set(path, bytes.slice())
+}
+
+export async function readAsset(path) {
+    const tauri = window.__TAURI__
+    if (tauri) {
+        return new Uint8Array(await tauri.core.invoke("read_asset", { path }))
+    }
+    const bytes = browserAssets.get(path)
+    if (!bytes) {
+        throw new Error(`missing asset ${path}`)
+    }
+    return bytes.slice()
+}
