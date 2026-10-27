@@ -411,3 +411,5 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Top bars float over the content as overlays on the flat panel colour (no blur); the page fits below them.
 - Folders and notes carry an optional integer `order` and can be rearranged and moved by drag and drop. Folder screens have no bottom nav; "Add folder" and "Add note" lead their grids, and a search field in the top bar finds folders and notes by name.
 - Ink and text stay on the paper: strokes start on it and are clipped to its edge. The paper has rounded corners (4 mm).
+- Text blocks are Markdown, rendered on the canvas and stored raw. New notes start from a sheet: a name and Blank or PDF. PDF notes place one page per A4 cell; on dark paper white PDF pages display inverted without changing the asset.
+- The camera cannot leave the paper. Cell lines can be turned off. One release ships the Windows exe and the unsigned iPad IPA.
