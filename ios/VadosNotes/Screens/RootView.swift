@@ -261,8 +261,8 @@ struct TopBar<Trailing: View>: View {
 
     @Environment(\.screenInsets) private var insets
 
-    private static let bareTitleSize: CGFloat = 15
-    private static let bareTopGap: CGFloat = 6
+    private static var bareTitleSize: CGFloat { 15 }
+    private static var bareTopGap: CGFloat { 6 }
 
     var body: some View {
         HStack(alignment: isBare ? .top : .center, spacing: 14) {
