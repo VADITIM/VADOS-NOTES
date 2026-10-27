@@ -412,4 +412,10 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Folders and notes carry an optional integer `order` and can be rearranged and moved by drag and drop. Folder screens have no bottom nav; "Add folder" and "Add note" lead their grids, and a search field in the top bar finds folders and notes by name.
 - Ink and text stay on the paper: strokes start on it and are clipped to its edge. The paper has rounded corners (4 mm).
 - Text blocks are Markdown, rendered on the canvas and stored raw. New notes start from a sheet: a name and Blank or PDF. PDF notes place one page per A4 cell; on dark paper white PDF pages display inverted without changing the asset.
-- The camera cannot leave the paper. Cell lines can be turned off. One release ships the Windows exe and the unsigned iPad IPA.
+- The camera stays near the paper. Cell lines can be turned off. One release ships the Windows exe and the unsigned iPad IPA.
+- The iPad app is edge to edge with a transparent status bar. A finger pans the canvas and the Pencil draws; text and the lasso take either. The page fits centred and can be pushed well past its edges.
+- Renaming lives only in the haptic menu, except the open note's name, which edits in place in its top bar next to its created date (DD/MM/YY, read from the page ID). Back sits beside settings on every screen. Undo and redo sit at the bottom left.
+- The haptic menu is a vertical list beside the finger. The page's "…" opens a secondary nav (delete, import | add column, add row | guides, cell lines).
+- The nav is carried by its end grips, never collapses, steers clear of the other UI and the keyboard, and its tools and secondary-nav groups reorder by holding them.
+- A lasso selects strokes, text and imported pages and moves them as one undo step.
+- Folders and notes can be grouped inside a folder as GALLERY-style stacks, kept on the device. Opening a note flies out of its tile.

@@ -37,42 +37,35 @@ struct MenuSlot: Identifiable {
 final class MenuController: ObservableObject {
     struct Presentation {
         let slots: [MenuSlot]
-        let columns: Int
-        let rows: Int
         let origin: CGPoint
+        let isOnLeft: Bool
         let title: String?
     }
 
-    static let slotSize = CGSize(width: 132, height: 64)
+    static let rowSize = CGSize(width: 232, height: 54)
     static let spacing: CGFloat = 6
     static let padding: CGFloat = 8
     static let titleHeight: CGFloat = 26
     static let screenMargin: CGFloat = 16
-    static let fingerClearance: CGFloat = 28
+    static let fingerGap: CGFloat = 18
 
     @Published private(set) var presentation: Presentation?
     @Published private(set) var highlightedPosition: Int?
     @Published private(set) var armedPosition: Int?
     var screenSize: CGSize = CGSize(width: 1024, height: 1366)
 
-    func present(_ slots: [MenuSlot], columns: Int = Tokens.shared.menus.columns, around anchor: CGRect, title: String? = nil) {
-        let rows = ((slots.map(\.position).max() ?? 0) / columns) + 1
-        let size = Self.panelSize(columns: columns, rows: rows, hasTitle: title != nil)
-        var origin = CGPoint(x: anchor.midX - size.width / 2, y: anchor.minY - size.height - Self.spacing * 2)
-        if origin.y < Self.screenMargin {
-            origin.y = anchor.maxY + Self.spacing * 2
-        }
+    func present(_ slots: [MenuSlot], at point: CGPoint, title: String? = nil) {
+        let ordered = slots.sorted { $0.position < $1.position }
+        let size = Self.panelSize(rows: ordered.count, hasTitle: title != nil)
+        let isOnLeft = point.x + Self.fingerGap + size.width > screenSize.width - Self.screenMargin
+        var origin = CGPoint(x: isOnLeft ? point.x - Self.fingerGap - size.width : point.x + Self.fingerGap, y: point.y - size.height / 2)
         origin.x = min(max(Self.screenMargin, origin.x), screenSize.width - size.width - Self.screenMargin)
         origin.y = min(max(Self.screenMargin, origin.y), screenSize.height - size.height - Self.screenMargin)
         armedPosition = nil
         highlightedPosition = nil
         withAnimation(Motion.backOut(Motion.overlayEnterMilliseconds)) {
-            presentation = Presentation(slots: slots, columns: columns, rows: rows, origin: origin, title: title)
+            presentation = Presentation(slots: ordered, origin: origin, isOnLeft: isOnLeft, title: title)
         }
-    }
-
-    func present(_ slots: [MenuSlot], columns: Int = Tokens.shared.menus.columns, at point: CGPoint, title: String? = nil) {
-        present(slots, columns: columns, around: CGRect(origin: point, size: .zero).insetBy(dx: 0, dy: -Self.fingerClearance), title: title)
     }
 
     func drag(to point: CGPoint) {
@@ -111,27 +104,22 @@ final class MenuController: ObservableObject {
         highlightedPosition = nil
     }
 
-    static func panelSize(columns: Int, rows: Int, hasTitle: Bool) -> CGSize {
+    static func panelSize(rows: Int, hasTitle: Bool) -> CGSize {
         CGSize(
-            width: padding * 2 + CGFloat(columns) * slotSize.width + CGFloat(columns - 1) * spacing,
-            height: padding * 2 + CGFloat(rows) * slotSize.height + CGFloat(rows - 1) * spacing + (hasTitle ? titleHeight : 0)
+            width: padding * 2 + rowSize.width,
+            height: padding * 2 + CGFloat(rows) * rowSize.height + CGFloat(max(0, rows - 1)) * spacing + (hasTitle ? titleHeight : 0)
         )
     }
 
-    static func slotOrigin(position: Int, columns: Int, hasTitle: Bool) -> CGPoint {
-        let column = position % columns
-        let row = position / columns
-        return CGPoint(
-            x: padding + CGFloat(column) * (slotSize.width + spacing),
-            y: padding + (hasTitle ? titleHeight : 0) + CGFloat(row) * (slotSize.height + spacing)
-        )
+    static func rowOrigin(index: Int, hasTitle: Bool) -> CGPoint {
+        CGPoint(x: padding, y: padding + (hasTitle ? titleHeight : 0) + CGFloat(index) * (rowSize.height + spacing))
     }
 
     private func slotPosition(at point: CGPoint) -> Int? {
         guard let presentation else { return nil }
-        for slot in presentation.slots {
-            let origin = Self.slotOrigin(position: slot.position, columns: presentation.columns, hasTitle: presentation.title != nil)
-            let frame = CGRect(origin: CGPoint(x: presentation.origin.x + origin.x, y: presentation.origin.y + origin.y), size: Self.slotSize)
+        for (index, slot) in presentation.slots.enumerated() {
+            let origin = Self.rowOrigin(index: index, hasTitle: presentation.title != nil)
+            let frame = CGRect(origin: CGPoint(x: presentation.origin.x + origin.x, y: presentation.origin.y + origin.y), size: Self.rowSize)
             if frame.contains(point) {
                 return slot.position
             }
@@ -154,7 +142,10 @@ struct MenuOverlay: View {
                     controller.activate(position)
                 }
                 .offset(x: presentation.origin.x, y: presentation.origin.y)
-                .transition(.overlay)
+                .transition(.asymmetric(
+                    insertion: AnyTransition.scale(scale: 0.001, anchor: presentation.isOnLeft ? .trailing : .leading).combined(with: .opacity).animation(Motion.backOut(Motion.overlayEnterMilliseconds)),
+                    removal: AnyTransition.scale(scale: 0.001, anchor: presentation.isOnLeft ? .trailing : .leading).combined(with: .opacity).animation(Motion.backIn(Motion.overlayLeaveMilliseconds))
+                ))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -168,8 +159,11 @@ private struct MenuPanel: View {
     let armedPosition: Int?
     let onSelect: (Int) -> Void
 
+    @State private var isShown = false
+
     var body: some View {
-        let size = MenuController.panelSize(columns: presentation.columns, rows: presentation.rows, hasTitle: presentation.title != nil)
+        let hasTitle = presentation.title != nil
+        let size = MenuController.panelSize(rows: presentation.slots.count, hasTitle: hasTitle)
         ZStack(alignment: .topLeading) {
             Squircle.sheet.fill(Palette.panelSolid)
             Squircle.sheet.stroke(Palette.borderStrong, lineWidth: 1)
@@ -177,16 +171,20 @@ private struct MenuPanel: View {
                 MicroLabel(text: title)
                     .offset(x: MenuController.padding + 6, y: MenuController.padding + 4)
             }
-            ForEach(presentation.slots) { slot in
-                let origin = MenuController.slotOrigin(position: slot.position, columns: presentation.columns, hasTitle: presentation.title != nil)
+            ForEach(Array(presentation.slots.enumerated()), id: \.element.id) { index, slot in
+                let origin = MenuController.rowOrigin(index: index, hasTitle: hasTitle)
                 MenuSlotView(slot: slot, isHighlighted: highlightedPosition == slot.position, isArmed: armedPosition == slot.position)
-                    .frame(width: MenuController.slotSize.width, height: MenuController.slotSize.height)
+                    .frame(width: MenuController.rowSize.width, height: MenuController.rowSize.height)
                     .contentShape(Rectangle())
                     .onTapGesture { onSelect(slot.position) }
+                    .scaleEffect(isShown ? 1 : 0.001)
+                    .opacity(isShown ? 1 : 0)
+                    .animation(Motion.backOut(Motion.stateMilliseconds, delay: Motion.riseDelayMilliseconds + index * Motion.riseStaggerMilliseconds), value: isShown)
                     .offset(x: origin.x, y: origin.y)
             }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .onAppear { isShown = true }
     }
 }
 

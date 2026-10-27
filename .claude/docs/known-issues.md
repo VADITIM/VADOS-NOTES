@@ -15,3 +15,7 @@ Deliberate shortcuts, each with its ceiling and upgrade path.
 - **Sync status in the sync sheet is read once.** It does not live-update while the sheet is open.
 - **Windows has no sync yet.** The sync sheet keeps owner, repository and branch but stores no token. Upgrade: port the journal and push protocol (phase 6) and keep the token in Credential Manager.
 - **Windows text wrapping is approximate.** Words wrap at spaces with canvas measurement; TextKit can break a line one word differently in rare cases.
+- **Folder and note groups live on one device.** They are stored in user defaults, not in the repository, so another device and Windows do not see them. Upgrade: an optional `groups` file per folder synced through the journal (a schema addition, to be agreed first).
+- **Holding a preset in the secondary nav both arms it for removal and lifts its group.** Moving on reorders the group while the preset stays armed for its 2.4 s. Upgrade: disarm when a group lift starts.
+- **Closing a note does not shrink back into its tile.** It cuts back to the folder. Upgrade: run the flight backwards from the page's transition, aimed at the tile's last frame.
+- **Grouped folders and notes cannot be dragged.** Reordering and moving them goes through ungrouping or the Move sheet.

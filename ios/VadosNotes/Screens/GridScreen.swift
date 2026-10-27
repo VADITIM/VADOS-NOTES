@@ -53,6 +53,7 @@ struct GridScreen: View {
     @State private var drag: TileDrag?
     @State private var arrangedFolders: [String]?
     @State private var arrangedNotes: [String]?
+    @State private var openGroups: Set<String> = []
 
     private let folderColumns = [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 18, alignment: .top)]
     private let noteColumns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 18, alignment: .top)]
@@ -62,32 +63,45 @@ struct GridScreen: View {
         query.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
+    private var groups: [TileGroup] {
+        preferences.groups(in: notebookId)
+    }
+
+    private func isGrouped(_ id: String) -> Bool {
+        groups.contains { $0.members.contains(id) }
+    }
+
     private var folders: [Notebook] {
-        let items = library.folders(in: notebookId)
+        let items = library.folders(in: notebookId).filter { !isGrouped($0.id) }
         guard let arrangedFolders else { return items }
         return arrangedFolders.compactMap { id in items.first { $0.id == id } }
     }
 
     private var notes: [Page] {
         guard let notebookId else { return [] }
-        let items = library.pages(in: notebookId)
+        let items = library.pages(in: notebookId).filter { !isGrouped($0.id) }
         guard let arrangedNotes else { return items }
         return arrangedNotes.compactMap { id in items.first { $0.id == id } }
     }
 
     var body: some View {
         let _ = library.revision
+        let _ = preferences.revision
         GeometryReader { proxy in
             let origin = proxy.frame(in: .global).origin
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         Color.clear.frame(height: max(0, topBarBottom - origin.y))
-                        if trimmedQuery.isEmpty {
-                            browse
-                        } else {
-                            results
+                        Group {
+                            if trimmedQuery.isEmpty {
+                                browse
+                            } else {
+                                results
+                            }
                         }
+                        .id(notebookId ?? "root")
+                        .transition(.folder)
                     }
                     .padding(.bottom, 48)
                 }
@@ -103,10 +117,18 @@ struct GridScreen: View {
             .onPreferenceChange(BackButtonFrameKey.self) { backFrame = $0 }
             .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
         }
-        .onAppear {
-            if let notebookId, library.notebook(notebookId) == nil {
-                navigator.go(.library)
-            }
+        .onAppear(perform: leaveIfMissing)
+        .onChange(of: notebookId) { _, _ in
+            drag = nil
+            arrangedFolders = nil
+            arrangedNotes = nil
+            leaveIfMissing()
+        }
+    }
+
+    private func leaveIfMissing() {
+        if let notebookId, library.notebook(notebookId) == nil {
+            navigator.go(.library)
         }
     }
 
@@ -133,17 +155,10 @@ struct GridScreen: View {
         TopBar(
             title: title,
             label: label,
-            onBack: notebookId == nil ? nil : goBack,
-            onTitle: titleAction
+            onBack: notebookId == nil ? nil : goBack
         ) {
             SearchField(text: $query)
-            SettingsButton()
         }
-    }
-
-    private var titleAction: (() -> Void)? {
-        guard let notebookId else { return nil }
-        return { navigator.show(.renameFolder(notebookId)) }
     }
 
     private func goBack() {
@@ -160,6 +175,7 @@ struct GridScreen: View {
         if notebookId != nil {
             heading("Folders")
         }
+        groupRows(isFolders: true)
         LazyVGrid(columns: folderColumns, alignment: .leading, spacing: 18) {
             AddTile(glyph: "folder", title: "Add folder", aspect: 1.25, isFolder: true) {
                 navigator.show(.newFolder(parentId: notebookId))
@@ -173,6 +189,7 @@ struct GridScreen: View {
         if let notebookId {
             heading("Notes")
                 .padding(.top, 12)
+            groupRows(isFolders: false)
             LazyVGrid(columns: noteColumns, alignment: .leading, spacing: 18) {
                 AddTile(glyph: "note", title: "Add note", aspect: PaperGeometry.cellWidth / PaperGeometry.cellHeight, isFolder: false) {
                     navigator.show(.newNote(notebookId: notebookId))
@@ -187,6 +204,44 @@ struct GridScreen: View {
     }
 
     @ViewBuilder
+    private func groupRows(isFolders: Bool) -> some View {
+        let shown = groups.filter { $0.isFolders == isFolders }.map { group -> TileGroup in
+            var live = group
+            live.members = group.members.filter { id in isFolders ? library.notebook(id) != nil && library.parent(of: id) == notebookId : library.page(id)?.notebook == notebookId }
+            return live
+        }.filter { !$0.members.isEmpty }
+        ForEach(shown) { group in
+            StackGroupView(
+                group: group,
+                caption: "\(group.members.count) \(isFolders ? "folder" : "note")\(group.members.count == 1 ? "" : "s")",
+                isOpen: openGroups.contains(group.id),
+                cardHeight: { cell in isFolders ? (cell - 28) / 1.25 + 28 + 12 + 48 : (cell - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + 18 },
+                onToggle: { isOpen in
+                    if isOpen {
+                        openGroups.insert(group.id)
+                    } else {
+                        openGroups.remove(group.id)
+                    }
+                },
+                onMenu: { point in showGroupMenu(group, at: point) },
+                card: { id in groupCard(id, isFolders: isFolders) }
+            )
+            .padding(.horizontal, 28)
+            .padding(.top, 18)
+        }
+    }
+
+    private func groupCard(_ id: String, isFolders: Bool) -> AnyView {
+        if isFolders, let folder = library.notebook(id) {
+            return AnyView(folderTile(folder, rank: 0, isDraggable: false))
+        }
+        if let page = library.page(id) {
+            return AnyView(noteTile(page, rank: 0, isDraggable: false))
+        }
+        return AnyView(EmptyView())
+    }
+
+    @ViewBuilder
     private var results: some View {
         let matchingFolders = library.liveNotebooks.filter { $0.title.lowercased().contains(trimmedQuery) }
         let matchingNotes = library.liveNotebooks.flatMap { library.pages(in: $0.id) }.filter { library.noteTitle($0).lowercased().contains(trimmedQuery) }
@@ -194,7 +249,7 @@ struct GridScreen: View {
             heading("Folders")
             LazyVGrid(columns: folderColumns, alignment: .leading, spacing: 18) {
                 ForEach(Array(matchingFolders.enumerated()), id: \.element.id) { index, folder in
-                    folderTile(folder, rank: index, isDraggable: false)
+                    folderTile(folder, rank: index, isDraggable: false, isResult: true)
                 }
             }
             .padding(.horizontal, 28)
@@ -205,7 +260,7 @@ struct GridScreen: View {
                 .padding(.top, 12)
             LazyVGrid(columns: noteColumns, alignment: .leading, spacing: 18) {
                 ForEach(Array(matchingNotes.enumerated()), id: \.element.id) { index, page in
-                    noteTile(page, rank: index, isDraggable: false)
+                    noteTile(page, rank: index, isDraggable: false, isResult: true)
                 }
             }
             .padding(.horizontal, 28)
@@ -227,8 +282,7 @@ struct GridScreen: View {
             .padding(.top, 18)
     }
 
-    private func folderTile(_ folder: Notebook, rank: Int, isDraggable: Bool) -> some View {
-        let isResult = !isDraggable
+    private func folderTile(_ folder: Notebook, rank: Int, isDraggable: Bool, isResult: Bool = false) -> some View {
         let caption = isResult && library.parent(of: folder.id) != nil ? library.path(of: library.parent(of: folder.id) ?? "") : summary(folder.id)
         return FolderTile(notebook: folder, caption: caption, firstPage: library.pages(in: folder.id).first, rank: rank)
             .modifier(TileBehaviour(
@@ -236,23 +290,23 @@ struct GridScreen: View {
                 isDraggable: isDraggable,
                 isSource: drag?.id == folder.id,
                 isTarget: drag?.target == .into(folder.id),
-                callbacks: callbacks(kind: .folder, id: folder.id, isDraggable: isDraggable, onTap: { navigator.go(.notebook(folder.id)) }, onMenu: { showFolderMenu(folder.id, around: $0) })
+                callbacks: callbacks(kind: .folder, id: folder.id, isDraggable: isDraggable, onTap: { _ in navigator.go(.notebook(folder.id)) }, onMenu: { showFolderMenu(folder.id, at: $0) })
             ))
     }
 
-    private func noteTile(_ page: Page, rank: Int, isDraggable: Bool) -> some View {
-        let caption = isDraggable ? (page.extent.cellCount > 1 ? "\(page.extent.columns)×\(page.extent.rows)" : "") : library.path(of: page.notebook)
+    private func noteTile(_ page: Page, rank: Int, isDraggable: Bool, isResult: Bool = false) -> some View {
+        let caption = isResult ? library.path(of: page.notebook) : (page.extent.cellCount > 1 ? "\(page.extent.columns)×\(page.extent.rows)" : "")
         return NoteTile(page: page, title: library.noteTitle(page), caption: caption, rank: rank)
             .modifier(TileBehaviour(
                 key: "note:\(page.id)",
                 isDraggable: isDraggable,
                 isSource: drag?.id == page.id,
                 isTarget: false,
-                callbacks: callbacks(kind: .note, id: page.id, isDraggable: isDraggable, onTap: { navigator.go(.page(notebookId: page.notebook, pageId: page.id)) }, onMenu: { showNoteMenu(page.id, around: $0) })
+                callbacks: callbacks(kind: .note, id: page.id, isDraggable: isDraggable, onTap: { frame in navigator.go(.page(notebookId: page.notebook, pageId: page.id), from: frame) }, onMenu: { showNoteMenu(page.id, at: $0) })
             ))
     }
 
-    private func callbacks(kind: TileKind, id: String, isDraggable: Bool, onTap: @escaping () -> Void, onMenu: @escaping (CGRect) -> Void) -> TileCallbacks {
+    private func callbacks(kind: TileKind, id: String, isDraggable: Bool, onTap: @escaping (CGRect) -> Void, onMenu: @escaping (CGPoint) -> Void) -> TileCallbacks {
         TileCallbacks(
             onTap: onTap,
             onMenu: onMenu,
@@ -311,7 +365,7 @@ struct GridScreen: View {
             } else {
                 isAfter = false
             }
-            withAnimation(Motion.powerTwoOut(Tokens.shared.motion.durations.navSlide)) {
+            withAnimation(Motion.placement) {
                 if current.kind == .folder {
                     arrangedFolders = moved(arrangedFolders ?? [], current.id, next: otherId, isAfter: isAfter)
                 } else {
@@ -391,43 +445,73 @@ struct GridScreen: View {
         }
     }
 
-    private static func menuTitle(_ action: String) -> String {
+    private func menuTitle(_ action: String, memberId: String) -> String {
         switch action {
         case "rename": return "Rename"
         case "appearance": return "Icon & colour"
         case "move": return "Move"
         case "delete_notebook", "delete_page": return "Delete"
+        case "group": return isGrouped(memberId) ? "Remove from group" : "Add to group"
         default: return action
         }
     }
 
-    private func showFolderMenu(_ folderId: String, around frame: CGRect) {
+    private func toggleGroup(_ target: TileTarget, memberId: String) {
+        if isGrouped(memberId) {
+            preferences.removeFromGroup(memberId, in: notebookId)
+        } else {
+            navigator.show(.pickGroup(target, parentId: notebookId))
+        }
+    }
+
+    private func showFolderMenu(_ folderId: String, at point: CGPoint) {
         guard let folder = library.notebook(folderId) else { return }
-        let slots = MenuSlot.fromTokens(Tokens.shared.menus.notebook, title: Self.menuTitle, perform: { action in
+        let slots = MenuSlot.fromTokens(Tokens.shared.menus.notebook + Tokens.shared.menus.grouping, title: { menuTitle($0, memberId: folderId) }, perform: { action in
             switch action {
             case "rename": navigator.show(.renameFolder(folderId))
             case "appearance": navigator.show(.appearance(.folder(folderId)))
             case "move": navigator.show(.move(.folder(folderId)))
             case "delete_notebook": library.deleteNotebook(folderId)
+            case "group": toggleGroup(.folder(folderId), memberId: folderId)
             default: break
             }
         })
-        menu.present(slots, columns: 2, around: frame, title: folder.title)
+        menu.present(slots, at: point, title: folder.title)
     }
 
-    private func showNoteMenu(_ pageId: String, around frame: CGRect) {
+    private func showNoteMenu(_ pageId: String, at point: CGPoint) {
         guard let page = library.page(pageId) else { return }
         let isReadOnly = library.isReadOnly(pageId)
-        let slots = MenuSlot.fromTokens(Tokens.shared.menus.pageTile, title: Self.menuTitle, isEnabled: { action in action == "delete_page" || !isReadOnly }, perform: { action in
+        let slots = MenuSlot.fromTokens(Tokens.shared.menus.pageTile + Tokens.shared.menus.grouping, title: { menuTitle($0, memberId: pageId) }, isEnabled: { action in action == "delete_page" || action == "group" || !isReadOnly }, perform: { action in
             switch action {
             case "rename": navigator.show(.renameNote(pageId))
             case "appearance": navigator.show(.appearance(.note(pageId)))
             case "move": navigator.show(.move(.note(pageId)))
             case "delete_page": library.deletePage(pageId)
+            case "group": toggleGroup(.note(pageId), memberId: pageId)
             default: break
             }
         })
-        menu.present(slots, columns: 2, around: frame, title: library.noteTitle(page))
+        menu.present(slots, at: point, title: library.noteTitle(page))
+    }
+
+    private func showGroupMenu(_ group: TileGroup, at point: CGPoint) {
+        let slots = MenuSlot.fromTokens(Tokens.shared.menus.group, title: { action in
+            switch action {
+            case "rename": return "Rename"
+            case "ungroup": return "Ungroup"
+            default: return action
+            }
+        }, perform: { action in
+            switch action {
+            case "rename": navigator.show(.renameGroup(group.id, parentId: notebookId))
+            case "ungroup":
+                openGroups.remove(group.id)
+                preferences.ungroup(group.id, in: notebookId)
+            default: break
+            }
+        })
+        menu.present(slots, at: point, title: group.title)
     }
 }
 
@@ -444,12 +528,12 @@ private struct TileBehaviour: ViewModifier {
         var interaction = callbacks
         interaction.onPress = { pressed in isPressed = pressed }
         return content
-            .scaleEffect(isTarget ? 1.04 : (isPressed ? 0.97 : 1))
+            .modifier(PressPop(isPressed: isPressed))
+            .scaleEffect(isTarget ? 1.04 : 1)
             .overlay(Squircle.panel.stroke(Palette.accent, lineWidth: 2).opacity(isTarget ? 1 : 0))
             .opacity(isSource ? 0.25 : 1)
             .overlay(TileInteraction(callbacks: interaction))
             .background(GeometryReader { proxy in Color.clear.preference(key: TileFramesKey.self, value: isDraggable ? [key: proxy.frame(in: .global)] : [:]) })
-            .animation(isPressed ? Motion.powerTwoOut(Motion.pressMilliseconds) : Motion.backOut(Motion.releaseMilliseconds), value: isPressed)
             .animation(Motion.backOut(Motion.stateMilliseconds), value: isTarget)
     }
 }
@@ -498,7 +582,7 @@ struct AddTile: View {
             .background((isFolder ? Squircle.panel : Squircle.tile).fill(Palette.ground))
             .overlay((isFolder ? Squircle.panel : Squircle.tile).stroke(Palette.borderControl, lineWidth: 1.5))
         }
-        .buttonStyle(PressableStyle(pressedScale: 0.97))
+        .buttonStyle(PressableStyle())
         .modifier(Appear(rank: 0))
     }
 }

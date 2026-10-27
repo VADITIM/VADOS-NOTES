@@ -7,17 +7,26 @@ struct SheetHost: View {
 
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
+    @Environment(\.screenInsets) private var insets
+    @State private var isShown = false
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .top) {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
-            content
-                .frame(maxWidth: 560)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 32)
-                .transition(.overlay)
+            if isShown {
+                content
+                    .frame(maxWidth: 560)
+                    .padding(.horizontal, 24)
+                    .padding(.top, insets.top + 24)
+                    .transition(request == .settings ? .fromTopEdge : .overlay)
+            }
+        }
+        .onAppear {
+            withAnimation(Motion.backOut(Motion.overlayEnterMilliseconds)) {
+                isShown = true
+            }
         }
     }
 
@@ -46,6 +55,13 @@ struct SheetHost: View {
             MoveSheet(target: target)
         case .newNote(let notebookId):
             NewNoteSheet(notebookId: notebookId)
+        case .pickGroup(let target, let parentId):
+            GroupSheet(target: target, parentId: parentId)
+        case .renameGroup(let groupId, let parentId):
+            NameSheet(heading: "Rename group", initial: Preferences.shared.groups(in: parentId).first { $0.id == groupId }?.title ?? "", confirmTitle: "Rename", confirmColor: Palette.edit) { title in
+                Preferences.shared.renameGroup(groupId, to: title, in: parentId)
+                navigator.show(nil)
+            }
         case .settings:
             SettingsSheet()
         }
@@ -99,7 +115,7 @@ struct SlabButton: View {
                 .frame(height: 50)
                 .background(Squircle.slot.fill(color))
         }
-        .buttonStyle(PressableStyle(pressedScale: 0.97))
+        .buttonStyle(PressableStyle())
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.38)
     }
@@ -135,7 +151,7 @@ struct Segmented<Value: Hashable>: View {
                         }
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(PressableStyle(pressedScale: 0.97))
+                .buttonStyle(PressableStyle())
             }
         }
         .padding(4)
@@ -179,6 +195,79 @@ struct NameSheet: View {
     private func submit() {
         guard !trimmed.isEmpty else { return }
         confirm(trimmed)
+    }
+}
+
+struct GroupSheet: View {
+    let target: TileTarget
+    let parentId: String?
+
+    @EnvironmentObject private var navigator: Navigator
+    @EnvironmentObject private var preferences: Preferences
+    @State private var title = ""
+    @FocusState private var isFocused: Bool
+
+    private var memberId: String {
+        switch target {
+        case .folder(let id), .note(let id): return id
+        }
+    }
+
+    private var isFolders: Bool {
+        if case .folder = target {
+            return true
+        }
+        return false
+    }
+
+    private var trimmed: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        let groups = preferences.groups(in: parentId).filter { $0.isFolders == isFolders }
+        SheetPanel(heading: "Add to group") {
+            if !groups.isEmpty {
+                VStack(spacing: 4) {
+                    ForEach(groups) { group in
+                        Button {
+                            preferences.addToGroup(memberId, groupId: group.id, in: parentId)
+                            navigator.show(nil)
+                        } label: {
+                            HStack(spacing: 12) {
+                                GlyphView(name: "stack", color: Palette.accent, size: 18)
+                                Text(group.title)
+                                    .font(Typography.mono(13))
+                                    .foregroundColor(Palette.textBright)
+                                    .lineLimit(1)
+                                Spacer()
+                                MicroLabel(text: "\(group.members.count)")
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 48)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(Palette.sunkenDeep))
+                        }
+                        .buttonStyle(PressableStyle())
+                    }
+                }
+            }
+            TextField("", text: $title, prompt: Text("New group").foregroundColor(Palette.textFaint))
+                .modifier(FieldStyle())
+                .textInputAutocapitalization(.sentences)
+                .focused($isFocused)
+                .submitLabel(.done)
+                .onSubmit(create)
+            SlabButton(title: "Create group", color: Palette.create, isEnabled: !trimmed.isEmpty, action: create)
+        }
+        .onAppear {
+            isFocused = groups.isEmpty
+        }
+    }
+
+    private func create() {
+        guard !trimmed.isEmpty else { return }
+        preferences.createGroup(trimmed, isFolders: isFolders, with: memberId, in: parentId)
+        navigator.show(nil)
     }
 }
 
@@ -340,7 +429,7 @@ struct MoveSheet: View {
             .frame(minHeight: 48)
             .background(RoundedRectangle(cornerRadius: 14).fill(Palette.sunkenDeep))
         }
-        .buttonStyle(PressableStyle(pressedScale: 0.98))
+        .buttonStyle(PressableStyle())
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.45)
     }
@@ -398,7 +487,7 @@ struct NewNoteSheet: View {
                     .background(RoundedRectangle(cornerRadius: 16).fill(Palette.sunkenDeep))
                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.importAsset.opacity(0.45), lineWidth: 1.5))
                 }
-                .buttonStyle(PressableStyle(pressedScale: 0.98))
+                .buttonStyle(PressableStyle())
                 .transition(.opacity)
             }
             SlabButton(title: "Create", color: Palette.create, isEnabled: !trimmed.isEmpty && (!isPdf || document != nil), action: create)

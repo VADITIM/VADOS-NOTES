@@ -9,6 +9,7 @@ struct CanvasCallbacks {
     var onEraseArea: ([StrokeReplacement]) -> Void
     var onTextTap: (Point, String?) -> Void
     var onTextMove: (String, TextBox) -> Void
+    var onMoveElements: ([String], Point) -> Void
     var onInput: () -> Void
     var onHold: (CGPoint) -> Void
     var onHoldMove: (CGPoint) -> Void
@@ -29,18 +30,7 @@ struct CanvasView: UIViewRepresentable {
     let hiddenElementIds: Set<String>
     let isReadOnly: Bool
     let topInset: CGFloat
-    let fitRequest: Int
     let callbacks: CanvasCallbacks
-
-    final class Coordinator {
-        var fitRequest = 0
-    }
-
-    func makeCoordinator() -> Coordinator {
-        let coordinator = Coordinator()
-        coordinator.fitRequest = fitRequest
-        return coordinator
-    }
 
     func makeUIView(context: Context) -> InkCanvasView {
         let view = InkCanvasView(frame: .zero)
@@ -50,10 +40,6 @@ struct CanvasView: UIViewRepresentable {
 
     func updateUIView(_ view: InkCanvasView, context: Context) {
         configure(view)
-        if context.coordinator.fitRequest != fitRequest {
-            context.coordinator.fitRequest = fitRequest
-            view.fit()
-        }
     }
 
     private func configure(_ view: InkCanvasView) {
@@ -74,6 +60,7 @@ struct CanvasView: UIViewRepresentable {
         view.onEraseArea = callbacks.onEraseArea
         view.onTextTap = callbacks.onTextTap
         view.onTextMove = callbacks.onTextMove
+        view.onMoveElements = callbacks.onMoveElements
         view.onInput = callbacks.onInput
         view.onHold = callbacks.onHold
         view.onHoldMove = callbacks.onHoldMove
@@ -87,10 +74,12 @@ struct TextBlockEditor: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
     let color: UIColor
+    let focusRequest: Int
     let onChange: (String) -> Void
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var onChange: (String) -> Void
+        var focusRequest = 0
 
         init(onChange: @escaping (String) -> Void) {
             self.onChange = onChange
@@ -102,7 +91,9 @@ struct TextBlockEditor: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onChange: onChange)
+        let coordinator = Coordinator(onChange: onChange)
+        coordinator.focusRequest = focusRequest
+        return coordinator
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -130,6 +121,10 @@ struct TextBlockEditor: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.onChange = onChange
+        if context.coordinator.focusRequest != focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            view.becomeFirstResponder()
+        }
         if view.text != text {
             view.text = text
         }

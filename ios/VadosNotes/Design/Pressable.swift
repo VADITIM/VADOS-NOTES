@@ -1,15 +1,22 @@
 import SwiftUI
 
-struct PressableStyle: ButtonStyle {
-    var pressedScale: CGFloat = 0.95
+struct PressPop: ViewModifier {
+    let isPressed: Bool
 
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isPressed ? CGFloat(Motion.scales.pressPop) : 1)
+            .animation(
+                isPressed ? Motion.powerTwoOut(Motion.pressMilliseconds) : Motion.backOut(Motion.releaseMilliseconds),
+                value: isPressed
+            )
+    }
+}
+
+struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? pressedScale : 1)
-            .animation(
-                configuration.isPressed ? Motion.powerTwoOut(Motion.pressMilliseconds) : Motion.backOut(Motion.releaseMilliseconds),
-                value: configuration.isPressed
-            )
+            .modifier(PressPop(isPressed: configuration.isPressed))
             .onChange(of: configuration.isPressed) { _, isPressed in
                 if isPressed {
                     Haptics.tick()
@@ -19,7 +26,6 @@ struct PressableStyle: ButtonStyle {
 }
 
 struct HoldableButton<Label: View>: View {
-    var pressedScale: CGFloat = 0.95
     let action: () -> Void
     var onHold: ((CGRect) -> Void)?
     var onTapAt: ((CGRect) -> Void)?
@@ -52,7 +58,7 @@ struct HoldableButton<Label: View>: View {
                     }
                 )
         }
-        .buttonStyle(PressableStyle(pressedScale: pressedScale))
+        .buttonStyle(PressableStyle())
         .simultaneousGesture(
             LongPressGesture(minimumDuration: Motion.seconds(Motion.menuHoldMilliseconds))
                 .onEnded { _ in

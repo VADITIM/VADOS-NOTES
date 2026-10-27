@@ -56,6 +56,8 @@ struct Tokens: Decodable {
         let view: String
         let edit: String
         let `import`: String
+        let undo: String
+        let redo: String
     }
 
     struct InkToolTokens: Decodable {
@@ -126,11 +128,45 @@ struct Tokens: Decodable {
         let strokeStraightenHold: Int
         let strokeStraightenSnap: Int
         let undo: Int
+        let navigationGripHold: Int
+        let textMoveHold: Int
+        let viewerEnter: Int
+        let viewerClose: Int
+        let chromeStagger: Int
+        let stack: Int
+        let riseDelay: Int
+        let riseStagger: Int
+    }
+
+    struct SpringToken: Decodable {
+        let response: Double
+        let dampingFraction: Double
+    }
+
+    struct SpringTokens: Decodable {
+        let placement: SpringToken
+        let wash: SpringToken
+        let selection: SpringToken
+    }
+
+    struct ScaleTokens: Decodable {
+        let pressPop: Double
+        let held: Double
+        let folderEnter: Double
+    }
+
+    struct ShareTokens: Decodable {
+        let chromeArrival: Double
+        let stackStagger: Double
+        let flightCornerFade: Double
     }
 
     struct MotionTokens: Decodable {
         let curves: CurveTokens
         let durations: DurationTokens
+        let springs: SpringTokens
+        let scales: ScaleTokens
+        let shares: ShareTokens
     }
 
     struct SyncTokens: Decodable {
@@ -146,10 +182,11 @@ struct Tokens: Decodable {
     }
 
     struct MenuTokens: Decodable {
-        let columns: Int
         let page: [MenuSlotToken]
         let notebook: [MenuSlotToken]
         let pageTile: [MenuSlotToken]
+        let grouping: [MenuSlotToken]
+        let group: [MenuSlotToken]
     }
 
     struct FolderTokens: Decodable {

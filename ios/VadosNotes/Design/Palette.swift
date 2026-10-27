@@ -41,6 +41,8 @@ enum Palette {
     static let view = Color(hex: tokens.semantic.view)
     static let edit = Color(hex: tokens.semantic.edit)
     static let importAsset = Color(hex: tokens.semantic.import)
+    static let undo = Color(hex: tokens.semantic.undo)
+    static let redo = Color(hex: tokens.semantic.redo)
 
     static let outside = UIColor(hex: tokens.page.outside)
 

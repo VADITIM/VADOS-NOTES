@@ -20,14 +20,17 @@ struct CanvasCamera: Equatable {
         CGRect(x: (rect.minX - offset.x) / scale, y: (rect.minY - offset.y) / scale, width: rect.width / scale, height: rect.height / scale)
     }
 
+    static let panSlackShare: CGFloat = 0.45
+
     static func fitting(_ extent: Extent, in bounds: CGSize, margin: CGFloat, topInset: CGFloat) -> CanvasCamera {
         let width = CGFloat(PaperGeometry.cellWidth)
         let height = CGFloat(PaperGeometry.cellHeight)
-        let available = CGSize(width: max(1, bounds.width - margin * 2), height: max(1, bounds.height - topInset - margin * 2))
+        let available = CGSize(width: max(1, bounds.width - margin * 2), height: max(1, bounds.height - (topInset + margin) * 2))
         let scale = min(available.width / width, available.height / height)
         let shownWidth = CGFloat(extent.columns) * width * scale
+        let shownHeight = height * scale
         let horizontalOffset = shownWidth < bounds.width ? (bounds.width - shownWidth) / 2 : margin
-        return CanvasCamera(scale: scale, offset: CGPoint(x: horizontalOffset, y: topInset + margin))
+        return CanvasCamera(scale: scale, offset: CGPoint(x: horizontalOffset, y: (bounds.height - shownHeight) / 2))
     }
 
     func zoomed(by factor: CGFloat, around anchor: CGPoint) -> CanvasCamera {
@@ -39,19 +42,23 @@ struct CanvasCamera: Equatable {
     func constrained(to extent: Extent, in bounds: CGSize, margin: CGFloat, topInset: CGFloat) -> CanvasCamera {
         let top = topInset + margin
         let availableWidth = max(1, bounds.width - margin * 2)
-        let availableHeight = max(1, bounds.height - top - margin)
+        let availableHeight = max(1, bounds.height - top * 2)
         let paperWidth = CGFloat(PaperGeometry.width(of: extent))
         let paperHeight = CGFloat(PaperGeometry.height(of: extent))
         let smallest = min(availableWidth / paperWidth, availableHeight / paperHeight)
         var camera = self
         if camera.scale < smallest {
-            camera = camera.zoomed(by: smallest / camera.scale, around: CGPoint(x: bounds.width / 2, y: top + availableHeight / 2))
+            camera = camera.zoomed(by: smallest / camera.scale, around: CGPoint(x: bounds.width / 2, y: bounds.height / 2))
         }
-        func axis(_ offset: CGFloat, _ size: CGFloat, _ start: CGFloat, _ end: CGFloat) -> CGFloat {
-            size <= end - start ? start + (end - start - size) / 2 : min(start, max(end - size, offset))
+        func axis(_ offset: CGFloat, _ size: CGFloat, _ start: CGFloat, _ end: CGFloat, _ slack: CGFloat) -> CGFloat {
+            if size <= end - start {
+                let centred = start + (end - start - size) / 2
+                return min(centred + slack, max(centred - slack, offset))
+            }
+            return min(start + slack, max(end - size - slack, offset))
         }
-        camera.offset.x = axis(camera.offset.x, paperWidth * camera.scale, margin, bounds.width - margin)
-        camera.offset.y = axis(camera.offset.y, paperHeight * camera.scale, top, bounds.height - margin)
+        camera.offset.x = axis(camera.offset.x, paperWidth * camera.scale, margin, bounds.width - margin, bounds.width * Self.panSlackShare)
+        camera.offset.y = axis(camera.offset.y, paperHeight * camera.scale, margin, bounds.height - margin, bounds.height * Self.panSlackShare)
         return camera
     }
 }
@@ -149,7 +156,7 @@ struct RenderOptions {
     var showsDividers = true
     var paperStyle: PaperStyle = .dark
     var hiddenElementIds: Set<String> = []
-    var textOffsets: [String: CGVector] = [:]
+    var elementOffsets: [String: CGVector] = [:]
     var pixelScale: CGFloat = 2
 }
 
@@ -297,14 +304,18 @@ enum PageRenderer {
             drawCellBoundaries(in: context, extent: page.extent, camera: camera, color: UIColor(hex: colors.cellBoundary))
         }
         for element in page.liveElements where !options.hiddenElementIds.contains(element.id) {
+            let offset = options.elementOffsets[element.id] ?? .zero
+            context.saveGState()
+            context.translateBy(x: offset.dx, y: offset.dy)
             switch element.type {
             case .stroke:
-                drawStroke(element, in: context, visiblePage: visiblePage, cache: cache, style: options.paperStyle)
+                drawStroke(element, in: context, visiblePage: visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy), cache: cache, style: options.paperStyle)
             case .text:
-                drawText(element, in: context, offset: options.textOffsets[element.id] ?? .zero, style: options.paperStyle)
+                drawText(element, in: context, style: options.paperStyle)
             case .importPage:
                 drawImport(element, in: context, camera: camera, options: options, guide: UIColor(hex: colors.guide))
             }
+            context.restoreGState()
         }
         context.restoreGState()
     }
@@ -351,10 +362,10 @@ enum PageRenderer {
         context.restoreGState()
     }
 
-    private static func drawText(_ element: Element, in context: CGContext, offset: CGVector, style: PaperStyle) {
+    private static func drawText(_ element: Element, in context: CGContext, style: PaperStyle) {
         guard let box = element.box, let content = element.content, !content.isEmpty else { return }
         let color = UIColor(hex: Palette.inkOnPaper(element.color ?? Tokens.shared.text.color, style: style))
-        MarkdownText.draw(element, at: CGPoint(x: CGFloat(box.x) + offset.dx, y: CGFloat(box.y) + offset.dy), color: color, in: context)
+        MarkdownText.draw(element, at: CGPoint(x: CGFloat(box.x), y: CGFloat(box.y)), color: color, in: context)
     }
 
     private static func drawGuides(in context: CGContext, visiblePage: CGRect, camera: CanvasCamera, color: UIColor) {

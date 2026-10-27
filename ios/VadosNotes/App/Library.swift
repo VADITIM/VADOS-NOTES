@@ -349,6 +349,35 @@ final class Library: ObservableObject {
         record(UndoStep(before: [before], after: [element]), on: pageId)
     }
 
+    func moveElements(_ elementIds: [String], on pageId: String, by offset: Point) {
+        guard let page = page(pageId), !isReadOnly(pageId) else { return }
+        let now = store.timestamp()
+        var step = UndoStep(before: [], after: [])
+        for id in elementIds {
+            guard let element = page.element(withId: id), !element.deleted else { continue }
+            var moved = Lasso.translated(element, by: offset)
+            moved.updated = now
+            moved.device = device
+            apply(.element(pageId: pageId, element: moved), page: pageId)
+            step.before.append(element)
+            step.after.append(moved)
+        }
+        if !step.after.isEmpty {
+            record(step, on: pageId)
+        }
+    }
+
+    func placeText(_ box: TextBox) {
+        guard var session = textEditing, session.element.box != box else { return }
+        session.element.box = box
+        session.element.updated = store.timestamp()
+        session.element.device = device
+        if session.isApplied {
+            apply(.element(pageId: session.pageId, element: session.element), page: session.pageId)
+        }
+        textEditing = session
+    }
+
     func beginText(on pageId: String, at point: Point, fontSize: Double) {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         finishText()
@@ -415,7 +444,7 @@ final class Library: ObservableObject {
             return
         }
         let original = session.original
-        let isChanged = original?.content != session.element.content || original?.fontSize != session.element.fontSize || original?.color != session.element.color
+        let isChanged = original?.content != session.element.content || original?.fontSize != session.element.fontSize || original?.color != session.element.color || original?.box != session.element.box
         guard isChanged else { return }
         record(UndoStep(before: original.map { [$0] } ?? [], after: [session.element]), on: session.pageId)
     }

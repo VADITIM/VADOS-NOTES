@@ -3,11 +3,13 @@ import SwiftUI
 struct NavSeparator: View {
     let orientation: NavOrientation
 
+    static let extent: CGFloat = 1 + 8 * NavMetrics.scale
+
     var body: some View {
         Rectangle()
             .fill(Palette.borderStrong)
-            .frame(width: orientation == .horizontal ? 1 : 24, height: orientation == .horizontal ? 24 : 1)
-            .padding(orientation == .horizontal ? .horizontal : .vertical, 4)
+            .frame(width: orientation == .horizontal ? 1 : 24 * NavMetrics.scale, height: orientation == .horizontal ? 24 * NavMetrics.scale : 1)
+            .padding(orientation == .horizontal ? .horizontal : .vertical, 4 * NavMetrics.scale)
     }
 }
 
@@ -16,17 +18,18 @@ struct SizeSlider: View {
     let share: Double
     let previewDiameter: CGFloat
     let previewColor: Color
+    var length: CGFloat = 148 * NavMetrics.scale
     let onChange: (Double) -> Void
 
-    private static let length: CGFloat = 148
-    private static let knob: CGFloat = 26
+    private static let knob: CGFloat = 26 * NavMetrics.scale
+    private static let thickness: CGFloat = 48 * NavMetrics.scale
     @State private var dragStart: Double?
     @State private var isHeld = false
 
     private var isVertical: Bool { orientation == .vertical }
 
     var body: some View {
-        let travel = Self.length - Self.knob
+        let travel = length - Self.knob
         ZStack(alignment: isVertical ? .bottom : .leading) {
             Capsule()
                 .fill(Palette.borderStrong)
@@ -45,8 +48,7 @@ struct SizeSlider: View {
                 .scaleEffect(isHeld ? 1.15 : 1)
                 .offset(x: isVertical ? 0 : travel * share, y: isVertical ? -travel * share : 0)
         }
-        .frame(width: isVertical ? 48 : Self.length, height: isVertical ? Self.length : 48)
-        .padding(isVertical ? .vertical : .horizontal, 8)
+        .frame(width: isVertical ? Self.thickness : length, height: isVertical ? length : Self.thickness)
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
@@ -67,50 +69,83 @@ struct SizeSlider: View {
     }
 }
 
+struct SelectionRing: View {
+    let id: String
+    let space: Namespace.ID
+    var color: Color = Palette.textBright
+    var diameter: CGFloat = 34 * NavMetrics.scale
+
+    var body: some View {
+        Circle()
+            .stroke(color, lineWidth: 2)
+            .frame(width: diameter, height: diameter)
+            .matchedGeometryEffect(id: id, in: space)
+    }
+}
+
 struct SwatchButton: View {
     let color: Color
-    var diameter: CGFloat = 26
+    var diameter: CGFloat = 26 * NavMetrics.scale
     var isSelected = false
     var isSizePreset = false
+    var caption: String?
     let orientation: NavOrientation
+    var ring: (id: String, space: Namespace.ID)?
     let onSelect: () -> Void
     var onRemove: (() -> Void)?
+
+    static let pitch: CGFloat = 34 * NavMetrics.scale
+    private static let swatchDiameter: CGFloat = 26 * NavMetrics.scale
 
     @State private var isArmed = false
 
     var body: some View {
-        ZStack {
-            if isSizePreset {
-                Circle()
-                    .stroke(isArmed ? Palette.destructive : (isSelected ? Palette.textBright : .clear), lineWidth: 2)
-                    .frame(width: 32, height: 32)
-                    .scaleEffect(isSelected || isArmed ? 1 : 0.7)
-                Circle()
-                    .fill(color)
-                    .frame(width: diameter, height: diameter)
-            } else {
-                Circle()
-                    .fill(color)
-                    .frame(width: 26, height: 26)
-                    .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
-                    .padding(isSelected || isArmed ? 3 : 0)
-                    .overlay(Circle().stroke(isArmed ? Palette.destructive : (isSelected ? Palette.textBright : .clear), lineWidth: 2))
-                    .scaleEffect(isSelected || isArmed ? 0.82 : 1)
+        VStack(spacing: 2 * NavMetrics.scale) {
+            ZStack {
+                if isSelected, let ring {
+                    SelectionRing(id: ring.id, space: ring.space, diameter: (isSizePreset ? 30 : 32) * NavMetrics.scale)
+                }
+                if isArmed {
+                    Circle()
+                        .stroke(Palette.destructive, lineWidth: 2)
+                        .frame(width: 32 * NavMetrics.scale, height: 32 * NavMetrics.scale)
+                }
+                if isSizePreset {
+                    Circle()
+                        .fill(color)
+                        .frame(width: diameter, height: diameter)
+                } else {
+                    Circle()
+                        .fill(color)
+                        .frame(width: Self.swatchDiameter, height: Self.swatchDiameter)
+                        .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                        .scaleEffect(isSelected || isArmed ? 0.82 : 1)
+                }
+                if isArmed {
+                    GlyphView(name: "close", color: Palette.destructive, size: 14 * NavMetrics.scale)
+                        .background(Circle().fill(Palette.panelSolid))
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
-            if isArmed {
-                GlyphView(name: "close", color: Palette.destructive, size: 14)
-                    .background(Circle().fill(Palette.panelSolid))
-                    .transition(.scale.combined(with: .opacity))
+            .frame(width: Self.pitch, height: Self.pitch)
+            if let caption {
+                Text(caption)
+                    .font(Typography.mono(8 * NavMetrics.scale))
+                    .foregroundColor(isSelected ? Palette.textBright : Palette.textMuted)
+                    .lineLimit(1)
+                    .fixedSize()
             }
         }
-        .frame(width: orientation == .horizontal ? 40 : 48, height: orientation == .horizontal ? 48 : 40)
+        .frame(width: orientation == .horizontal ? Self.pitch : 48 * NavMetrics.scale)
         .contentShape(Rectangle())
         .onTapGesture {
             if isArmed {
                 isArmed = false
                 onRemove?()
             } else {
-                onSelect()
+                withAnimation(Motion.selection) {
+                    onSelect()
+                }
             }
         }
         .onLongPressGesture(minimumDuration: Motion.seconds(Motion.menuHoldMilliseconds)) {
@@ -121,7 +156,7 @@ struct SwatchButton: View {
                 isArmed = false
             }
         }
-        .animation(Motion.backOut(Motion.stateMilliseconds), value: isSelected)
+        .animation(Motion.selection, value: isSelected)
         .animation(Motion.backOut(Motion.stateMilliseconds), value: isArmed)
     }
 }
@@ -132,15 +167,32 @@ struct NavIconButton: View {
     var isSelected = false
     var isEnabled = true
     let orientation: NavOrientation
+    var ring: (id: String, space: Namespace.ID)?
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            GlyphView(name: glyph, color: isSelected ? tint : Palette.textBody)
-                .scaleEffect(isSelected ? 1.06 : 1)
-                .frame(width: orientation == .horizontal ? 56 : 48, height: orientation == .horizontal ? 48 : 52)
-                .background(Capsule().fill(Palette.pressedWash).opacity(isSelected ? 1 : 0))
-                .contentShape(Rectangle())
+        let size = NavMetrics.itemSize(orientation)
+        Button {
+            withAnimation(Motion.selection) {
+                action()
+            }
+        } label: {
+            ZStack {
+                if isSelected {
+                    if let ring {
+                        Capsule()
+                            .fill(Palette.pressedWash)
+                            .matchedGeometryEffect(id: ring.id, in: ring.space)
+                    } else {
+                        Capsule()
+                            .fill(Palette.pressedWash)
+                    }
+                }
+                GlyphView(name: glyph, color: isSelected ? tint : Palette.textBody, size: NavMetrics.glyphSize)
+                    .scaleEffect(isSelected ? 1.06 : 1)
+            }
+            .frame(width: size.width, height: size.height)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
         .disabled(!isEnabled)
@@ -151,19 +203,27 @@ struct NavIconButton: View {
 struct CaptionButton: View {
     let caption: String
     var isSelected = false
+    var ring: (id: String, space: Namespace.ID)?
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Text(caption)
-                .font(Typography.monoBold(15))
-                .foregroundColor(isSelected ? Palette.textBright : Palette.textBody)
-                .frame(width: 48, height: 48)
-                .overlay(Circle().stroke(isSelected ? Palette.textBright : .clear, lineWidth: 2).frame(width: 38, height: 38).scaleEffect(isSelected ? 1 : 0.7))
-                .contentShape(Rectangle())
+        Button {
+            withAnimation(Motion.selection) {
+                action()
+            }
+        } label: {
+            ZStack {
+                if isSelected, let ring {
+                    SelectionRing(id: ring.id, space: ring.space, diameter: 38 * NavMetrics.scale)
+                }
+                Text(caption)
+                    .font(Typography.monoBold(15 * NavMetrics.scale))
+                    .foregroundColor(isSelected ? Palette.textBright : Palette.textBody)
+            }
+            .frame(width: 44 * NavMetrics.scale, height: 48 * NavMetrics.scale)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
-        .animation(Motion.backOut(Motion.stateMilliseconds), value: isSelected)
     }
 }
 
@@ -176,11 +236,11 @@ struct WheelButton: View {
         Button(action: action) {
             Circle()
                 .fill(AngularGradient(colors: [Color(hex: "#FF2E2E"), Color(hex: "#FFDD1B"), Color(hex: "#5BFD5B"), Color(hex: "#2EE6FF"), Color(hex: "#4D8BFF"), Color(hex: "#FF2E88"), Color(hex: "#FF2E2E")], center: .center))
-                .frame(width: 26, height: 26)
-                .padding(isOpen ? 3 : 0)
+                .frame(width: 26 * NavMetrics.scale, height: 26 * NavMetrics.scale)
+                .padding(isOpen ? 3 * NavMetrics.scale : 0)
                 .overlay(Circle().stroke(isOpen ? Palette.accent : .clear, lineWidth: 2))
                 .scaleEffect(isOpen ? 0.82 : 1)
-                .frame(width: orientation == .horizontal ? 40 : 48, height: orientation == .horizontal ? 48 : 40)
+                .frame(width: orientation == .horizontal ? 40 * NavMetrics.scale : 48 * NavMetrics.scale, height: orientation == .horizontal ? 48 * NavMetrics.scale : 40 * NavMetrics.scale)
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
@@ -278,12 +338,10 @@ struct ColorPanel: View {
                     }
                     .onEnded { _ in isDragging = false }
             )
-            SizeSlider(orientation: .horizontal, share: hsv.value, previewDiameter: 0, previewColor: .clear) { share in
+            SizeSlider(orientation: .horizontal, share: hsv.value, previewDiameter: 0, previewColor: .clear, length: Self.wheelSize) { share in
                 hsv.value = share
                 emit()
             }
-            .frame(width: Self.wheelSize)
-            .padding(.horizontal, -8)
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color(hex: hsv.hex))

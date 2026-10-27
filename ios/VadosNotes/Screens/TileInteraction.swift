@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 struct TileCallbacks {
-    var onTap: () -> Void
-    var onMenu: (CGRect) -> Void
+    var onTap: (CGRect) -> Void
+    var onMenu: (CGPoint) -> Void
     var onDragBegin: ((CGPoint) -> Void)?
     var onDragMove: ((CGPoint) -> Void)?
     var onDragEnd: ((CGPoint, Bool) -> Void)?
@@ -22,7 +22,7 @@ final class TileTouchView: UIView, UIGestureRecognizerDelegate {
         backgroundColor = .clear
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         addGestureRecognizer(tap)
-        let secondary = UITapGestureRecognizer(target: self, action: #selector(handleSecondary))
+        let secondary = UITapGestureRecognizer(target: self, action: #selector(handleSecondary(_:)))
         secondary.buttonMaskRequired = .secondary
         addGestureRecognizer(secondary)
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(handleHold(_:)))
@@ -56,11 +56,11 @@ final class TileTouchView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleTap() {
-        callbacks?.onTap()
+        callbacks?.onTap(windowFrame)
     }
 
-    @objc private func handleSecondary() {
-        callbacks?.onMenu(windowFrame)
+    @objc private func handleSecondary(_ recognizer: UITapGestureRecognizer) {
+        callbacks?.onMenu(recognizer.location(in: nil))
     }
 
     @objc private func handleHold(_ recognizer: UILongPressGestureRecognizer) {
@@ -70,7 +70,7 @@ final class TileTouchView: UIView, UIGestureRecognizerDelegate {
             pressStart = location
             isDragging = false
             Haptics.hold()
-            callbacks?.onMenu(windowFrame)
+            callbacks?.onMenu(location)
         case .changed:
             if !isDragging, hypot(location.x - pressStart.x, location.y - pressStart.y) > Self.dragTolerance, let onDragBegin = callbacks?.onDragBegin {
                 isDragging = true

@@ -6,6 +6,7 @@ enum CanvasTool: Equatable {
     case ink(Tool)
     case eraser(EraserMode)
     case text
+    case lasso
 }
 
 private final class StrokeSession {
@@ -31,19 +32,35 @@ private struct AreaEntry {
     var revision: Int
 }
 
+private struct PressedText {
+    let id: String
+    let origin: TextBox
+    let start: Point
+    let height: Double
+}
+
 final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     var page: Page? {
         didSet {
             guard page != oldValue else { return }
             if oldValue?.id != page?.id {
                 hasFitted = false
+                selectedIds = []
                 setNeedsLayout()
             }
             clearPendingFeedback()
+            refreshSelection()
             setNeedsDisplay()
         }
     }
-    var tool: CanvasTool = .ink(.pen)
+    var tool: CanvasTool = .ink(.pen) {
+        didSet {
+            if tool != .lasso, !selectedIds.isEmpty {
+                selectedIds = []
+                refreshSelection()
+            }
+        }
+    }
     var inkColor = "#1A1A1A"
     var inkWidth = 0.5
     var eraserRadius = 2.0
@@ -76,6 +93,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     var onEraseArea: (([StrokeReplacement]) -> Void)?
     var onTextTap: ((Point, String?) -> Void)?
     var onTextMove: ((String, TextBox) -> Void)?
+    var onMoveElements: (([String], Point) -> Void)?
     var onInput: (() -> Void)?
     var onHold: ((CGPoint) -> Void)?
     var onHoldMove: ((CGPoint) -> Void)?
@@ -88,7 +106,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private let liveLayer = CAShapeLayer()
     private let liveMask = CAShapeLayer()
     private let eraserLayer = CAShapeLayer()
+    private let lassoLayer = CAShapeLayer()
+    private let selectionLayer = CAShapeLayer()
     private var activeTouch: UITouch?
+    private var isFingerTouch = false
     private var stroke: StrokeSession?
     private var snapLink: CADisplayLink?
     private var snapStart: CFTimeInterval = 0
@@ -98,12 +119,18 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private var hasMoved = false
     private var holdTimer: Timer?
     private var isHolding = false
-    private var hasSeenPencil = false
     private var isPanning = false
     private var pendingErased: [String] = []
     private var areaErase: [String: AreaEntry] = [:]
-    private var movingText: (id: String, origin: TextBox, start: Point, height: Double)?
+    private var pressedText: PressedText?
+    private var textHoldTimer: Timer?
+    private var isTextLifted = false
     private var textOffset: CGVector = .zero
+    private var lassoPoints: [Point] = []
+    private var selectedIds: [String] = []
+    private var selectionBounds: CGRect?
+    private var selectionStart: Point?
+    private var selectionOffset: CGVector = .zero
     private var hasFitted = false
     private var fittedSize: CGSize = .zero
     private var importObserver: NSObjectProtocol?
@@ -113,6 +140,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private static let minimumEraserReach: CGFloat = 6
     private static let minimumSampleSpacing: CGFloat = 0.25
     private static let minimumStraightLength: CGFloat = 24
+    private static let selectionPadding: CGFloat = 8
+    private static let lassoDash: [NSNumber] = [6, 5]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -128,6 +157,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         eraserLayer.strokeColor = UIColor(Palette.destructive).withAlphaComponent(0.9).cgColor
         eraserLayer.lineWidth = 1.5
         layer.addSublayer(eraserLayer)
+        lassoLayer.fillColor = UIColor(Palette.accent).withAlphaComponent(0.08).cgColor
+        lassoLayer.strokeColor = UIColor(Palette.accent).cgColor
+        lassoLayer.lineWidth = 1.5
+        lassoLayer.lineDashPattern = Self.lassoDash
+        layer.addSublayer(lassoLayer)
+        selectionLayer.fillColor = UIColor(Palette.accent).withAlphaComponent(0.06).cgColor
+        selectionLayer.strokeColor = UIColor(Palette.accent).cgColor
+        selectionLayer.lineWidth = 1.5
+        selectionLayer.lineDashPattern = Self.lassoDash
+        layer.addSublayer(selectionLayer)
 
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         pinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -188,6 +227,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         super.layoutSubviews()
         liveLayer.frame = bounds
         eraserLayer.frame = bounds
+        lassoLayer.frame = bounds
+        selectionLayer.frame = bounds
         if !hasFitted || fittedSize != bounds.size {
             fit()
         }
@@ -196,8 +237,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext(), var page else { return }
         var options = RenderOptions(showsGuides: showsGuides, showsDividers: showsDividers, paperStyle: paperStyle, hiddenElementIds: hiddenElementIds.union(pendingErased), pixelScale: window?.screen.scale ?? 2)
-        if let movingText {
-            options.textOffsets[movingText.id] = textOffset
+        if let pressedText, isTextLifted {
+            options.elementOffsets[pressedText.id] = textOffset
+        }
+        if selectionOffset != .zero {
+            for id in selectedIds {
+                options.elementOffsets[id] = selectionOffset
+            }
         }
         if !areaErase.isEmpty {
             var elements = page.elements.filter { areaErase[$0.id] == nil }
@@ -216,50 +262,64 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard activeTouch == nil, let touch = touches.first, let page else { return }
-        let isFinger = touch.type != .pencil
-        if !isFinger {
-            hasSeenPencil = true
-        }
         clearPendingFeedback()
         activeTouch = touch
+        isFingerTouch = touch.type == .direct
         hasMoved = false
         isHolding = false
         gestureStart = touch.location(in: self)
         lastPanLocation = gestureStart
         onInput?()
-        if isFinger {
-            startHoldTimer()
-            if hasSeenPencil {
-                isPanning = true
-                return
-            }
-        }
-        guard !isReadOnly else { return }
         let point = camera.toPage(gestureStart)
+        if tool == .lasso, !isReadOnly, let rect = selectionScreenRect(), rect.contains(gestureStart) {
+            selectionStart = point
+            return
+        }
+        if tool == .text, !isReadOnly, let element = textElement(at: point), let box = element.box, let rect = PageRenderer.textRect(for: element) {
+            pressedText = PressedText(id: element.id, origin: box, start: point, height: Double(rect.height))
+            startTextHoldTimer()
+            return
+        }
+        if isFingerTouch {
+            startHoldTimer()
+        }
+        guard !isReadOnly else {
+            isPanning = isFingerTouch
+            return
+        }
         switch tool {
         case .ink:
-            guard Ink.isInsidePaper(point, extent: page.extent) else {
+            guard !isFingerTouch, Ink.isInsidePaper(point, extent: page.extent) else {
                 isPanning = true
                 return
             }
             beginStroke(at: gestureStart, point: point)
         case .eraser:
+            guard !isFingerTouch else {
+                isPanning = true
+                return
+            }
             lastErasePoint = point
             erase(from: point, to: point)
             showEraser(at: gestureStart)
         case .text:
-            if let element = textElement(at: point), let box = element.box, let rect = PageRenderer.textRect(for: element) {
-                movingText = (element.id, box, point, Double(rect.height))
-            }
+            isPanning = isFingerTouch
+        case .lasso:
+            lassoPoints = [point]
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = activeTouch, touches.contains(touch), let page else { return }
         let location = touch.location(in: self)
-        if hypot(location.x - gestureStart.x, location.y - gestureStart.y) > Self.holdTolerance {
+        if !hasMoved, hypot(location.x - gestureStart.x, location.y - gestureStart.y) > Self.holdTolerance {
             hasMoved = true
             cancelHoldTimer()
+            if pressedText != nil, !isTextLifted {
+                cancelTextHoldTimer()
+                pressedText = nil
+                isPanning = isFingerTouch
+            }
         }
         if isHolding {
             onHoldMove?(convert(location, to: nil))
@@ -273,6 +333,22 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             return
         }
         guard !isReadOnly else { return }
+        if let selectionStart {
+            let point = camera.toPage(location)
+            selectionOffset = CGVector(dx: point.x - selectionStart.x, dy: point.y - selectionStart.y)
+            showSelection()
+            setNeedsDisplay()
+            return
+        }
+        if let pressedText {
+            guard isTextLifted else { return }
+            let point = camera.toPage(location)
+            let moved = TextBox(x: pressedText.origin.x + point.x - pressedText.start.x, y: pressedText.origin.y + point.y - pressedText.start.y, width: pressedText.origin.width)
+            let box = Ink.clampBox(moved, extent: page.extent, height: pressedText.height)
+            textOffset = CGVector(dx: box.x - pressedText.origin.x, dy: box.y - pressedText.origin.y)
+            setNeedsDisplay()
+            return
+        }
         let samples = event?.coalescedTouches(for: touch) ?? [touch]
         switch tool {
         case .ink:
@@ -293,36 +369,64 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             }
             showEraser(at: location)
         case .text:
-            guard let movingText, hasMoved else { return }
-            let point = camera.toPage(location)
-            let moved = TextBox(x: movingText.origin.x + point.x - movingText.start.x, y: movingText.origin.y + point.y - movingText.start.y, width: movingText.origin.width)
-            let box = Ink.clampBox(moved, extent: page.extent, height: movingText.height)
-            textOffset = CGVector(dx: box.x - movingText.origin.x, dy: box.y - movingText.origin.y)
-            setNeedsDisplay()
+            break
+        case .lasso:
+            for sample in samples {
+                lassoPoints.append(camera.toPage(sample.location(in: self)))
+            }
+            showLasso()
         }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = activeTouch, touches.contains(touch), let page else { return }
         cancelHoldTimer()
+        cancelTextHoldTimer()
         let location = touch.location(in: self)
+        let point = camera.toPage(location)
         let wasHolding = isHolding
         let wasPanning = isPanning
+        let wasMoved = hasMoved
         resetGesture()
         hideEraser()
         if wasHolding {
             onHoldEnd?(convert(location, to: nil))
             return
         }
-        if wasPanning || isReadOnly {
-            endStroke()
-            liveLayer.path = nil
+        if selectionStart != nil {
+            finishSelectionMove()
             return
         }
+        if let pressedText {
+            if isTextLifted {
+                if textOffset != .zero {
+                    onTextMove?(pressedText.id, TextBox(x: pressedText.origin.x + Double(textOffset.dx), y: pressedText.origin.y + Double(textOffset.dy), width: pressedText.origin.width))
+                } else {
+                    clearPendingFeedback()
+                    setNeedsDisplay()
+                }
+            } else if !wasMoved {
+                self.pressedText = nil
+                onTextTap?(point, pressedText.id)
+            }
+            return
+        }
+        if wasPanning {
+            endStroke()
+            liveLayer.path = nil
+            if tool == .text, !wasMoved, !isReadOnly, Ink.isInsidePaper(point, extent: page.extent) {
+                onTextTap?(point, nil)
+            }
+            if tool == .lasso, !wasMoved {
+                clearSelection()
+            }
+            return
+        }
+        guard !isReadOnly else { return }
         switch tool {
         case .ink(let inkTool):
             guard stroke != nil else { return }
-            extendStroke(at: location, point: camera.toPage(location))
+            extendStroke(at: location, point: point)
             let points = finalStrokePoints()
             endStroke()
             showLive(points)
@@ -338,17 +442,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
                 onEraseArea?(replacements)
             }
         case .text:
-            let point = camera.toPage(location)
-            if let movingText {
-                if textOffset != .zero {
-                    onTextMove?(movingText.id, TextBox(x: movingText.origin.x + Double(textOffset.dx), y: movingText.origin.y + Double(textOffset.dy), width: movingText.origin.width))
-                } else {
-                    self.movingText = nil
-                    onTextTap?(point, movingText.id)
-                }
-            } else if Ink.isInsidePaper(point, extent: page.extent) {
+            if !wasMoved, Ink.isInsidePaper(point, extent: page.extent) {
                 onTextTap?(point, nil)
             }
+        case .lasso:
+            finishLasso(isMoved: wasMoved)
         }
     }
 
@@ -359,12 +457,18 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
 
     private func cancelActiveGesture() {
         cancelHoldTimer()
+        cancelTextHoldTimer()
         if isHolding {
             onHoldEnd?(CGPoint(x: -1, y: -1))
         }
         endStroke()
         liveLayer.path = nil
         lastErasePoint = nil
+        lassoPoints = []
+        lassoLayer.path = nil
+        selectionStart = nil
+        selectionOffset = .zero
+        showSelection()
         hideEraser()
         clearPendingFeedback()
         resetGesture()
@@ -420,6 +524,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         } else {
             liveLayer.path = nil
         }
+        showLasso()
+        showSelection()
         setNeedsDisplay()
         onCameraChange?(camera)
     }
@@ -577,11 +683,122 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    private func showLasso() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if lassoPoints.count < 2 {
+            lassoLayer.path = nil
+        } else {
+            let path = CGMutablePath()
+            path.addLines(between: lassoPoints.map(camera.toScreen))
+            path.closeSubpath()
+            lassoLayer.path = path
+        }
+        CATransaction.commit()
+    }
+
+    private func finishLasso(isMoved: Bool) {
+        let polygon = lassoPoints
+        lassoPoints = []
+        lassoLayer.path = nil
+        guard isMoved, polygon.count >= 3, let page else {
+            clearSelection()
+            return
+        }
+        selectedIds = page.liveElements.filter { isEnclosed($0, by: polygon) }.map(\.id)
+        if !selectedIds.isEmpty {
+            Haptics.segment()
+        }
+        refreshSelection()
+    }
+
+    private func isEnclosed(_ element: Element, by polygon: [Point]) -> Bool {
+        switch element.type {
+        case .stroke:
+            return Lasso.encloses(polygon, points: element.points ?? [])
+        case .text, .importPage:
+            guard let rect = elementBounds(element) else { return false }
+            let corners = [Point(x: rect.minX, y: rect.minY), Point(x: rect.maxX, y: rect.minY), Point(x: rect.maxX, y: rect.maxY), Point(x: rect.minX, y: rect.maxY), Point(x: rect.midX, y: rect.midY)]
+            return Lasso.encloses(polygon, points: corners)
+        }
+    }
+
+    private func elementBounds(_ element: Element) -> CGRect? {
+        switch element.type {
+        case .stroke:
+            guard let points = element.points, let bounds = StrokeGeometry.bounds(of: points) else { return nil }
+            let reach = (element.width ?? 0) / 2
+            return CGRect(x: bounds.minimumX - reach, y: bounds.minimumY - reach, width: bounds.maximumX - bounds.minimumX + reach * 2, height: bounds.maximumY - bounds.minimumY + reach * 2)
+        case .text:
+            return PageRenderer.textRect(for: element)
+        case .importPage:
+            guard let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { return nil }
+            return CGRect(x: placement.x, y: placement.y, width: size[0] * placement.scale, height: size[1] * placement.scale)
+        }
+    }
+
+    private func refreshSelection() {
+        guard let page, !selectedIds.isEmpty else {
+            selectionBounds = nil
+            showSelection()
+            return
+        }
+        let live = page.liveElements.filter { selectedIds.contains($0.id) }
+        selectedIds = live.map(\.id)
+        selectionBounds = live.compactMap(elementBounds).reduce(CGRect?.none) { union, rect in union.map { $0.union(rect) } ?? rect }
+        showSelection()
+    }
+
+    private func selectionScreenRect() -> CGRect? {
+        guard let selectionBounds else { return nil }
+        let moved = selectionBounds.offsetBy(dx: selectionOffset.dx, dy: selectionOffset.dy)
+        let origin = camera.toScreen(Point(x: moved.minX, y: moved.minY))
+        return CGRect(x: origin.x, y: origin.y, width: moved.width * camera.scale, height: moved.height * camera.scale).insetBy(dx: -Self.selectionPadding, dy: -Self.selectionPadding)
+    }
+
+    private func showSelection() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        selectionLayer.path = selectionScreenRect().map { CGPath(roundedRect: $0, cornerWidth: Self.selectionPadding, cornerHeight: Self.selectionPadding, transform: nil) }
+        CATransaction.commit()
+    }
+
+    private func finishSelectionMove() {
+        let offset = selectionOffset
+        selectionStart = nil
+        if offset != .zero {
+            Haptics.landed()
+            onMoveElements?(selectedIds, Point(x: Double(offset.dx), y: Double(offset.dy)))
+        }
+        selectionOffset = .zero
+        refreshSelection()
+        setNeedsDisplay()
+    }
+
+    private func clearSelection() {
+        selectedIds = []
+        refreshSelection()
+    }
+
     private func textElement(at point: Point) -> Element? {
         page?.liveElements.reversed().first { element in
             guard let rect = PageRenderer.textRect(for: element) else { return false }
             return rect.insetBy(dx: -2, dy: -2).contains(CGPoint(x: point.x, y: point.y))
         }
+    }
+
+    private func startTextHoldTimer() {
+        cancelTextHoldTimer()
+        textHoldTimer = Timer.scheduledTimer(withTimeInterval: Motion.seconds(Motion.textMoveHoldMilliseconds), repeats: false) { [weak self] _ in
+            guard let self, self.pressedText != nil, !self.hasMoved else { return }
+            self.isTextLifted = true
+            Haptics.hold()
+        }
+    }
+
+    private func cancelTextHoldTimer() {
+        textHoldTimer?.invalidate()
+        textHoldTimer = nil
     }
 
     private func startHoldTimer() {
@@ -602,6 +819,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         isPanning = false
         endStroke()
         liveLayer.path = nil
+        lassoPoints = []
+        lassoLayer.path = nil
         clearPendingFeedback()
         setNeedsDisplay()
         Haptics.hold()
@@ -611,7 +830,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private func clearPendingFeedback() {
         pendingErased = []
         areaErase = [:]
-        movingText = nil
+        pressedText = nil
+        isTextLifted = false
         textOffset = .zero
         if stroke == nil {
             liveLayer.path = nil

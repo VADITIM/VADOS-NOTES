@@ -27,6 +27,18 @@ public enum Identifier {
         return prefix + "_" + String(characters)
     }
 
+    public static func creationDate(of identifier: String) -> Date? {
+        guard let separator = identifier.firstIndex(of: "_") else { return nil }
+        let characters = Array(identifier[identifier.index(after: separator)...].prefix(timeCharacterCount))
+        guard characters.count == timeCharacterCount else { return nil }
+        var milliseconds: UInt64 = 0
+        for character in characters {
+            guard let value = alphabet.firstIndex(of: character) else { return nil }
+            milliseconds = milliseconds << 5 | UInt64(value)
+        }
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+    }
+
     public static func hasPrefix(_ prefix: String, _ identifier: String) -> Bool {
         identifier.hasPrefix(prefix + "_") && identifier.count > prefix.count + 1
     }

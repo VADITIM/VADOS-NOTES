@@ -1,8 +1,33 @@
 import NotesCore
 import SwiftUI
+import UIKit
 
 final class CameraHolder {
     var camera = CanvasCamera()
+}
+
+@MainActor
+final class KeyboardObserver: ObservableObject {
+    @Published private(set) var height: CGFloat = 0
+    private var observer: NSObjectProtocol?
+
+    init() {
+        observer = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] notification in
+            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screenHeight = UIScreen.main.bounds.height
+            MainActor.assumeIsolated {
+                withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
+                    self?.height = max(0, screenHeight - frame.minY)
+                }
+            }
+        }
+    }
+
+    deinit {
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 }
 
 struct PageScreen: View {
@@ -13,15 +38,32 @@ struct PageScreen: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var menu: MenuController
     @EnvironmentObject private var preferences: Preferences
-    @State private var fitRequest = 0
+    @Environment(\.screenInsets) private var insets
+    @StateObject private var keyboard = KeyboardObserver()
+    @Namespace private var ringSpace
     @State private var overlayCamera: CanvasCamera?
     @State private var cameraHolder = CameraHolder()
     @State private var topBarBottom: CGFloat = 0
+    @State private var chromeFrames: [String: CGRect] = [:]
     @State private var subNavKey: String?
     @State private var panelKey: String?
+    @State private var isDeleteArmed = false
+    @State private var textFocusRequest = 0
+    @State private var textDragOrigin: TextBox?
+    @State private var flightTile: CGRect?
+    @State private var flightProgress: CGFloat = 1
+    @State private var isChromeShown = true
 
-    private static let previewDiameterRange: (CGFloat, CGFloat) = (4, 20)
+    private static let previewDiameterRange: (CGFloat, CGFloat) = (4 * NavMetrics.scale, 20 * NavMetrics.scale)
     private static let millimetresPerPoint = 0.35278
+    private static let minimumTextWidth = 20.0
+    private static let handleSize = CGSize(width: 8, height: 36)
+    private static let armedSeconds = 2.4
+    private static let createdFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM/yy"
+        return formatter
+    }()
 
     private var activeTool: ActiveTool {
         preferences.activeTool
@@ -30,6 +72,7 @@ struct PageScreen: View {
     private var canvasTool: CanvasTool {
         switch activeTool {
         case .text: return .text
+        case .lasso: return .lasso
         case .eraser: return .eraser(preferences.eraserMode)
         case .pen: return .ink(.pen)
         case .marker: return .ink(.marker)
@@ -46,43 +89,87 @@ struct PageScreen: View {
         GeometryReader { proxy in
             let canvasTop = proxy.frame(in: .global).minY
             ZStack(alignment: .topLeading) {
-                if let page = library.page(pageId) {
-                    canvas(for: page, topInset: max(0, topBarBottom - canvasTop))
-                } else {
-                    VStack {
-                        Spacer()
-                        MicroLabel(text: "This note was deleted")
-                        Spacer()
+                Group {
+                    if let page = library.page(pageId) {
+                        canvas(for: page, topInset: max(0, topBarBottom - canvasTop))
+                    } else {
+                        VStack {
+                            Spacer()
+                            MicroLabel(text: "This note was deleted")
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
                 }
+                .modifier(TileFlight(progress: flightProgress, tile: flightTile))
                 topBar
+                    .modifier(ChromePop(isShown: isChromeShown, order: 0, anchor: .top))
+                historyButtons
+                    .modifier(ChromePop(isShown: isChromeShown, order: 2, anchor: .bottomLeading))
                 toolNav
             }
             .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
+            .onPreferenceChange(ChromeFramesKey.self) { chromeFrames = $0 }
         }
         .background(KeyboardCommands(onUndo: { library.undo(pageId) }, onRedo: { library.redo(pageId) }))
         .onChange(of: session?.element.id) { _, _ in
             subNavKey = nil
             panelKey = nil
         }
+        .onAppear(perform: startFlight)
+    }
+
+    private func startFlight() {
+        guard let tile = navigator.openingTile else { return }
+        navigator.openingTile = nil
+        flightTile = tile
+        flightProgress = 0
+        isChromeShown = false
+        withAnimation(Motion.powerTwoOut(Motion.viewerEnterMilliseconds)) {
+            flightProgress = 1
+        }
+        let arrival = Motion.seconds(Motion.viewerEnterMilliseconds) * Motion.shares.chromeArrival
+        DispatchQueue.main.asyncAfter(deadline: .now() + arrival) {
+            isChromeShown = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.viewerEnterMilliseconds)) {
+            flightTile = nil
+        }
+    }
+
+    private var createdText: String? {
+        Identifier.creationDate(of: pageId).map { Self.createdFormat.string(from: $0) }
     }
 
     private var topBar: some View {
         TopBar(
             title: library.page(pageId).map { library.noteTitle($0) } ?? "Note",
             label: library.notebook(notebookId)?.title ?? "Folder",
+            detail: createdText,
             onBack: { navigator.go(.notebook(notebookId)) },
-            onTitle: { navigator.show(.renameNote(pageId)) }
+            onRename: { title in
+                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                library.updatePage(pageId) { $0.title = trimmed.isEmpty ? nil : title }
+            }
         ) {
             if library.isReadOnly(pageId) {
                 MicroLabel(text: "Read only", color: Palette.destructive)
             }
-            SettingsButton()
-        } below: {
-            RoundIconButton(glyph: "undo", color: Palette.navigation, isTinted: true, isEnabled: library.canUndo(pageId)) { library.undo(pageId) }
-            RoundIconButton(glyph: "redo", color: Palette.importAsset, isTinted: true, isEnabled: library.canRedo(pageId)) { library.redo(pageId) }
         }
+    }
+
+    private var historyButtons: some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 14) {
+                RoundIconButton(glyph: "undo", color: Palette.undo, isTinted: true, isEnabled: library.canUndo(pageId)) { library.undo(pageId) }
+                RoundIconButton(glyph: "redo", color: Palette.redo, isTinted: true, isEnabled: library.canRedo(pageId)) { library.redo(pageId) }
+            }
+            .chromeFrame("history")
+            .padding(.leading, 24 + insets.leading)
+            .padding(.bottom, 24 + insets.bottom)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
     @ViewBuilder
@@ -101,24 +188,71 @@ struct PageScreen: View {
                 hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
                 isReadOnly: library.isReadOnly(pageId),
                 topInset: topInset,
-                fitRequest: fitRequest,
                 callbacks: callbacks()
             )
             if let session, let camera = overlayCamera, let box = session.element.box {
-                let fontSize = CGFloat(session.element.fontSize ?? Tokens.shared.text.fontSize) * camera.scale
-                TextBlockEditor(
-                    text: session.element.content ?? "",
-                    fontSize: fontSize,
-                    color: UIColor(hex: Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)),
-                    onChange: { library.updateText($0) }
-                )
-                .frame(width: CGFloat(box.width) * camera.scale)
-                .fixedSize(horizontal: false, vertical: true)
-                .overlay(Rectangle().stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1, dash: [4, 3])).padding(-6).opacity((session.element.content ?? "").isEmpty ? 0 : 1))
-                .offset(x: CGFloat(box.x) * camera.scale + camera.offset.x, y: CGFloat(box.y) * camera.scale + camera.offset.y)
+                textEditor(session, box: box, camera: camera, extent: page.extent)
             }
         }
         .clipped()
+    }
+
+    private func textEditor(_ session: TextEditingSession, box: TextBox, camera: CanvasCamera, extent: Extent) -> some View {
+        let fontSize = CGFloat(session.element.fontSize ?? Tokens.shared.text.fontSize) * camera.scale
+        return TextBlockEditor(
+            text: session.element.content ?? "",
+            fontSize: fontSize,
+            color: UIColor(hex: Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)),
+            focusRequest: textFocusRequest,
+            onChange: { library.updateText($0) }
+        )
+        .frame(width: CGFloat(box.width) * camera.scale)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(6)
+        .overlay(Rectangle().stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        .simultaneousGesture(textDrag(box: box, camera: camera, extent: extent) { origin, translation in
+            TextBox(x: origin.x + translation.x, y: origin.y + translation.y, width: origin.width)
+        })
+        .overlay(alignment: .leading) {
+            textHandle
+                .offset(x: -Self.handleSize.width / 2)
+                .gesture(textDrag(box: box, camera: camera, extent: extent) { origin, translation in
+                    let shift = min(translation.x, origin.width - Self.minimumTextWidth)
+                    return TextBox(x: origin.x + shift, y: origin.y, width: origin.width - shift)
+                })
+        }
+        .overlay(alignment: .trailing) {
+            textHandle
+                .offset(x: Self.handleSize.width / 2)
+                .gesture(textDrag(box: box, camera: camera, extent: extent) { origin, translation in
+                    TextBox(x: origin.x, y: origin.y, width: max(Self.minimumTextWidth, origin.width + translation.x))
+                })
+        }
+        .offset(x: CGFloat(box.x) * camera.scale + camera.offset.x - 6, y: CGFloat(box.y) * camera.scale + camera.offset.y - 6)
+    }
+
+    private var textHandle: some View {
+        Capsule()
+            .fill(Palette.accent)
+            .frame(width: Self.handleSize.width, height: Self.handleSize.height)
+            .padding(12)
+            .contentShape(Rectangle())
+    }
+
+    private func textDrag(box: TextBox, camera: CanvasCamera, extent: Extent, change: @escaping (TextBox, Point) -> TextBox) -> some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .onChanged { value in
+                let origin = textDragOrigin ?? box
+                if textDragOrigin == nil {
+                    textDragOrigin = box
+                }
+                let translation = Point(x: Double(value.translation.width / camera.scale), y: Double(value.translation.height / camera.scale))
+                let height = Double(session.flatMap { PageRenderer.textRect(for: $0.element)?.height } ?? 0)
+                library.placeText(Ink.clampBox(change(origin, translation), extent: extent, height: height))
+            }
+            .onEnded { _ in
+                textDragOrigin = nil
+            }
     }
 
     private func callbacks() -> CanvasCallbacks {
@@ -150,11 +284,12 @@ struct PageScreen: View {
                 }
             },
             onTextMove: { elementId, box in library.moveText(elementId, on: pageId, to: box) },
+            onMoveElements: { ids, offset in library.moveElements(ids, on: pageId, by: offset) },
             onInput: {
                 library.noteInput(on: pageId)
                 closeSubNav()
             },
-            onHold: { point in showPageMenu(around: CGRect(origin: point, size: .zero), isFromCanvas: true) },
+            onHold: { point in showPageMenu(at: point) },
             onHoldMove: { point in menu.drag(to: point) },
             onHoldEnd: { point in menu.release(at: point) },
             onUndo: { library.undo(pageId) },
@@ -163,16 +298,15 @@ struct PageScreen: View {
     }
 
     private func closeSubNav() {
-        withAnimation(Motion.backIn(Motion.overlayLeaveMilliseconds)) {
-            subNavKey = nil
-            panelKey = nil
-        }
+        subNavKey = nil
+        panelKey = nil
     }
 
     private func toggleSubNav(_ key: String) {
         withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
             panelKey = nil
             subNavKey = subNavKey == key ? nil : key
+            isDeleteArmed = false
         }
     }
 
@@ -190,6 +324,11 @@ struct PageScreen: View {
         String(Int((millimetres / millimetresPerPoint).rounded()))
     }
 
+    private static func pixelCaption(_ millimetres: Double) -> String {
+        let pixels = millimetres / millimetresPerPoint
+        return pixels < 10 ? String(format: "%.1fpx", pixels) : "\(Int(pixels.rounded()))px"
+    }
+
     private var navFace: String {
         session == nil ? "page-tools" : "page-typing"
     }
@@ -200,29 +339,45 @@ struct PageScreen: View {
             return [[
                 NavItem(id: "text-size", caption: Self.pointSize(session.element.fontSize ?? preferences.textFontSize), label: "Font size", action: { _ in toggleSubNav("text-size") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
+                NavItem(id: "edit-text", glyph: "keyboard", label: "Edit", tint: Palette.edit, isTinted: true, action: { _ in textFocusRequest += 1 }),
             ], [
                 NavItem(id: "finish-text", glyph: "check", label: "Done", tint: Palette.create, isTinted: true, action: { _ in library.finishText() }),
             ]]
         }
-        let tools: [NavItem] = ActiveTool.drawing.compactMap { active in
-            guard let tool = active.inkTool else { return nil }
-            let color = displayColor(tool)
-            return NavItem(id: active.rawValue, glyph: active.rawValue, label: active.rawValue.capitalized, tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, swatch: Color(hex: color), action: { _ in press(active) })
-        } + [
-            NavItem(id: "eraser", glyph: "eraser", label: "Eraser", tint: Palette.destructive, action: { _ in press(.eraser) }),
-            NavItem(id: "text", glyph: "text", label: "Text", tint: Palette.accent, action: { _ in press(.text) }),
-        ]
-        let more = [NavItem(id: "page-menu", glyph: "more", label: "Page menu", action: { frame in showPageMenu(around: frame, isFromCanvas: false) })]
+        let tools: [NavItem] = preferences.toolOrder.compactMap { raw in
+            guard let active = ActiveTool(rawValue: raw) else { return nil }
+            switch active {
+            case .pen, .marker:
+                guard let tool = active.inkTool else { return nil }
+                let color = displayColor(tool)
+                return NavItem(id: active.rawValue, glyph: active.rawValue, label: active.rawValue.capitalized, tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, swatch: Color(hex: color), action: { _ in press(active) })
+            case .eraser:
+                return NavItem(id: "eraser", glyph: "eraser", label: "Eraser", tint: Palette.destructive, action: { _ in press(.eraser) })
+            case .text:
+                return NavItem(id: "text", glyph: "text", label: "Text", tint: Palette.accent, action: { _ in press(.text) })
+            case .lasso:
+                return NavItem(id: "lasso", glyph: "lasso", label: "Lasso", tint: Palette.accent, action: { _ in press(.lasso) })
+            }
+        }
+        let more = [NavItem(id: "page-menu", glyph: "more", label: "Page menu", isTinted: subNavKey == "page-menu", action: { _ in toggleSubNav("page-menu") })]
         return [tools, more]
     }
 
     private func press(_ tool: ActiveTool) {
         if activeTool == tool {
+            guard tool != .lasso else { return }
             toggleSubNav(tool == .text ? "text-size" : tool.rawValue)
             return
         }
-        closeSubNav()
         preferences.setActiveTool(tool)
+        if subNavKey != nil, subNavKey != "page-menu", tool != .lasso {
+            withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+                panelKey = nil
+                subNavKey = tool == .text ? "text-size" : tool.rawValue
+            }
+        } else {
+            closeSubNav()
+        }
     }
 
     private var toolNav: some View {
@@ -231,9 +386,17 @@ struct PageScreen: View {
             groups: navGroups,
             selectedId: session == nil ? activeTool.rawValue : nil,
             subNavKey: subNavKey,
+            subNavigationGroups: orderedSubNavigationGroups,
             panelKey: panelKey,
-            onCarry: closeSubNav,
-            subNav: { orientation in subNav(orientation) },
+            obstacles: Array(chromeFrames.values),
+            keyboardHeight: keyboard.height,
+            isShown: isChromeShown,
+            onReorderTools: { order in preferences.setToolOrder(order) },
+            onReorderSubNavigation: { order in
+                if let subNavKey {
+                    preferences.setSubNavigationOrder(order, for: subNavKey)
+                }
+            },
             panel: { panel }
         )
     }
@@ -270,67 +433,109 @@ struct PageScreen: View {
         previewDiameterRange.0 + (previewDiameterRange.1 - previewDiameterRange.0) * CGFloat(share)
     }
 
-    @ViewBuilder
-    private func subNav(_ orientation: NavOrientation) -> some View {
-        switch subNavKey ?? "" {
+    private var orderedSubNavigationGroups: [SubNavigationGroup] {
+        guard let key = subNavKey else { return [] }
+        let groups = subNavigationGroups(key)
+        let order = preferences.subNavigationOrder(key)
+        return order.compactMap { id in groups.first { $0.id == id } } + groups.filter { !order.contains($0.id) }
+    }
+
+    private func group<Content: View>(_ id: String, @ViewBuilder content: @escaping (NavOrientation) -> Content) -> SubNavigationGroup {
+        SubNavigationGroup(id: id) { orientation in AnyView(content(orientation)) }
+    }
+
+    private func subNavigationGroups(_ key: String) -> [SubNavigationGroup] {
+        switch key {
         case "pen":
-            inkControls(.pen, orientation: orientation)
+            return inkGroups(.pen)
         case "marker":
-            inkControls(.marker, orientation: orientation)
+            return inkGroups(.marker)
         case "eraser":
-            eraserControls(orientation: orientation)
+            return eraserGroups()
         case "text-size":
-            textSizeControls(orientation: orientation)
+            return [textSizeGroup()]
         case "text-color":
-            textColorControls(orientation: orientation)
+            return textColorGroups()
+        case "page-menu":
+            return pageGroups()
         default:
-            EmptyView()
+            return []
         }
     }
 
-    @ViewBuilder
-    private func inkControls(_ tool: Tool, orientation: NavOrientation) -> some View {
+    private func stack(_ orientation: NavOrientation, spacing: CGFloat = 0) -> AnyLayout {
+        orientation == .horizontal ? AnyLayout(HStackLayout(spacing: spacing)) : AnyLayout(VStackLayout(spacing: spacing))
+    }
+
+    private func crossStack(_ orientation: NavOrientation) -> AnyLayout {
+        orientation == .horizontal ? AnyLayout(VStackLayout(spacing: 4 * NavMetrics.scale)) : AnyLayout(HStackLayout(spacing: 4 * NavMetrics.scale))
+    }
+
+    private func inkGroups(_ tool: Tool) -> [SubNavigationGroup] {
         let range = Preferences.inkTokens(tool).widthRange ?? [0.2, 2]
         let width = preferences.width(tool)
         let current = preferences.color(tool).uppercased()
         let inkColor = Color(hex: displayColor(tool)).opacity(max(0.6, Preferences.inkTokens(tool).opacity))
-        SizeSlider(orientation: orientation, share: Self.share(width, range), previewDiameter: Self.previewDiameter(Self.share(width, range)), previewColor: inkColor) { share in
-            preferences.setWidth(Self.value(share, range), for: tool)
-        }
-        NavSeparator(orientation: orientation)
-        ForEach(preferences.widthPresets(tool), id: \.self) { preset in
-            SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, orientation: orientation, onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
-                .transition(.pop)
-        }
-        NavIconButton(glyph: "plus", isEnabled: !preferences.widthPresets(tool).contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
-            preferences.addWidthPreset(width, for: tool)
-        }
-        NavSeparator(orientation: orientation)
-        ForEach(preferences.colorPresets(tool), id: \.self) { color in
-            SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, onSelect: { preferences.setColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
-                .transition(.pop)
-        }
-        NavIconButton(glyph: "plus", isEnabled: !preferences.colorPresets(tool).contains(current), orientation: orientation) {
-            preferences.addColorPreset(current, for: tool)
-        }
-        NavSeparator(orientation: orientation)
-        WheelButton(isOpen: panelKey != nil, orientation: orientation, action: togglePanel)
+        let presets = preferences.widthPresets(tool)
+        let colors = preferences.colorPresets(tool)
+        return [
+            group("\(tool.rawValue)-sizes") { orientation in
+                let crossLayout = crossStack(orientation)
+                crossLayout {
+                    SizeSlider(orientation: orientation, share: Self.share(width, range), previewDiameter: Self.previewDiameter(Self.share(width, range)), previewColor: inkColor) { share in
+                        preferences.setWidth(Self.value(share, range), for: tool)
+                    }
+                    let layout = stack(orientation)
+                    layout {
+                        ForEach(presets, id: \.self) { preset in
+                            SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, caption: Self.pixelCaption(preset), orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
+                                .transition(.pop)
+                        }
+                        NavIconButton(glyph: "plus", isEnabled: !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
+                            preferences.addWidthPreset(width, for: tool)
+                        }
+                    }
+                }
+            },
+            group("\(tool.rawValue)-colours") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    ForEach(colors, id: \.self) { color in
+                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), onSelect: { preferences.setColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
+                            .transition(.pop)
+                    }
+                    NavIconButton(glyph: "plus", isEnabled: !colors.contains(current), orientation: orientation) {
+                        preferences.addColorPreset(current, for: tool)
+                    }
+                }
+            },
+            group("\(tool.rawValue)-wheel") { orientation in
+                WheelButton(isOpen: panelKey != nil, orientation: orientation, action: togglePanel)
+            },
+        ]
     }
 
-    @ViewBuilder
-    private func eraserControls(orientation: NavOrientation) -> some View {
+    private func eraserGroups() -> [SubNavigationGroup] {
         let range = Tokens.shared.tools.eraser.radiusRange
         let share = Self.share(preferences.eraserRadius, range)
-        SizeSlider(orientation: orientation, share: share, previewDiameter: Self.previewDiameter(share), previewColor: Palette.destructive.opacity(0.85)) { next in
-            preferences.setEraserRadius(Self.value(next, range))
-        }
-        NavSeparator(orientation: orientation)
-        NavIconButton(glyph: "erase_stroke", tint: Palette.destructive, isSelected: preferences.eraserMode == .stroke, orientation: orientation) {
-            preferences.setEraserMode(.stroke)
-        }
-        NavIconButton(glyph: "erase_area", tint: Palette.destructive, isSelected: preferences.eraserMode == .area, orientation: orientation) {
-            preferences.setEraserMode(.area)
-        }
+        return [
+            group("eraser-size") { orientation in
+                SizeSlider(orientation: orientation, share: share, previewDiameter: Self.previewDiameter(share), previewColor: Palette.destructive.opacity(0.85)) { next in
+                    preferences.setEraserRadius(Self.value(next, range))
+                }
+            },
+            group("eraser-modes") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    NavIconButton(glyph: "erase_stroke", tint: Palette.destructive, isSelected: preferences.eraserMode == .stroke, orientation: orientation, ring: ("eraser-mode-ring", ringSpace)) {
+                        preferences.setEraserMode(.stroke)
+                    }
+                    NavIconButton(glyph: "erase_area", tint: Palette.destructive, isSelected: preferences.eraserMode == .area, orientation: orientation, ring: ("eraser-mode-ring", ringSpace)) {
+                        preferences.setEraserMode(.area)
+                    }
+                }
+            },
+        ]
     }
 
     private func chooseTextSize(_ size: Double) {
@@ -338,75 +543,127 @@ struct PageScreen: View {
         library.styleText(fontSize: preferences.textFontSize)
     }
 
-    @ViewBuilder
-    private func textSizeControls(orientation: NavOrientation) -> some View {
+    private func textSizeGroup() -> SubNavigationGroup {
         let range = Tokens.shared.text.fontSizeRange
         let size = session?.element.fontSize ?? preferences.textFontSize
         let share = Self.share(size, range)
-        SizeSlider(orientation: orientation, share: share, previewDiameter: Self.previewDiameter(share), previewColor: Palette.textBright) { next in
-            chooseTextSize(Self.value(next, range))
-        }
-        NavSeparator(orientation: orientation)
-        ForEach(Tokens.shared.text.fontSizePresets, id: \.self) { preset in
-            CaptionButton(caption: Self.pointSize(preset), isSelected: Self.pointSize(preset) == Self.pointSize(size)) {
-                chooseTextSize(preset)
+        return group("text-sizes") { orientation in
+            let crossLayout = crossStack(orientation)
+            crossLayout {
+                SizeSlider(orientation: orientation, share: share, previewDiameter: Self.previewDiameter(share), previewColor: Palette.textBright) { next in
+                    chooseTextSize(Self.value(next, range))
+                }
+                let layout = stack(orientation)
+                layout {
+                    ForEach(Tokens.shared.text.fontSizePresets, id: \.self) { preset in
+                        CaptionButton(caption: Self.pointSize(preset), isSelected: Self.pointSize(preset) == Self.pointSize(size), ring: ("text-size-ring", ringSpace)) {
+                            chooseTextSize(preset)
+                        }
+                    }
+                }
             }
         }
     }
 
-    @ViewBuilder
-    private func textColorControls(orientation: NavOrientation) -> some View {
+    private func textColorGroups() -> [SubNavigationGroup] {
         let current = (session?.element.color ?? Tokens.shared.text.color).uppercased()
-        ForEach(Tokens.shared.text.colors, id: \.self) { color in
-            SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, onSelect: { library.styleText(color: color.uppercased()) })
-        }
-        NavSeparator(orientation: orientation)
-        WheelButton(isOpen: panelKey != nil, orientation: orientation, action: togglePanel)
+        return [
+            group("text-colours") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    ForEach(Tokens.shared.text.colors, id: \.self) { color in
+                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("text-colour-ring", ringSpace), onSelect: { library.styleText(color: color.uppercased()) })
+                    }
+                }
+            },
+            group("text-wheel") { orientation in
+                WheelButton(isOpen: panelKey != nil, orientation: orientation, action: togglePanel)
+            },
+        ]
     }
 
-    private func showPageMenu(around frame: CGRect, isFromCanvas: Bool) {
-        let pages = library.pages(in: notebookId)
-        let index = pages.firstIndex { $0.id == pageId }
+    private func pageGroups() -> [SubNavigationGroup] {
         let page = library.page(pageId)
         let isReadOnly = library.isReadOnly(pageId)
         let showsGuides = preferences.showsGuides
         let showsDividers = preferences.showsDividers
+        return [
+            group("page-file") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    NavIconButton(glyph: "trash", tint: Palette.destructive, isSelected: isDeleteArmed, isEnabled: page != nil, orientation: orientation) {
+                        deletePressed()
+                    }
+                    NavIconButton(glyph: "import", tint: Palette.importAsset, isEnabled: false, orientation: orientation) {}
+                }
+            },
+            group("page-extent") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    NavIconButton(glyph: "add_column", tint: Palette.create, isEnabled: page != nil && !isReadOnly, orientation: orientation) {
+                        library.expand(pageId, columns: true)
+                    }
+                    NavIconButton(glyph: "add_row", tint: Palette.create, isEnabled: page != nil && !isReadOnly, orientation: orientation) {
+                        library.expand(pageId, columns: false)
+                    }
+                }
+            },
+            group("page-view") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    NavIconButton(glyph: "guides", tint: Palette.view, isSelected: showsGuides, orientation: orientation) {
+                        preferences.setShowsGuides(!showsGuides)
+                    }
+                    NavIconButton(glyph: "cell_lines", tint: Palette.view, isSelected: showsDividers, isEnabled: (page?.extent.cellCount ?? 1) > 1, orientation: orientation) {
+                        preferences.setShowsDividers(!showsDividers)
+                    }
+                }
+            },
+        ]
+    }
+
+    private func deletePressed() {
+        guard isDeleteArmed else {
+            Haptics.tick()
+            isDeleteArmed = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.armedSeconds) {
+                isDeleteArmed = false
+            }
+            return
+        }
+        Haptics.landed()
+        library.deletePage(pageId)
+        navigator.go(.notebook(notebookId))
+    }
+
+    private func showPageMenu(at point: CGPoint) {
+        let page = library.page(pageId)
+        let isReadOnly = library.isReadOnly(pageId)
+        let showsGuides = preferences.showsGuides
+        let showsDividers = preferences.showsDividers
+        let actions = ["expand_columns", "expand_rows", "toggle_guides", "toggle_dividers", "delete_page"]
         let slots = MenuSlot.fromTokens(
-            Tokens.shared.menus.page,
+            Tokens.shared.menus.page.filter { actions.contains($0.action) },
             title: { action in
                 switch action {
-                case "previous_page": return "Previous note"
-                case "next_page": return "Next note"
-                case "new_page": return "New note"
                 case "expand_columns": return "Add column"
                 case "expand_rows": return "Add row"
-                case "import": return "Import"
                 case "toggle_guides": return showsGuides ? "Guides off" : "Guides on"
                 case "toggle_dividers": return showsDividers ? "Cell lines off" : "Cell lines on"
-                case "fit_page": return "Fit page"
                 case "delete_page": return "Delete note"
                 default: return action
                 }
             },
             isEnabled: { action in
                 switch action {
-                case "previous_page": return (index ?? 0) > 0
-                case "next_page": return index.map { $0 < pages.count - 1 } ?? false
                 case "expand_columns", "expand_rows": return page != nil && !isReadOnly
                 case "toggle_dividers": return (page?.extent.cellCount ?? 1) > 1
-                case "import": return false
                 case "delete_page": return page != nil
                 default: return true
                 }
             },
             perform: { action in
                 switch action {
-                case "previous_page":
-                    if let index, index > 0 { navigator.go(.page(notebookId: notebookId, pageId: pages[index - 1].id)) }
-                case "next_page":
-                    if let index, index < pages.count - 1 { navigator.go(.page(notebookId: notebookId, pageId: pages[index + 1].id)) }
-                case "new_page":
-                    navigator.show(.newNote(notebookId: notebookId))
                 case "expand_columns":
                     library.expand(pageId, columns: true)
                 case "expand_rows":
@@ -415,8 +672,6 @@ struct PageScreen: View {
                     preferences.setShowsGuides(!showsGuides)
                 case "toggle_dividers":
                     preferences.setShowsDividers(!showsDividers)
-                case "fit_page":
-                    fitRequest += 1
                 case "delete_page":
                     library.deletePage(pageId)
                     navigator.go(.notebook(notebookId))
@@ -425,11 +680,7 @@ struct PageScreen: View {
                 }
             }
         )
-        if isFromCanvas {
-            menu.present(slots, at: frame.origin, title: "Note")
-        } else {
-            menu.present(slots, around: frame, title: "Note")
-        }
+        menu.present(slots, at: point, title: "Note")
     }
 }
 

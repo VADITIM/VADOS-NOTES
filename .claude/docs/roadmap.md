@@ -4,7 +4,7 @@ Phases follow `spec/notes-app-spec.md` section 9.
 
 - [x] Phase 0: repo structure, spec, `shared/tokens.json`
 - [x] Phase 1: schema, journal, merge, push protocol, mock backend, 44 tests
-- [~] Phase 2: iPad app written (canvas, journal round trip, notebooks, pages, text, menus, sync wiring); first device build pending
+- [~] Phase 2: iPad app written and reworked (finger pans, lasso, groups, tile flight); first device build pending
 - [x] Phase 3: Windows app (Tauri): library, notebook and page screens, canvas renderer, menus, pop bar; built by the `windows` workflow
 - [~] Phase 4: extent doubling implemented on iPad (menu: add column / add row)
 - [ ] Phase 4b: PDF and image import
