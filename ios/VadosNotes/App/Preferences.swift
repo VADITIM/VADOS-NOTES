@@ -99,6 +99,22 @@ final class Preferences: ObservableObject {
         write("isAsciiBackgroundMoving", value)
     }
 
+    var asciiBackgroundOpacity: Double {
+        clamp(read("asciiBackgroundOpacity", tokens.background.opacity), tokens.background.opacityRange)
+    }
+
+    func setAsciiBackgroundOpacity(_ value: Double) {
+        write("asciiBackgroundOpacity", clamp(value, tokens.background.opacityRange))
+    }
+
+    var doesAsciiBackgroundMoveInCanvas: Bool {
+        read("doesAsciiBackgroundMoveInCanvas", true)
+    }
+
+    func setAsciiBackgroundMovesInCanvas(_ value: Bool) {
+        write("doesAsciiBackgroundMoveInCanvas", value)
+    }
+
     var asciiBackgroundColor: String {
         read("asciiBackgroundColor", tokens.background.colors[0])
     }

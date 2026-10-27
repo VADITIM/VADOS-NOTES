@@ -606,6 +606,16 @@ struct NewNoteSheet: View {
 
 struct SettingsSheet: View {
     @EnvironmentObject private var library: Library
+    private static let asciiOpacityRange = Tokens.shared.background.opacityRange
+
+    private static func asciiOpacityShare(_ opacity: Double) -> Double {
+        (opacity - asciiOpacityRange[0]) / (asciiOpacityRange[1] - asciiOpacityRange[0])
+    }
+
+    private static func asciiOpacity(_ share: Double) -> Double {
+        asciiOpacityRange[0] + (asciiOpacityRange[1] - asciiOpacityRange[0]) * share
+    }
+
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
     @State private var owner = ""
@@ -631,6 +641,17 @@ struct SettingsSheet: View {
                     Segmented(options: [SegmentOption(value: false, title: "Still"), SegmentOption(value: true, title: "Moving")], selected: preferences.isAsciiBackgroundMoving) { isMoving in
                         preferences.setAsciiBackgroundMoving(isMoving)
                     }
+                    if preferences.isAsciiBackgroundMoving {
+                        Segmented(options: [SegmentOption(value: true, title: "Both"), SegmentOption(value: false, title: "Exclude canvas")], selected: preferences.doesAsciiBackgroundMoveInCanvas) { movesInCanvas in
+                            preferences.setAsciiBackgroundMovesInCanvas(movesInCanvas)
+                        }
+                    }
+                    HStack(spacing: 12) {
+                        SizeSlider(orientation: .horizontal, share: Self.asciiOpacityShare(preferences.asciiBackgroundOpacity), previewDiameter: 0, previewColor: .clear, length: 220) { share in
+                            preferences.setAsciiBackgroundOpacity(Self.asciiOpacity(share))
+                        }
+                        MicroLabel(text: "Opacity \(Int((preferences.asciiBackgroundOpacity * 100).rounded()))%", color: Palette.textMuted)
+                    }
                     HStack(spacing: 4) {
                         ForEach(Tokens.shared.background.colors, id: \.self) { color in
                             SwatchButton(color: Color(hex: color), isSelected: color.uppercased() == preferences.asciiBackgroundColor.uppercased(), orientation: .horizontal, onSelect: { preferences.setAsciiBackgroundColor(color) })
@@ -639,6 +660,7 @@ struct SettingsSheet: View {
                 }
             }
             .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: preferences.showsAsciiBackground)
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: preferences.isAsciiBackgroundMoving)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     MicroLabel(text: "GitHub sync", color: Palette.textMuted)

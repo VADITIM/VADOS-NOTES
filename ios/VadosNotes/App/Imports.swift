@@ -24,7 +24,7 @@ final class ImportImages {
     private static let millimetresPerPoint = 25.4 / 72
     private static let maximumImagePixels = 4096.0
     private static let minimumLevel = 0.5
-    private static let cacheLimit = 36
+    private static let cacheBytes = 192 * 1024 * 1024
     private static let edgeSampleCount = 48
     private static let whiteLuminance = 0.88
     private static let whiteShare = 0.8
@@ -94,9 +94,6 @@ final class ImportImages {
         guard var entry = entries[chosenKey], let image = entry.image else { return nil }
         entry.lastUsed = Date()
         if isDark && entry.isWhite {
-            if entry.darkened == nil {
-                entry.darkened = darkened(image)
-            }
             entries[chosenKey] = entry
             return entry.darkened ?? image
         }
@@ -122,8 +119,10 @@ final class ImportImages {
                 return
             }
             let isWhite = Self.isWhitePage(image)
+            let darkened = isWhite ? self.darkened(image) : nil
             self.update(key) { entry in
                 entry.image = image
+                entry.darkened = darkened
                 entry.isWhite = isWhite
             }
             self.evict()
@@ -145,9 +144,13 @@ final class ImportImages {
     private func evict() {
         lock.lock()
         defer { lock.unlock() }
-        guard entries.count > Self.cacheLimit else { return }
+        func bytes(_ entry: Entry) -> Int {
+            [entry.image, entry.darkened].compactMap { $0 }.reduce(0) { $0 + $1.bytesPerRow * $1.height }
+        }
+        var total = entries.values.reduce(0) { $0 + bytes($1) }
         let ordered = entries.filter { $0.value.image != nil }.sorted { $0.value.lastUsed < $1.value.lastUsed }
-        for (key, _) in ordered.prefix(entries.count - Self.cacheLimit) {
+        for (key, entry) in ordered where total > Self.cacheBytes {
+            total -= bytes(entry)
             entries[key] = nil
         }
     }

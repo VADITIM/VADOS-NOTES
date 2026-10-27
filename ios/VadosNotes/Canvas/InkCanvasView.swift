@@ -118,6 +118,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private var glideLink: CADisplayLink?
     private var glideVelocity: CGPoint = .zero
     private var glideLast: CFTimeInterval = 0
+    private var panSamples: [(location: CGPoint, time: TimeInterval)] = []
     private var snapStart: CFTimeInterval = 0
     private var lastErasePoint: Point?
     private var gestureStart: CGPoint = .zero
@@ -153,6 +154,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private static let lassoDash: [NSNumber] = [6, 5]
     private static let selectionScaleRange: ClosedRange<CGFloat> = 0.1...10
     private static let glideStopSpeed: CGFloat = 12
+    private static let glideSampleWindow: TimeInterval = 0.08
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -288,6 +290,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         isHolding = false
         gestureStart = touch.location(in: self)
         lastPanLocation = gestureStart
+        panSamples = [(gestureStart, touch.timestamp)]
         onInput?()
         let point = camera.toPage(gestureStart)
         onSelectionMenu?(nil)
@@ -355,6 +358,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             camera.offset.x += location.x - lastPanLocation.x
             camera.offset.y += location.y - lastPanLocation.y
             lastPanLocation = location
+            recordPanSample(location, time: touch.timestamp)
             cameraChanged()
             return
         }
@@ -440,6 +444,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         if wasPanning {
             endStroke()
             liveLayer.path = nil
+            if wasMoved {
+                recordPanSample(location, time: touch.timestamp)
+                startGlide(panVelocity())
+            }
             if tool == .text, !wasMoved, !isReadOnly, Ink.isInsidePaper(point, extent: page.extent) {
                 onTextTap?(point, nil)
             }
@@ -590,6 +598,17 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         camera.offset.y += translation.y
         pan.setTranslation(.zero, in: self)
         cameraChanged()
+    }
+
+    private func recordPanSample(_ location: CGPoint, time: TimeInterval) {
+        panSamples.append((location, time))
+        panSamples.removeAll { time - $0.time > Self.glideSampleWindow }
+    }
+
+    private func panVelocity() -> CGPoint {
+        guard let first = panSamples.first, let last = panSamples.last, last.time - first.time > 0.001 else { return .zero }
+        let elapsed = CGFloat(last.time - first.time)
+        return CGPoint(x: (last.location.x - first.location.x) / elapsed, y: (last.location.y - first.location.y) / elapsed)
     }
 
     private func startGlide(_ velocity: CGPoint) {

@@ -3,6 +3,7 @@ import UIKit
 
 struct AsciiBackground: UIViewRepresentable {
     let color: String
+    let opacity: Double
     let isMoving: Bool
 
     func makeUIView(context: Context) -> AsciiBackdropView {
@@ -10,6 +11,7 @@ struct AsciiBackground: UIViewRepresentable {
     }
 
     func updateUIView(_ view: AsciiBackdropView, context: Context) {
+        view.alpha = CGFloat(opacity)
         view.update(color: color.uppercased(), isMoving: isMoving && !context.environment.accessibilityReduceMotion)
     }
 }
@@ -35,7 +37,6 @@ final class AsciiBackdropView: UIView {
         isUserInteractionEnabled = false
         backgroundColor = .clear
         clipsToBounds = true
-        alpha = CGFloat(Self.tokens.opacity)
         accessibilityElementsHidden = true
         addSubview(pattern)
         NotificationCenter.default.addObserver(self, selector: #selector(restartDrift), name: UIApplication.willEnterForegroundNotification, object: nil)
@@ -62,7 +63,7 @@ final class AsciiBackdropView: UIView {
         super.layoutSubviews()
         guard tileSize.width > 0, bounds.size != laidOutSize else { return }
         laidOutSize = bounds.size
-        let reach = hypot(bounds.width, bounds.height) + max(tileSize.width, tileSize.height) * 2
+        let reach = hypot(bounds.width, bounds.height) + max(tileSize.width, tileSize.height * 2) * 2
         pattern.transform = .identity
         pattern.bounds = CGRect(x: 0, y: 0, width: reach, height: reach)
         pattern.center = CGPoint(x: bounds.midX, y: bounds.midY)
@@ -81,8 +82,12 @@ final class AsciiBackdropView: UIView {
         let attributes: [NSAttributedString.Key: Any] = [.font: Typography.monoFont(CGFloat(Self.tokens.fontSize)), .foregroundColor: color]
         let measured = (Self.art as NSString).size(withAttributes: attributes)
         tileSize = CGSize(width: ceil(measured.width + gap), height: ceil(measured.height + gap))
-        let image = UIGraphicsImageRenderer(size: tileSize).image { _ in
+        let shift = tileSize.width * CGFloat(Self.tokens.rowShift)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: tileSize.width, height: tileSize.height * 2)).image { _ in
             (Self.art as NSString).draw(at: CGPoint(x: gap / 2, y: gap / 2), withAttributes: attributes)
+            for x in [shift, shift - tileSize.width] {
+                (Self.art as NSString).draw(at: CGPoint(x: gap / 2 + x, y: tileSize.height + gap / 2), withAttributes: attributes)
+            }
         }
         pattern.backgroundColor = UIColor(patternImage: image)
     }

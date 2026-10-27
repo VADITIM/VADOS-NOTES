@@ -111,7 +111,7 @@ struct RootView: View {
             ZStack {
                 Palette.ground
                 if preferences.showsAsciiBackground {
-                    AsciiBackground(color: preferences.asciiBackgroundColor, isMoving: preferences.isAsciiBackgroundMoving)
+                    AsciiBackground(color: preferences.asciiBackgroundColor, opacity: preferences.asciiBackgroundOpacity, isMoving: preferences.isAsciiBackgroundMoving && (preferences.doesAsciiBackgroundMoveInCanvas || !navigator.route.isPage))
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)

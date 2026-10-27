@@ -322,7 +322,7 @@ enum PageRenderer {
             case .text:
                 drawText(element, in: context, style: options.paperStyle)
             case .importPage:
-                drawImport(element, in: context, camera: camera, options: options, guide: UIColor(hex: colors.guide))
+                drawImport(element, in: context, camera: camera, visiblePage: transform == nil ? visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy) : .infinite, options: options, guide: UIColor(hex: colors.guide))
             }
             context.restoreGState()
         }
@@ -342,16 +342,17 @@ enum PageRenderer {
         return [.font: Typography.monoFont(fontSize), .foregroundColor: color, .paragraphStyle: paragraph]
     }
 
-    private static func drawImport(_ element: Element, in context: CGContext, camera: CanvasCamera, options: RenderOptions, guide: UIColor) {
+    private static func drawImport(_ element: Element, in context: CGContext, camera: CanvasCamera, visiblePage: CGRect, options: RenderOptions, guide: UIColor) {
         guard let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { return }
         let rect = CGRect(x: placement.x, y: placement.y, width: size[0] * placement.scale, height: size[1] * placement.scale)
+        guard rect.intersects(visiblePage) else { return }
         guard let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * options.pixelScale), isDark: options.paperStyle == .dark) else {
             context.setFillColor(guide.cgColor)
             context.fill(rect)
             return
         }
         context.saveGState()
-        context.interpolationQuality = .high
+        context.interpolationQuality = .medium
         context.translateBy(x: rect.minX, y: rect.maxY)
         context.scaleBy(x: 1, y: -1)
         context.draw(image, in: CGRect(origin: .zero, size: rect.size))

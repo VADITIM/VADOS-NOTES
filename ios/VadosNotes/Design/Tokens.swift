@@ -188,9 +188,11 @@ struct Tokens: Decodable {
     struct BackgroundTokens: Decodable {
         let fontSize: Double
         let opacity: Double
+        let opacityRange: [Double]
         let angleDegrees: Double
         let speed: Double
         let gap: Double
+        let rowShift: Double
         let colors: [String]
     }
 
