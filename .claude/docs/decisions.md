@@ -54,3 +54,13 @@ Reasons that would otherwise be comments. The spec's section 11 is the product-l
 - **Paper is dark by default; white is a toggle** in the top bar. Neutral inks (chroma at most `neutral_ink_chroma`) are stored as they read on white paper and are inverted on dark paper. So black pen writes white on black, the file still says black, and the iPad shows it correctly.
 - **Two fingers double-tapped undo; three fingers redo.** A tap counts only if the fingers stay within 14 px and lift within 320 ms; the second tap must come within 420 ms.
 - **Every Windows build on `master` is published as a GitHub release** (`windows-build-N`, marked latest), so the app is a direct download.
+
+### Folders, notes and settings
+
+- **Notebooks are called folders and can nest.** `parent` on `notebook.json` points at the containing folder. A parent that is missing or deleted counts as top level, so a folder never disappears. Moving refuses to put a folder inside itself or one of its descendants. Deleting a folder deletes its sub-folders and notes.
+- **Notes have names, colours and icons**, as optional `title`, `color` and `icon` in the page header, written in sorted-key order only when present. NotesCore decodes, merges (newer header wins, like the rest of the header) and re-encodes them, so the iPad keeps what Windows wrote even before its UI shows them. New notes are named `Note N`.
+- **Moving a note creates it again in the target folder under a new page ID and tombstones the original.** The folder is part of the file path, and rewriting a file in place under another path would look like a new page with a duplicate ID to the other device.
+- **Folder and note menus share four slots in two columns**: Rename, Icon & colour, Move, Delete. Delete arms first, like every destructive slot.
+- **Top bars are overlays.** The title block, back button, sync badge and settings button each sit on the flat 85 % panel colour, so they stay readable over ink without blur (the spec rules out blur). The canvas fits the page below the bar; pan the page under it freely.
+- **One settings button on every screen** holds paper colour (dark or white) and the GitHub sync fields. The sync badge opens the same sheet.
+- **The text tool opens with a blinking caret only.** No pop-in and no frame. While the box is empty a drawn accent bar blinks, the height of one line; once there is text, the native caret (accent coloured) takes over and a dashed frame marks the block.

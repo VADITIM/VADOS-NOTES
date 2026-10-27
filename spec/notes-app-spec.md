@@ -123,12 +123,12 @@ Timestamps are UTC ISO 8601 with milliseconds. Readers also accept them without 
 ### 4.4 Repository layout
 
 ```
-notebooks/<notebook id>/notebook.json      { schema_version, id, title, updated, device, deleted }
+notebooks/<notebook id>/notebook.json      { schema_version, id, title, updated, device, deleted, color?, icon?, parent? }
 notebooks/<notebook id>/pages/<page id>.json
 assets/<sha256>
 ```
 
-Pages are ordered by their ID, which is a ULID and therefore sorts by creation time. Files are written with sorted keys and one element per line, so the same state always produces the same bytes.
+Notebooks are shown as folders. `parent` nests a folder inside another; a missing or deleted parent puts it at the top level. A page header may carry an optional `title`, `color` and `icon`; they sit in the header lines in sorted-key order and are left out when absent. Pages are ordered by their ID, which is a ULID and therefore sorts by creation time. Files are written with sorted keys and one element per line, so the same state always produces the same bytes.
 
 ### 4.3 Rules
 
@@ -407,3 +407,5 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - One sync branch (default `main`) for every notebook. One file per page keeps devices apart.
 - Undo of an erase re-creates the stroke under a new ID, because a tombstone always wins a merge.
 - The paper is light (`#EFEEE9`). It is content, like a photo in VAD/OS Gallery, so it owns its colour; the chrome around it stays on the V/AS ground.
+- Notebooks are folders and can nest (`parent`). Pages are notes and carry an optional name, colour and icon. Moving a note to another folder writes it under a new page ID there and tombstones the old file, because the folder is part of the path.
+- Top bars float over the content as overlays on the flat panel colour (no blur); the page fits below them.

@@ -239,6 +239,9 @@ public struct PageHeader: Codable, Equatable, Sendable {
     public var device: String
     public var deleted: Bool
     public var extent: Extent
+    public var title: String?
+    public var color: String?
+    public var icon: String?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -248,9 +251,12 @@ public struct PageHeader: Codable, Equatable, Sendable {
         case device
         case deleted
         case extent
+        case title
+        case color
+        case icon
     }
 
-    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single) {
+    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, title: String? = nil, color: String? = nil, icon: String? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.notebook = notebook
@@ -258,6 +264,9 @@ public struct PageHeader: Codable, Equatable, Sendable {
         self.device = device
         self.deleted = deleted
         self.extent = extent
+        self.title = title
+        self.color = color
+        self.icon = icon
     }
 }
 
@@ -271,6 +280,9 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
     public var device: String
     public var deleted: Bool
     public var extent: Extent
+    public var title: String?
+    public var color: String?
+    public var icon: String?
     public var elements: [Element]
 
     enum CodingKeys: String, CodingKey {
@@ -281,6 +293,9 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         case device
         case deleted
         case extent
+        case title
+        case color
+        case icon
         case elements
     }
 
@@ -292,11 +307,14 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         device = header.device
         deleted = header.deleted
         extent = header.extent
+        title = header.title
+        color = header.color
+        icon = header.icon
         self.elements = elements
     }
 
     public var header: PageHeader {
-        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent)
+        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, title: title, color: color, icon: icon)
     }
 
     public var liveElements: [Element] {
@@ -321,6 +339,9 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
     public var updated: Date
     public var device: String
     public var deleted: Bool
+    public var color: String?
+    public var icon: String?
+    public var parent: String?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -329,15 +350,21 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
         case updated
         case device
         case deleted
+        case color
+        case icon
+        case parent
     }
 
-    public init(schemaVersion: Int = Notebook.currentSchemaVersion, id: String, title: String, updated: Date, device: String, deleted: Bool = false) {
+    public init(schemaVersion: Int = Notebook.currentSchemaVersion, id: String, title: String, updated: Date, device: String, deleted: Bool = false, color: String? = nil, icon: String? = nil, parent: String? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.title = title
         self.updated = updated
         self.device = device
         self.deleted = deleted
+        self.color = color
+        self.icon = icon
+        self.parent = parent
     }
 }
 

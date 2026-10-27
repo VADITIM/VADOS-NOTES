@@ -81,6 +81,64 @@ export class Library {
         return notebook && !notebook.deleted ? notebook : null
     }
 
+    parentOf(notebookId) {
+        const parent = this.notebook(notebookId)?.parent
+        return parent && this.notebook(parent) ? parent : null
+    }
+
+    folders(parentId = null) {
+        return this.liveNotebooks().filter((notebook) => this.parentOf(notebook.id) === parentId)
+    }
+
+    isInside(notebookId, ancestorId) {
+        const visited = new Set()
+        let current = notebookId
+        while (current && !visited.has(current)) {
+            if (current === ancestorId) {
+                return true
+            }
+            visited.add(current)
+            current = this.parentOf(current)
+        }
+        return false
+    }
+
+    depth(notebookId) {
+        let depth = 0
+        let current = this.parentOf(notebookId)
+        const visited = new Set()
+        while (current && !visited.has(current)) {
+            visited.add(current)
+            depth += 1
+            current = this.parentOf(current)
+        }
+        return depth
+    }
+
+    updateNotebook(notebookId, changes) {
+        const notebook = this.notebook(notebookId)
+        if (!notebook) {
+            return
+        }
+        const next = { ...notebook, ...changes, updated: this.timestamp(), device: this.device }
+        for (const [key, value] of Object.entries(changes)) {
+            if (value === null || value === undefined) {
+                delete next[key]
+            }
+        }
+        this.applyNotebook(next)
+    }
+
+    canMoveNotebook(notebookId, parentId) {
+        return Boolean(this.notebook(notebookId)) && (parentId === null || (Boolean(this.notebook(parentId)) && !this.isInside(parentId, notebookId)))
+    }
+
+    moveNotebook(notebookId, parentId) {
+        if (this.canMoveNotebook(notebookId, parentId) && this.parentOf(notebookId) !== parentId) {
+            this.updateNotebook(notebookId, { parent: parentId })
+        }
+    }
+
     pages(notebookId) {
         return [...this.pagesById.values()]
             .filter((page) => page.notebook === notebookId && !page.deleted)
@@ -96,7 +154,7 @@ export class Library {
         return this.readOnlyPages.has(pageId)
     }
 
-    createNotebook(title) {
+    createNotebook(title, parentId = null) {
         const now = this.timestamp()
         const notebook = {
             schema_version: schemaVersion,
@@ -106,23 +164,24 @@ export class Library {
             device: this.device,
             deleted: false,
         }
+        if (parentId && this.notebook(parentId)) {
+            notebook.parent = parentId
+        }
         this.applyNotebook(notebook)
-        this.createPage(notebook.id)
         return notebook
     }
 
     rename(notebookId, title) {
-        const notebook = this.notebook(notebookId)
-        if (!notebook) {
-            return
-        }
-        this.applyNotebook({ ...notebook, title, updated: this.timestamp(), device: this.device })
+        this.updateNotebook(notebookId, { title })
     }
 
     deleteNotebook(notebookId) {
         const notebook = this.notebook(notebookId)
         if (!notebook) {
             return
+        }
+        for (const child of this.folders(notebookId)) {
+            this.deleteNotebook(child.id)
         }
         for (const page of this.pages(notebookId)) {
             this.deletePage(page.id)
@@ -136,6 +195,7 @@ export class Library {
             schema_version: schemaVersion,
             id: makeIdentifier("p", timestampMilliseconds(now)),
             notebook: notebookId,
+            title: `Note ${this.pages(notebookId).length + 1}`,
             updated: now,
             device: this.device,
             deleted: false,
@@ -143,6 +203,31 @@ export class Library {
         }
         this.applyHeader(header)
         return this.pagesById.get(header.id)
+    }
+
+    updatePage(pageId, changes) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId)) {
+            return
+        }
+        this.applyHeader({ ...this.header(page), ...changes, updated: this.timestamp(), device: this.device })
+    }
+
+    movePage(pageId, notebookId) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId) || page.notebook === notebookId || !this.notebook(notebookId)) {
+            return null
+        }
+        this.finishText()
+        const now = this.timestamp()
+        const { elements, ...header } = page
+        const moved = { ...header, id: makeIdentifier("p", timestampMilliseconds(now)), notebook: notebookId, updated: now, device: this.device }
+        this.applyHeader(moved)
+        const target = { ...this.pagesById.get(moved.id), elements: [...elements] }
+        this.pagesById.set(moved.id, target)
+        this.schedulePage(target)
+        this.deletePage(pageId)
+        return moved.id
     }
 
     deletePage(pageId) {

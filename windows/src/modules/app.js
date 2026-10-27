@@ -76,6 +76,9 @@ class App {
             return
         }
         const panel = buildSheet(this, request)
+        if (!panel) {
+            return
+        }
         const backdrop = create("div", "sheet-backdrop")
         backdrop.addEventListener("pointerdown", () => this.showSheet(null))
         const host = create("div", "sheet-host", panel)
@@ -94,7 +97,12 @@ class App {
         fadeIn(backdrop)
         overlayEnter(panel)
         this.sheet = { backdrop, panel: host }
-        requestAnimationFrame(() => panel.focusTarget?.focus())
+        requestAnimationFrame(() => {
+            panel.focusTarget?.focus()
+            if (panel.selectsAll) {
+                panel.focusTarget?.select()
+            }
+        })
     }
 }
 

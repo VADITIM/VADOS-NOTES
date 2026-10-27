@@ -25,9 +25,11 @@ export function paperStyle() {
     return tokens.page.styles[style] ? style : tokens.page.default_style
 }
 
-export function togglePaperStyle() {
-    writeSetting("paperStyle", paperStyle() === "dark" ? "light" : "dark")
-    changed()
+export function setPaperStyle(style) {
+    if (tokens.page.styles[style] && style !== paperStyle()) {
+        writeSetting("paperStyle", style)
+        changed()
+    }
 }
 
 export function toolColor(tool) {

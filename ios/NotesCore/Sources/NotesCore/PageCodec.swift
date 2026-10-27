@@ -58,12 +58,21 @@ public enum PageCodec {
         }
         var lines: [String] = []
         lines.append("{")
+        if let color = page.color {
+            lines.append("  \"color\": \(try value(color)),")
+        }
         lines.append("  \"deleted\": \(try value(page.deleted)),")
         lines.append("  \"device\": \(try value(page.device)),")
         lines.append("  \"extent\": \(try value(page.extent)),")
+        if let icon = page.icon {
+            lines.append("  \"icon\": \(try value(icon)),")
+        }
         lines.append("  \"id\": \(try value(page.id)),")
         lines.append("  \"notebook\": \(try value(page.notebook)),")
         lines.append("  \"schema_version\": \(try value(page.schemaVersion)),")
+        if let title = page.title {
+            lines.append("  \"title\": \(try value(title)),")
+        }
         lines.append("  \"updated\": \(try value(Timestamp.format(page.updated))),")
         let elements = page.elements.sorted(by: Element.isOrderedBefore)
         if elements.isEmpty {

@@ -66,6 +66,7 @@ export class InkCanvas {
         this.height = 0
         this.pixelRatio = window.devicePixelRatio || 1
         this.hasFitted = false
+        this.topInset = 0
         this.activePointer = null
         this.touchPointers = new Map()
         this.stroke = null
@@ -139,9 +140,26 @@ export class InkCanvas {
         if (!this.page || this.width === 0) {
             return
         }
-        this.camera = Camera.fitting(this.page.extent, this.width, this.height, fitMargin)
+        this.camera = Camera.fitting(this.page.extent, this.width, this.height, fitMargin, this.topInset)
         this.hasFitted = true
         this.cameraChanged()
+    }
+
+    setInsets({ top }) {
+        if (top === this.topInset) {
+            return
+        }
+        const wasFitted = this.hasFitted && this.page && this.width > 0 && this.isCameraFitted()
+        this.topInset = top
+        if (wasFitted || !this.hasFitted) {
+            this.hasFitted = false
+            this.layout()
+        }
+    }
+
+    isCameraFitted() {
+        const fitted = Camera.fitting(this.page.extent, this.width, this.height, fitMargin, this.topInset)
+        return Math.abs(fitted.scale - this.camera.scale) < 1e-6 && Math.abs(fitted.offsetX - this.camera.offsetX) < 0.5 && Math.abs(fitted.offsetY - this.camera.offsetY) < 0.5
     }
 
     layout() {

@@ -34,7 +34,10 @@ public enum Merge {
             updated: newer.updated,
             device: newer.device,
             deleted: first.deleted || second.deleted,
-            extent: first.extent.union(second.extent)
+            extent: first.extent.union(second.extent),
+            title: newer.title,
+            color: newer.color,
+            icon: newer.icon
         )
     }
 

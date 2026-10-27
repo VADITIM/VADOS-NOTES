@@ -399,14 +399,18 @@ function canonical(value) {
 }
 
 export function encodePage(page) {
+    const optional = (key) => (typeof page[key] === "string" ? [`  "${key}": ${canonical(page[key])},`] : [])
     const lines = [
         "{",
+        ...optional("color"),
         `  "deleted": ${canonical(page.deleted)},`,
         `  "device": ${canonical(page.device)},`,
         `  "extent": ${canonical(page.extent)},`,
+        ...optional("icon"),
         `  "id": ${canonical(page.id)},`,
         `  "notebook": ${canonical(page.notebook)},`,
         `  "schema_version": ${canonical(page.schema_version)},`,
+        ...optional("title"),
         `  "updated": ${canonical(page.updated)},`,
     ]
     const elements = [...page.elements].sort(compareElements)

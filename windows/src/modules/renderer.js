@@ -28,13 +28,13 @@ export class Camera {
         return new Camera(scale, anchorX - pagePoint[0] * scale, anchorY - pagePoint[1] * scale)
     }
 
-    static fitting(extent, width, height, margin) {
+    static fitting(extent, width, height, margin, topInset = 0) {
         const availableWidth = Math.max(1, width - margin * 2)
-        const availableHeight = Math.max(1, height - margin * 2)
+        const availableHeight = Math.max(1, height - topInset - margin * 2)
         const scale = Math.min(availableWidth / cellWidth, availableHeight / cellHeight)
         const shownWidth = extent.cols * cellWidth * scale
         const horizontalOffset = shownWidth < width ? (width - shownWidth) / 2 : margin
-        return new Camera(scale, horizontalOffset, margin)
+        return new Camera(scale, horizontalOffset, topInset + margin)
     }
 }
 

@@ -1,6 +1,6 @@
 import { animate, duration } from "./motion.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
-import { paperColors, tokens } from "./tokens.js"
+import { tokens } from "./tokens.js"
 
 const holdTolerance = 10
 const tapConsumptionWindowMilliseconds = 800
@@ -157,17 +157,12 @@ export function syncBadge(status, onOpen) {
     return holdable(badge, { action: onOpen })
 }
 
-export function paperButton(style, onToggle) {
-    const sheet = create("span", "paper-button-sheet")
-    const button = create("button", "paper-button pressable", sheet)
+export function settingsButton(onOpen) {
+    const button = create("button", "round-button pressable", glyph("settings", { color: tokens.palette.text_body }))
     button.type = "button"
-    button.setAttribute("aria-label", "Paper colour")
-    button.setStyle = (nextStyle) => {
-        sheet.style.background = paperColors(nextStyle).paper
-        button.title = nextStyle === "dark" ? "Dark paper" : "White paper"
-    }
-    button.setStyle(style)
-    return holdable(button, { action: onToggle })
+    button.setAttribute("aria-label", "Settings")
+    button.title = "Settings"
+    return holdable(button, { action: onOpen })
 }
 
 export function slabButton(title, color, action) {
