@@ -1,6 +1,6 @@
-import { animate, duration, popIn } from "./motion.js"
+import { animate, duration } from "./motion.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
-import { tokens } from "./tokens.js"
+import { paperColors, tokens } from "./tokens.js"
 
 const holdTolerance = 10
 const tapConsumptionWindowMilliseconds = 800
@@ -157,85 +157,17 @@ export function syncBadge(status, onOpen) {
     return holdable(badge, { action: onOpen })
 }
 
-function popBarButton(item) {
-    const wash = create("span", "pop-bar-wash")
-    const icon = create("span", "pop-bar-glyph", glyph(item.glyph))
-    const dot = create("span", "pop-bar-swatch")
-    const button = create("button", "pop-bar-button pressable", wash, icon, dot)
+export function paperButton(style, onToggle) {
+    const sheet = create("span", "paper-button-sheet")
+    const button = create("button", "paper-button pressable", sheet)
     button.type = "button"
-    button.dataset.identifier = item.id
-    button.setAttribute("aria-label", item.label ?? item.id)
-    button.current = item
-    holdable(button, {
-        action: () => button.current.action(),
-        onHold: item.onHold ? (rect) => button.current.onHold(rect) : null,
-        onTapAt: item.onTapAt ? (rect) => button.current.onTapAt(rect) : null,
-    })
-    return button
-}
-
-function updatePopBarButton(button, item) {
-    button.current = item
-    const isEnabled = item.isEnabled !== false
-    button.disabled = !isEnabled
-    button.classList.toggle("is-active", Boolean(item.isActive))
-    button.classList.toggle("is-disabled", !isEnabled)
-    button.querySelector(".pop-bar-glyph").style.color = item.isActive ? item.tint ?? tokens.palette.text_bright : tokens.palette.text_body
-    const dot = button.querySelector(".pop-bar-swatch")
-    dot.style.display = item.swatch ? "block" : "none"
-    if (item.swatch) {
-        dot.style.background = item.swatch
+    button.setAttribute("aria-label", "Paper colour")
+    button.setStyle = (nextStyle) => {
+        sheet.style.background = paperColors(nextStyle).paper
+        button.title = nextStyle === "dark" ? "Dark paper" : "White paper"
     }
-}
-
-export function popBar() {
-    const bar = create("nav", "pop-bar")
-    const buttons = new Map()
-    const separators = new Map()
-    bar.update = (groups) => {
-        const children = []
-        const seen = new Set()
-        groups.filter((group) => group.length).forEach((group, index) => {
-            if (children.length) {
-                const key = `separator-${index}-${group[0].id}`
-                let separator = separators.get(key)
-                if (!separator) {
-                    separator = create("span", "pop-bar-separator")
-                    separators.set(key, separator)
-                    if (bar.isConnected && bar.childElementCount) {
-                        popIn(separator)
-                    }
-                }
-                seen.add(key)
-                children.push(separator)
-            }
-            for (const item of group) {
-                let button = buttons.get(item.id)
-                if (!button) {
-                    button = popBarButton(item)
-                    buttons.set(item.id, button)
-                    if (bar.isConnected && bar.childElementCount) {
-                        popIn(button)
-                    }
-                }
-                seen.add(item.id)
-                updatePopBarButton(button, item)
-                children.push(button)
-            }
-        })
-        for (const key of [...buttons.keys()]) {
-            if (!seen.has(key)) {
-                buttons.delete(key)
-            }
-        }
-        for (const key of [...separators.keys()]) {
-            if (!seen.has(key)) {
-                separators.delete(key)
-            }
-        }
-        bar.replaceChildren(...children)
-    }
-    return bar
+    button.setStyle(style)
+    return holdable(button, { action: onToggle })
 }
 
 export function slabButton(title, color, action) {

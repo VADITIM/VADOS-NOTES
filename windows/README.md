@@ -4,10 +4,10 @@ Tauri 2 app. Same screens, menus, pop bar, motion and page renderer as the iPad 
 
 ## Get the app without building
 
-Push to GitHub. The `windows` workflow builds on a Windows runner and uploads two artifacts:
+Every push to `master` that touches `windows/` or `shared/` is built on a Windows runner and published as the latest release: **https://github.com/VADITIM/VADOS-NOTES/releases/latest**
 
-- `VadosNotes-windows-installer`: the setup `.exe` (NSIS) and an `.msi`.
-- `VadosNotes-windows-portable`: `vados-notes.exe`, runs without installing.
+- `VadosNotes-portable.exe`: runs without installing.
+- `VADOS Notes_*_x64-setup.exe`: installer. An `.msi` sits beside it.
 
 Windows SmartScreen warns about an unsigned app the first time: **More info → Run anyway**.
 
@@ -36,7 +36,11 @@ Open `http://localhost:8765/windows/src/index.html`. In a browser, notes are kep
 
 - Mouse or pen draws. Touch draws until a pen is seen, then one finger pans. Two fingers pan and zoom.
 - Wheel pans, Shift+wheel pans sideways, Ctrl+wheel (or touchpad pinch) zooms. Middle-drag or Space+drag pans.
-- Right-click the page, or hold a finger still on it, to open the page menu. Right-click or hold a pen, pencil or marker button to pick its colour.
+- Right-click the page, or hold a finger still on it, to open the page menu.
+- Tap the selected tool again to open its second nav: size, colour presets, colour wheel with hex; for the eraser, size and Whole line or Precise.
+- Hold the nav for a second to carry it anywhere. It turns vertical near a side edge.
+- Two fingers double-tapped undo, three fingers redo.
+- The paper button in the top bar switches between dark and white paper.
 - Text tool: click empty paper to type, click a block to edit it, drag a block to move it. Esc finishes.
 - Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes.
 - Delete actions arm on the first click and act on the second.

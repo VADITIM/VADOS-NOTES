@@ -77,3 +77,87 @@ export function tileAppear(element, rank) {
         delay: Math.min(rank, 16) * 12,
     })
 }
+
+const curveFunctions = new Map()
+
+function bezierAxis(first, second, share) {
+    const inverse = 1 - share
+    return 3 * inverse * inverse * share * first + 3 * inverse * share * share * second + share * share * share
+}
+
+export function curveAt(name) {
+    const cached = curveFunctions.get(name)
+    if (cached) {
+        return cached
+    }
+    const [firstX, firstY, secondX, secondY] = tokens.motion.curves[name]
+    const evaluate = (progress) => {
+        if (progress <= 0) {
+            return 0
+        }
+        if (progress >= 1) {
+            return 1
+        }
+        let low = 0
+        let high = 1
+        let share = progress
+        for (let iteration = 0; iteration < 24; iteration += 1) {
+            const x = bezierAxis(firstX, secondX, share)
+            if (Math.abs(x - progress) < 0.0005) {
+                break
+            }
+            if (x < progress) {
+                low = share
+            } else {
+                high = share
+            }
+            share = (low + high) / 2
+        }
+        return bezierAxis(firstY, secondY, share)
+    }
+    curveFunctions.set(name, evaluate)
+    return evaluate
+}
+
+export function tween({ milliseconds, curveName, onFrame, onDone }) {
+    const curveFunction = curveAt(curveName)
+    const start = performance.now()
+    let request = null
+    let isStopped = false
+    const frame = (now) => {
+        if (isStopped) {
+            return
+        }
+        const progress = milliseconds <= 0 ? 1 : Math.min(1, (now - start) / milliseconds)
+        onFrame(curveFunction(progress), progress)
+        if (progress < 1) {
+            request = requestAnimationFrame(frame)
+        } else {
+            onDone?.()
+        }
+    }
+    request = requestAnimationFrame(frame)
+    return {
+        stop() {
+            isStopped = true
+            cancelAnimationFrame(request)
+        },
+    }
+}
+
+export function popOut(element, milliseconds = duration("state")) {
+    return animate(element, [{ transform: "scale(1)", opacity: 1 }, { transform: "scale(0.001)", opacity: 0 }], {
+        milliseconds,
+        curveName: "back_in",
+        fill: "forwards",
+    })
+}
+
+export function popInNow(element, delay = 0) {
+    return animate(element, [{ transform: "scale(0.001)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }], {
+        milliseconds: duration("state"),
+        curveName: "back_out",
+        delay,
+        fill: "backwards",
+    })
+}

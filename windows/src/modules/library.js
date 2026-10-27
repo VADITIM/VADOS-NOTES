@@ -164,7 +164,7 @@ export class Library {
         this.applyHeader({ ...this.header(page), extent, updated: this.timestamp(), device: this.device })
     }
 
-    addStroke(pageId, tool, color, points) {
+    addStroke(pageId, tool, color, points, width = tokens.tools[tool].width) {
         const page = this.page(pageId)
         if (!page || this.isReadOnly(pageId) || points.length === 0) {
             return
@@ -178,7 +178,7 @@ export class Library {
             order: nextOrder(page, layer),
             tool,
             color,
-            width: tokens.tools[tool].width,
+            width,
             points,
             updated: now,
             device: this.device,
@@ -204,6 +204,33 @@ export class Library {
             this.applyElement(pageId, removed)
             step.before.push(element)
             step.after.push(removed)
+        }
+        if (step.after.length) {
+            this.record(step, pageId)
+        }
+    }
+
+    replaceStrokes(pageId, replacements) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId)) {
+            return
+        }
+        const now = this.timestamp()
+        const step = { before: [], after: [] }
+        for (const { elementId, pieces } of replacements) {
+            const element = page.elements.find((candidate) => candidate.id === elementId)
+            if (!element || element.deleted) {
+                continue
+            }
+            const removed = tombstone(element, now, this.device)
+            this.applyElement(pageId, removed)
+            step.before.push(element)
+            step.after.push(removed)
+            for (const points of pieces) {
+                const piece = { ...element, id: makeIdentifier("e", timestampMilliseconds(now)), points, updated: now, device: this.device, deleted: false }
+                this.applyElement(pageId, piece)
+                step.after.push(piece)
+            }
         }
         if (step.after.length) {
             this.record(step, pageId)

@@ -47,3 +47,25 @@ export function roleColor(role) {
     default: return tokens.palette.text_bright
     }
 }
+
+export function componentsToHex({ red, green, blue, alpha }) {
+    const byte = (value) => Math.round(Math.min(1, Math.max(0, value)) * 255).toString(16).padStart(2, "0").toUpperCase()
+    return `#${byte(red)}${byte(green)}${byte(blue)}${alpha < 1 ? byte(alpha) : ""}`
+}
+
+export function isNeutral(hex) {
+    const { red, green, blue } = hexComponents(hex)
+    return Math.max(red, green, blue) - Math.min(red, green, blue) <= tokens.page.neutral_ink_chroma
+}
+
+export function paperColors(style) {
+    return tokens.page.styles[style] ?? tokens.page.styles[tokens.page.default_style]
+}
+
+export function inkOnPaper(hex, style) {
+    if (style !== "dark" || !isNeutral(hex)) {
+        return hex
+    }
+    const components = hexComponents(hex)
+    return componentsToHex({ red: 1 - components.red, green: 1 - components.green, blue: 1 - components.blue, alpha: components.alpha })
+}

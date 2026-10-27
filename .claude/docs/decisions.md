@@ -39,3 +39,15 @@ Reasons that would otherwise be comments. The spec's section 11 is the product-l
 - **Mouse draws like the Pencil; touch follows the finger rules.** Middle-drag, Space+drag and the wheel pan, Ctrl+wheel zooms.
 - **The camera is not refitted on window resize.** The iPad refits on rotation; on Windows resizes are frequent and refitting would throw away the zoom.
 - **Pages are written straight to files in the repository layout.** No journal yet; that arrives with Windows sync (phase 6).
+
+### Nav, tools and paper (Windows first, iPad to follow)
+
+- **One nav for the whole app**, the way VADOS Gallery's `BottomBar.qml` works. Each screen hands it a kind and its buttons. When the kind changes, the old buttons pop away with `back_in` over the first `state`, the new ones pop in with `back_out` over the second, and the pill's size follows across both with `power_three_in_out`.
+- **The selected tool's wash slides** like Gallery's `SectionBar.qml`. The edge in the direction of travel goes first, and the trailing edge follows `nav_trail` (60 ms) later, both over `nav_slide` with `power_two_out`.
+- **Holding the nav for `nav_carry_hold` (1 s) carries it.** It retracts into a circle under the finger and follows it. On release it turns vertical if it is nearer a side edge than the top or bottom, otherwise horizontal, and expands there. The centre is stored as a share of the window, so it keeps its place on resize.
+- **Tapping the selected tool opens its second nav** beside the first, on the side that faces into the window. Pen and marker get a size slider, colour presets (as many as wanted: + saves the current colour, hold or right-click arms a preset, a second tap removes it) and a colour wheel with a hex field. The eraser gets a size slider and the two modes.
+- **One pen (Kugelschreiber).** The pencil left the nav; strokes made with it still render, and its tokens stay so iPad files keep drawing the same.
+- **Precise erasing replaces each touched stroke with its remaining pieces** (resampled, then cut by the eraser circle), so files stay plain strokes. The whole drag is one undo step: tombstones for the originals and new elements for the pieces.
+- **Paper is dark by default; white is a toggle** in the top bar. Neutral inks (chroma at most `neutral_ink_chroma`) are stored as they read on white paper and are inverted on dark paper. So black pen writes white on black, the file still says black, and the iPad shows it correctly.
+- **Two fingers double-tapped undo; three fingers redo.** A tap counts only if the fingers stay within 14 px and lift within 320 ms; the second tap must come within 420 ms.
+- **Every Windows build on `master` is published as a GitHub release** (`windows-build-N`, marked latest), so the app is a direct download.

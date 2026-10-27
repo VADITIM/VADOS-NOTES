@@ -119,6 +119,45 @@ export function isStrokeHit(element, point, radius) {
     return false
 }
 
+function resampled(points, spacing) {
+    if (points.length < 2) {
+        return points.map((point) => [...point])
+    }
+    const result = [[...points[0]]]
+    for (let index = 1; index < points.length; index += 1) {
+        const start = points[index - 1]
+        const end = points[index]
+        const steps = Math.max(1, Math.ceil(distance(start, end) / spacing))
+        for (let step = 1; step <= steps; step += 1) {
+            const share = step / steps
+            result.push([start[0] + (end[0] - start[0]) * share, start[1] + (end[1] - start[1]) * share])
+        }
+    }
+    return result
+}
+
+export function cutStroke(points, center, reach) {
+    const spacing = Math.max(minimumPointSpacing, reach / 4)
+    const pieces = []
+    let current = []
+    for (const point of resampled(points, spacing)) {
+        if (distance(point, center) <= reach) {
+            if (current.length) {
+                pieces.push(current)
+            }
+            current = []
+        } else {
+            current.push(point)
+        }
+    }
+    if (current.length) {
+        pieces.push(current)
+    }
+    return pieces
+        .map((piece) => piece.map(roundedPoint).filter((point, index, all) => index === 0 || shouldAppend(point, all[index - 1])))
+        .filter((piece) => piece.length >= 2)
+}
+
 export function tombstone(element, updated, device) {
     return { ...element, deleted: true, updated, device }
 }

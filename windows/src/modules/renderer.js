@@ -1,5 +1,5 @@
 import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth } from "./model.js"
-import { tokens, withAlpha } from "./tokens.js"
+import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
 export const monoFamily = "\"Space Mono\""
 export const minimumScale = 0.6
@@ -38,8 +38,8 @@ export class Camera {
     }
 }
 
-export function inkColor(element) {
-    const base = element.color ?? "#1A1A1A"
+export function inkColor(element, style) {
+    const base = inkOnPaper(element.color ?? "#1A1A1A", style)
     const tool = element.tool ? tokens.tools[element.tool] : null
     return tool ? withAlpha(base, tool.opacity) : base
 }
@@ -183,13 +183,13 @@ export function textRect(element) {
     }
 }
 
-function drawGuides(context, visible, camera) {
+function drawGuides(context, visible, camera, colors) {
     const spacing = tokens.page.grid_spacing
     if (spacing * camera.scale < 4) {
         return
     }
     context.save()
-    context.strokeStyle = tokens.page.guide
+    context.strokeStyle = colors.guide
     context.lineWidth = 1 / camera.scale
     context.beginPath()
     for (let x = Math.floor(visible.minimumX / spacing) * spacing; x <= visible.maximumX; x += spacing) {
@@ -204,12 +204,12 @@ function drawGuides(context, visible, camera) {
     context.restore()
 }
 
-function drawCellBoundaries(context, extent, camera) {
+function drawCellBoundaries(context, extent, camera, colors) {
     if (cellCount(extent) <= 1) {
         return
     }
     context.save()
-    context.strokeStyle = tokens.page.cell_boundary
+    context.strokeStyle = colors.cell_boundary
     context.lineWidth = 1.5 / camera.scale
     context.setLineDash([6 / camera.scale, 4 / camera.scale])
     context.beginPath()
@@ -225,7 +225,7 @@ function drawCellBoundaries(context, extent, camera) {
     context.restore()
 }
 
-function drawStroke(context, element, visible, cache) {
+function drawStroke(context, element, visible, cache, style) {
     const cached = cache.path(element)
     const bounds = cached.bounds
     if (bounds.maximumX < visible.minimumX || bounds.minimumX > visible.maximumX || bounds.maximumY < visible.minimumY || bounds.minimumY > visible.maximumY) {
@@ -234,11 +234,11 @@ function drawStroke(context, element, visible, cache) {
     context.lineWidth = element.width ?? 0.5
     context.lineCap = "round"
     context.lineJoin = "round"
-    context.strokeStyle = inkColor(element)
+    context.strokeStyle = inkColor(element, style)
     context.stroke(cached.path)
 }
 
-function drawText(context, element, camera, offset, pixelRatio) {
+function drawText(context, element, camera, offset, pixelRatio, style) {
     if (!element.content || !element.box) {
         return
     }
@@ -248,7 +248,7 @@ function drawText(context, element, camera, offset, pixelRatio) {
     context.save()
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.font = `${fontPixels}px ${monoFamily}`
-    context.fillStyle = element.color ?? tokens.text.color
+    context.fillStyle = inkOnPaper(element.color ?? tokens.text.color, style)
     context.textBaseline = "alphabetic"
     const left = ((element.box.x + offset[0]) * camera.scale + camera.offsetX) * pixelRatio
     const top = ((element.box.y + offset[1]) * camera.scale + camera.offsetY) * pixelRatio
@@ -259,7 +259,8 @@ function drawText(context, element, camera, offset, pixelRatio) {
     context.restore()
 }
 
-export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, hiddenElementIds = new Set(), textOffsets = new Map(), cache }) {
+export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, paperStyle, hiddenElementIds = new Set(), textOffsets = new Map(), cache }) {
+    const colors = paperColors(paperStyle)
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
     context.fillStyle = tokens.page.outside
     context.fillRect(0, 0, width, height)
@@ -280,12 +281,12 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     context.save()
     context.translate(camera.offsetX, camera.offsetY)
     context.scale(camera.scale, camera.scale)
-    context.fillStyle = tokens.page.paper
+    context.fillStyle = colors.paper
     context.fillRect(0, 0, paper.maximumX, paper.maximumY)
     if (showsGuides) {
-        drawGuides(context, visible, camera)
+        drawGuides(context, visible, camera, colors)
     }
-    drawCellBoundaries(context, page.extent, camera)
+    drawCellBoundaries(context, page.extent, camera, colors)
     context.beginPath()
     context.rect(0, 0, paper.maximumX, paper.maximumY)
     context.clip()
@@ -294,15 +295,15 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
             continue
         }
         if (element.type === "stroke") {
-            drawStroke(context, element, visible, cache)
+            drawStroke(context, element, visible, cache, paperStyle)
         } else if (element.type === "text") {
-            drawText(context, element, camera, textOffsets.get(element.id) ?? [0, 0], pixelRatio)
+            drawText(context, element, camera, textOffsets.get(element.id) ?? [0, 0], pixelRatio, paperStyle)
         }
     }
     context.restore()
 }
 
-export function renderThumbnail(canvas, page, showsGuides) {
+export function renderThumbnail(canvas, page, showsGuides, paperStyle) {
     const width = canvas.clientWidth
     const height = canvas.clientHeight
     if (width === 0 || height === 0) {
@@ -316,5 +317,5 @@ export function renderThumbnail(canvas, page, showsGuides) {
     const scale = Math.min(width / pageWidth, height / pageHeight)
     const camera = new Camera(scale, (width - pageWidth * scale) / 2, (height - pageHeight * scale) / 2)
     const context = canvas.getContext("2d")
-    drawPage(context, page, camera, { width, height, pixelRatio, showsGuides, cache: new StrokePathCache() })
+    drawPage(context, page, camera, { width, height, pixelRatio, showsGuides, paperStyle, cache: new StrokePathCache() })
 }

@@ -13,6 +13,9 @@ on:
       - ".github/workflows/windows.yml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   app:
     runs-on: windows-latest
@@ -43,3 +46,27 @@ jobs:
         with:
           name: VadosNotes-windows-portable
           path: windows/src-tauri/target/release/vados-notes.exe
+      - name: Name the portable build
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        shell: bash
+        run: cp windows/src-tauri/target/release/vados-notes.exe VadosNotes-portable.exe
+      - name: Publish release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-build-${{ github.run_number }}
+          name: VADOS Notes for Windows (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            Windows build of commit ${{ github.sha }}.
+
+            - **VadosNotes-portable.exe**: download and run, nothing is installed.
+            - **VADOS Notes_*_x64-setup.exe**: installer with a Start menu entry.
+            - **.msi**: the same installer for MSI deployment.
+
+            Windows SmartScreen warns about an unsigned app the first time: More info, then Run anyway.
+          files: |
+            VadosNotes-portable.exe
+            windows/src-tauri/target/release/bundle/nsis/*.exe
+            windows/src-tauri/target/release/bundle/msi/*.msi

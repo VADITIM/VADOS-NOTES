@@ -1,12 +1,14 @@
 import { InkCanvas } from "./canvas.js"
-import { create, holdable, microLabel, popBar, syncBadge, topBar } from "./components.js"
+import { create, holdable, microLabel, paperButton, syncBadge, topBar } from "./components.js"
 import { slotsFromTokens } from "./menu.js"
 import { cellCount, paperHeight, paperWidth } from "./model.js"
 import { popIn, tileAppear } from "./motion.js"
 import { fontMetrics, renderThumbnail } from "./renderer.js"
 import { squircle, squircleRadius } from "./shapes.js"
+import { PageTools } from "./pageTools.js"
+import { paperStyle, togglePaperStyle } from "./preferences.js"
 import { readSetting, writeSetting } from "./storage.js"
-import { isLight, tokens } from "./tokens.js"
+import { inkOnPaper, tokens } from "./tokens.js"
 
 const gridPadding = 28
 const gridSpacing = 18
@@ -20,12 +22,13 @@ function thumbnail(page) {
     canvas.renderKey = null
     canvas.refresh = (nextPage) => {
         const showsGuides = readSetting("showsGuides", true)
-        const key = `${nextPage.id}-${nextPage.updated}-${nextPage.extent.cols}x${nextPage.extent.rows}-${showsGuides}-${canvas.clientWidth}x${canvas.clientHeight}`
+        const style = paperStyle()
+        const key = `${nextPage.id}-${nextPage.updated}-${nextPage.extent.cols}x${nextPage.extent.rows}-${showsGuides}-${style}-${canvas.clientWidth}x${canvas.clientHeight}`
         if (key === canvas.renderKey) {
             return
         }
         canvas.renderKey = key
-        renderThumbnail(canvas, nextPage, showsGuides)
+        renderThumbnail(canvas, nextPage, showsGuides, style)
     }
     new ResizeObserver(() => canvas.refresh(canvas.page)).observe(canvas)
     canvas.page = page
@@ -48,29 +51,31 @@ class GridScreen {
             const width = Math.min(maximumWidth, (available - gridSpacing * (columns - 1)) / columns)
             this.grid.style.gridTemplateColumns = `repeat(${columns}, ${width}px)`
         }).observe(this.grid)
-        this.bar = popBar()
-        this.barHost = create("div", "pop-bar-host", this.bar)
-        this.element.append(this.header, this.scroller, this.barHost)
+        this.element.append(this.header, this.scroller)
     }
 
     badge() {
         return syncBadge(this.app.syncStatus(), () => this.app.showSheet({ kind: "sync" }))
+    }
+
+    trailing() {
+        return [paperButton(paperStyle(), togglePaperStyle), this.badge()]
     }
 }
 
 export class LibraryScreen extends GridScreen {
     constructor(app) {
         super(app)
-        this.header = topBar({ title: "Notes", label: "", trailing: [this.badge()] })
+        this.header = topBar({ title: "Notes", label: "", trailing: this.trailing() })
         this.mountGrid("notebook-grid", 230, 320)
-        this.bar.update([[{ id: "new-notebook", glyph: "plus", label: "New notebook", tint: tokens.semantic.create, isActive: true, action: () => this.app.showSheet({ kind: "new-notebook" }) }]])
         this.update()
     }
 
     update() {
         const library = this.app.library
         const notebooks = library.liveNotebooks()
-        this.header.update({ label: plural(notebooks.length, "notebook"), trailing: [this.badge()] })
+        this.header.update({ label: plural(notebooks.length, "notebook"), trailing: this.trailing() })
+        this.app.nav.show("library", [[{ id: "new-notebook", glyph: "plus", label: "New notebook", tint: tokens.semantic.create, isTinted: true, action: () => this.app.showSheet({ kind: "new-notebook" }) }]], { isCarriable: true })
         const seen = new Set()
         const ordered = notebooks.map((notebook, rank) => {
             seen.add(notebook.id)
@@ -148,12 +153,8 @@ export class NotebookScreen extends GridScreen {
     constructor(app, notebookId) {
         super(app)
         this.notebookId = notebookId
-        this.header = topBar({ title: app.library.notebook(notebookId)?.title ?? "Notebook", label: "", onBack: () => app.go({ kind: "library" }), trailing: [this.badge()] })
+        this.header = topBar({ title: app.library.notebook(notebookId)?.title ?? "Notebook", label: "", onBack: () => app.go({ kind: "library" }), trailing: this.trailing() })
         this.mountGrid("page-grid", 170, 240)
-        this.bar.update([[
-            { id: "notebook-back", glyph: "back", label: "Back", tint: tokens.semantic.navigation, action: () => app.go({ kind: "library" }) },
-            { id: "new-page", glyph: "plus", label: "New page", tint: tokens.semantic.create, isActive: true, action: () => this.addPage() },
-        ]])
         this.update()
     }
 
@@ -165,7 +166,11 @@ export class NotebookScreen extends GridScreen {
     update() {
         const library = this.app.library
         const pages = library.pages(this.notebookId)
-        this.header.update({ title: library.notebook(this.notebookId)?.title ?? "Notebook", label: plural(pages.length, "page"), trailing: [this.badge()] })
+        this.header.update({ title: library.notebook(this.notebookId)?.title ?? "Notebook", label: plural(pages.length, "page"), trailing: this.trailing() })
+        this.app.nav.show("notebook", [[
+            { id: "notebook-back", glyph: "back", label: "Back", tint: tokens.semantic.navigation, isTinted: true, action: () => this.app.go({ kind: "library" }) },
+            { id: "new-page", glyph: "plus", label: "New page", tint: tokens.semantic.create, isTinted: true, action: () => this.addPage() },
+        ]], { isCarriable: true })
         const seen = new Set()
         const ordered = pages.map((page, index) => {
             seen.add(page.id)
@@ -231,7 +236,6 @@ export class NotebookScreen extends GridScreen {
     }
 }
 
-const inkTools = ["pen", "pencil", "marker"]
 const menuTitles = {
     previous_page: "Previous",
     next_page: "Next",
@@ -255,10 +259,9 @@ export class PageScreen {
         this.editorHost = create("div", "text-editor-host")
         this.deletedNotice = create("div", "deleted-notice", microLabel("This page was deleted"))
         this.canvasArea = create("div", "canvas-area", this.canvas.element, this.editorHost, this.deletedNotice)
-        this.bar = popBar()
-        this.barHost = create("div", "pop-bar-host", this.bar)
-        this.stage = create("div", "page-stage", this.canvasArea, this.barHost)
+        this.stage = create("div", "page-stage", this.canvasArea)
         this.element.append(this.header, this.stage)
+        this.tools = new PageTools(this)
         this.editor = null
         this.keyDown = (event) => this.handleKey(event)
         window.addEventListener("keydown", this.keyDown)
@@ -268,30 +271,13 @@ export class PageScreen {
     destroy() {
         window.removeEventListener("keydown", this.keyDown)
         this.canvas.destroy()
+        this.tools.destroy()
     }
 
     get settings() {
         return {
             showsGuides: readSetting("showsGuides", true),
-            tool: readSetting("tool", "pen"),
-            isErasing: readSetting("isErasing", false),
-            isTyping: readSetting("isTyping", false),
         }
-    }
-
-    color(tool) {
-        return readSetting(`${tool}Color`, tokens.tools[tool].colors[0])
-    }
-
-    canvasTool() {
-        const settings = this.settings
-        if (settings.isTyping) {
-            return { kind: "text" }
-        }
-        if (settings.isErasing) {
-            return { kind: "eraser" }
-        }
-        return { kind: "ink", tool: inkTools.includes(settings.tool) ? settings.tool : "pen" }
     }
 
     update() {
@@ -302,6 +288,7 @@ export class PageScreen {
         if (library.isReadOnly(this.pageId)) {
             trailing.push(microLabel("Read only", tokens.semantic.destructive))
         }
+        trailing.push(paperButton(paperStyle(), togglePaperStyle))
         trailing.push(syncBadge(this.app.syncStatus(), () => this.app.showSheet({ kind: "sync" })))
         this.header.update({
             title: library.notebook(this.notebookId)?.title ?? "Notebook",
@@ -313,54 +300,17 @@ export class PageScreen {
         this.canvas.element.style.display = page ? "block" : "none"
         const session = library.textEditing?.pageId === this.pageId ? library.textEditing : null
         if (page) {
-            const tool = this.canvasTool()
             this.canvas.configure({
                 page,
-                tool,
-                inkColor: this.color(tool.tool ?? this.settings.tool),
+                tool: this.tools.canvasTool(),
+                paperStyle: paperStyle(),
                 showsGuides: this.settings.showsGuides,
                 hiddenElementIds: session ? new Set([session.element.id]) : new Set(),
                 isReadOnly: library.isReadOnly(this.pageId),
             })
         }
         this.updateEditor(session)
-        this.bar.update(this.barGroups(session))
-    }
-
-    barGroups(session) {
-        const library = this.app.library
-        if (session) {
-            return [[
-                { id: "typing", glyph: "text", label: "Typing", tint: tokens.palette.accent, isActive: true, action: () => {} },
-                { id: "finish-text", glyph: "check", label: "Done", tint: tokens.semantic.create, isActive: true, action: () => library.finishText() },
-            ]]
-        }
-        const tool = this.canvasTool()
-        const tools = [
-            ...inkTools.map((inkTool) => this.inkItem(inkTool, tool)),
-            { id: "eraser", glyph: "eraser", label: "Eraser", tint: tokens.semantic.destructive, isActive: tool.kind === "eraser", action: () => this.setSettings({ isTyping: false, isErasing: true }) },
-            { id: "text", glyph: "text", label: "Text", tint: tokens.palette.accent, isActive: tool.kind === "text", action: () => this.setSettings({ isErasing: false, isTyping: true }) },
-        ]
-        const history = [
-            { id: "undo", glyph: "undo", label: "Undo", isEnabled: library.canUndo(this.pageId), action: () => library.undo(this.pageId) },
-            { id: "redo", glyph: "redo", label: "Redo", isEnabled: library.canRedo(this.pageId), action: () => library.redo(this.pageId) },
-        ]
-        const more = [{ id: "page-menu", glyph: "more", label: "Page menu", action: () => {}, onTapAt: (rect) => this.showPageMenu({ around: rect }) }]
-        return [tools, history, more]
-    }
-
-    inkItem(inkTool, tool) {
-        const color = this.color(inkTool)
-        return {
-            id: inkTool,
-            glyph: inkTool,
-            label: inkTool,
-            tint: isLight(color) ? color : tokens.palette.text_bright,
-            isActive: tool.kind === "ink" && tool.tool === inkTool,
-            swatch: color,
-            action: () => this.setSettings({ isErasing: false, isTyping: false, tool: inkTool }),
-            onHold: (rect) => this.showColorMenu(inkTool, rect),
-        }
+        this.tools.update(session)
     }
 
     setSettings(values) {
@@ -368,23 +318,6 @@ export class PageScreen {
             writeSetting(key, value)
         }
         this.update()
-    }
-
-    showColorMenu(tool, rect) {
-        const current = this.color(tool)
-        const slots = tokens.tools[tool].colors.map((color, position) => ({
-            position,
-            title: color,
-            role: "ink",
-            swatch: color,
-            isActive: color === current,
-            isEnabled: true,
-            handler: () => {
-                writeSetting(`${tool}Color`, color)
-                this.setSettings({ isErasing: false, isTyping: false, tool })
-            },
-        }))
-        this.app.menu.present(slots, { columns: 2, around: rect, title: tool })
     }
 
     showPageMenu({ around, at }) {
@@ -456,8 +389,11 @@ export class PageScreen {
         const library = this.app.library
         return {
             onCameraChange: () => this.positionEditor(),
-            onStroke: (tool, color, points) => library.addStroke(this.pageId, tool, color, points),
+            onStroke: (tool, color, points, width) => library.addStroke(this.pageId, tool, color, points, width),
             onErase: (identifiers) => library.erase(identifiers, this.pageId),
+            onEraseArea: (replacements) => library.replaceStrokes(this.pageId, replacements),
+            onUndo: () => library.undo(this.pageId),
+            onRedo: () => library.redo(this.pageId),
             onTextTap: (point, elementId) => {
                 if (library.textEditing) {
                     library.finishText()
@@ -470,7 +406,7 @@ export class PageScreen {
                 }
             },
             onTextMove: (elementId, box) => library.moveText(elementId, this.pageId, box),
-            onInput: () => {},
+            onInput: () => this.tools.closeSubNav(),
             onHold: (clientX, clientY, isFromTouch) => this.showPageMenu(isFromTouch ? { at: [clientX, clientY] } : { around: { left: clientX, top: clientY, width: 0, height: 0, bottom: clientY } }),
             onHoldMove: (clientX, clientY) => this.app.menu.drag(clientX, clientY),
             onHoldEnd: (clientX, clientY) => this.app.menu.release(clientX, clientY),
@@ -526,7 +462,7 @@ export class PageScreen {
         this.editor.style.width = `${box.width * camera.scale}px`
         textarea.style.fontSize = `${fontSize}px`
         textarea.style.lineHeight = `${metrics.lineHeight}px`
-        textarea.style.color = session.element.color ?? tokens.text.color
+        textarea.style.color = inkOnPaper(session.element.color ?? tokens.text.color, paperStyle())
         textarea.style.height = "0px"
         textarea.style.height = `${Math.max(textarea.scrollHeight, fontSize * 1.4)}px`
     }

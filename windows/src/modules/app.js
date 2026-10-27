@@ -2,6 +2,8 @@ import { create } from "./components.js"
 import { Library } from "./library.js"
 import { MenuController } from "./menu.js"
 import { applyDesignVariables, fadeIn, fadeOut, overlayEnter, overlayLeave, sectionEnter, sectionLeave } from "./motion.js"
+import { ToolNav } from "./navigation.js"
+import { subscribePreferences } from "./preferences.js"
 import { LibraryScreen, NotebookScreen, PageScreen } from "./screens.js"
 import { buildSheet } from "./sheets.js"
 import { loadTokens, tokens } from "./tokens.js"
@@ -14,10 +16,13 @@ class App {
         this.screen = null
         this.sheet = null
         this.screenHost = create("div", "screen-host")
+        this.navLayer = create("div", "nav-layer")
         this.overlayHost = create("div", "overlay-host")
-        this.root.append(this.screenHost, this.overlayHost)
+        this.root.append(this.screenHost, this.navLayer, this.overlayHost)
+        this.nav = new ToolNav(this.navLayer)
         this.menu = new MenuController(this.overlayHost)
         this.library.subscribe(() => this.screen?.update())
+        subscribePreferences(() => this.screen?.update())
         window.addEventListener("beforeunload", () => {
             this.library.finishText()
             this.library.flush()

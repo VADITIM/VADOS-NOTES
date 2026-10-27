@@ -1,12 +1,15 @@
-import { isStrokeHit, liveElements, roundedPoint, shouldAppend } from "./model.js"
+import { cutStroke, isStrokeHit, liveElements, roundedPoint, shouldAppend } from "./model.js"
 import { Camera, StrokePathCache, drawPage, strokePath, textRect } from "./renderer.js"
 import { duration } from "./motion.js"
-import { tokens, withAlpha } from "./tokens.js"
+import { inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
 const fitMargin = 24
 const holdTolerance = 8
 const minimumEraserReach = 6
 const wheelZoomPerPixel = 0.0025
+const multiTouchTapMilliseconds = 320
+const multiTouchDoubleTapMilliseconds = 420
+const multiTouchTapTolerance = 14
 
 export class InkCanvas {
     constructor(callbacks) {
@@ -17,8 +20,12 @@ export class InkCanvas {
         this.liveCanvas = document.createElement("canvas")
         this.element.append(this.pageCanvas, this.liveCanvas)
         this.page = null
-        this.tool = { kind: "ink", tool: "pen" }
-        this.inkColor = "#1A1A1A"
+        this.tool = { kind: "ink", tool: "pen", color: "#1A1A1A", width: tokens.tools.pen.width }
+        this.paperStyle = tokens.page.default_style
+        this.areaErase = new Map()
+        this.hoverLocation = null
+        this.multiTouch = null
+        this.lastMultiTouchTap = null
         this.isReadOnly = false
         this.showsGuides = true
         this.hiddenElementIds = new Set()
@@ -49,6 +56,10 @@ export class InkCanvas {
         this.element.addEventListener("pointercancel", (event) => this.pointerCancel(event))
         this.element.addEventListener("wheel", (event) => this.wheel(event), { passive: false })
         this.element.addEventListener("contextmenu", (event) => event.preventDefault())
+        this.element.addEventListener("pointerleave", () => {
+            this.hoverLocation = null
+            this.drawLive()
+        })
         this.keyDown = (event) => {
             if (event.code === "Space" && !event.repeat && document.activeElement?.tagName !== "TEXTAREA" && document.activeElement?.tagName !== "INPUT") {
                 this.isSpaceHeld = true
@@ -71,12 +82,12 @@ export class InkCanvas {
         clearTimeout(this.holdTimer)
     }
 
-    configure({ page, tool, inkColor, showsGuides, hiddenElementIds, isReadOnly }) {
+    configure({ page, tool, paperStyle, showsGuides, hiddenElementIds, isReadOnly }) {
         const isNewPage = this.page?.id !== page.id
-        const needsDraw = this.page !== page || this.showsGuides !== showsGuides || !sameSet(this.hiddenElementIds, hiddenElementIds)
+        const needsDraw = this.page !== page || this.showsGuides !== showsGuides || this.paperStyle !== paperStyle || !sameSet(this.hiddenElementIds, hiddenElementIds)
         this.page = page
         this.tool = tool
-        this.inkColor = inkColor
+        this.paperStyle = paperStyle
         this.showsGuides = showsGuides
         this.hiddenElementIds = hiddenElementIds
         this.isReadOnly = isReadOnly
@@ -140,11 +151,20 @@ export class InkCanvas {
         if (this.movingText) {
             textOffsets.set(this.movingText.id, this.textOffset)
         }
-        drawPage(this.pageCanvas.getContext("2d"), this.page, this.camera, {
+        let page = this.page
+        if (this.areaErase.size) {
+            const pieces = []
+            for (const [elementId, entry] of this.areaErase) {
+                entry.pieces.forEach((points, index) => pieces.push({ ...entry.element, id: `${elementId}-piece-${index}`, updated: `${entry.element.updated}-${entry.revision}`, points }))
+            }
+            page = { ...page, elements: [...page.elements.filter((element) => !this.areaErase.has(element.id)), ...pieces] }
+        }
+        drawPage(this.pageCanvas.getContext("2d"), page, this.camera, {
             width: this.width,
             height: this.height,
             pixelRatio: this.pixelRatio,
             showsGuides: this.showsGuides,
+            paperStyle: this.paperStyle,
             hiddenElementIds: new Set([...this.hiddenElementIds, ...this.pendingErased]),
             textOffsets,
             cache: this.cache,
@@ -154,19 +174,33 @@ export class InkCanvas {
         }
     }
 
+    eraserReach() {
+        return Math.max(this.tool.radius ?? tokens.tools.eraser.radius, minimumEraserReach / this.camera.scale)
+    }
+
     drawLive(points = this.livePoints) {
         const context = this.liveCanvas.getContext("2d")
         context.setTransform(1, 0, 0, 1, 0, 0)
         context.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height)
+        context.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0)
+        if (this.tool.kind === "eraser" && this.hoverLocation && !this.isPanning && !this.isHolding) {
+            context.beginPath()
+            context.arc(this.hoverLocation[0], this.hoverLocation[1], this.eraserReach() * this.camera.scale, 0, Math.PI * 2)
+            context.fillStyle = withAlpha(tokens.semantic.destructive, 0.12)
+            context.fill()
+            context.lineWidth = 1.5
+            context.strokeStyle = withAlpha(tokens.semantic.destructive, 0.9)
+            context.stroke()
+            return
+        }
         if (!points.length || this.tool.kind !== "ink") {
             return
         }
         const style = tokens.tools[this.tool.tool]
-        context.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0)
-        context.lineWidth = style.width * this.camera.scale
+        context.lineWidth = this.tool.width * this.camera.scale
         context.lineCap = "round"
         context.lineJoin = "round"
-        context.strokeStyle = withAlpha(this.inkColor, style.opacity)
+        context.strokeStyle = withAlpha(inkOnPaper(this.tool.color, this.paperStyle), style.opacity)
         context.stroke(strokePath(points, (point) => this.camera.toScreen(point)))
     }
 
@@ -181,8 +215,52 @@ export class InkCanvas {
         return [event.clientX - rect.left, event.clientY - rect.top]
     }
 
+    trackMultiTouchDown(event) {
+        const location = [event.clientX, event.clientY]
+        if (this.touchPointers.size === 0) {
+            this.multiTouch = { started: performance.now(), count: 0, starts: new Map(), isSpoiled: false }
+        }
+        if (!this.multiTouch) {
+            return
+        }
+        this.multiTouch.starts.set(event.pointerId, location)
+        this.multiTouch.count = Math.max(this.multiTouch.count, this.touchPointers.size + 1)
+    }
+
+    trackMultiTouchMove(event) {
+        const start = this.multiTouch?.starts.get(event.pointerId)
+        if (start && Math.hypot(event.clientX - start[0], event.clientY - start[1]) > multiTouchTapTolerance) {
+            this.multiTouch.isSpoiled = true
+        }
+    }
+
+    trackMultiTouchUp() {
+        const session = this.multiTouch
+        if (!session || this.touchPointers.size > 0) {
+            return
+        }
+        this.multiTouch = null
+        const now = performance.now()
+        if (session.isSpoiled || session.count < 2 || now - session.started > multiTouchTapMilliseconds) {
+            this.lastMultiTouchTap = null
+            return
+        }
+        const previous = this.lastMultiTouchTap
+        if (previous && previous.count === session.count && now - previous.time <= multiTouchDoubleTapMilliseconds) {
+            this.lastMultiTouchTap = null
+            if (session.count === 2) {
+                this.callbacks.onUndo?.()
+            } else {
+                this.callbacks.onRedo?.()
+            }
+            return
+        }
+        this.lastMultiTouchTap = { count: session.count, time: now }
+    }
+
     pointerDown(event) {
         if (event.pointerType === "touch") {
+            this.trackMultiTouchDown(event)
             this.touchPointers.set(event.pointerId, this.localPoint(event))
             if (this.touchPointers.size === 2) {
                 this.cancelActiveGesture()
@@ -231,7 +309,9 @@ export class InkCanvas {
             this.livePoints = [roundedPoint(point)]
             this.drawLive()
         } else if (this.tool.kind === "eraser") {
+            this.hoverLocation = location
             this.erase(location)
+            this.drawLive()
         } else if (this.tool.kind === "text") {
             const element = this.textElement(point)
             if (element) {
@@ -241,6 +321,15 @@ export class InkCanvas {
     }
 
     pointerMove(event) {
+        if (event.pointerType !== "touch") {
+            this.hoverLocation = this.localPoint(event)
+            if (this.tool.kind === "eraser" && this.activePointer === null) {
+                this.drawLive()
+            }
+        }
+        if (event.pointerType === "touch") {
+            this.trackMultiTouchMove(event)
+        }
         if (event.pointerType === "touch" && this.touchPointers.has(event.pointerId)) {
             this.touchPointers.set(event.pointerId, this.localPoint(event))
             if (this.touchPointers.size === 2 && this.pinchStart) {
@@ -294,6 +383,8 @@ export class InkCanvas {
             for (const sample of samples.length ? samples : [event]) {
                 this.erase(this.localPoint(sample))
             }
+            this.hoverLocation = location
+            this.drawLive()
         } else if (this.tool.kind === "text" && this.movingText && this.hasMoved) {
             const point = this.camera.toPage(location[0], location[1])
             this.textOffset = [point[0] - this.movingText.start[0], point[1] - this.movingText.start[1]]
@@ -307,6 +398,7 @@ export class InkCanvas {
             if (this.touchPointers.size < 2) {
                 this.pinchStart = null
             }
+            this.trackMultiTouchUp()
         }
         if (event.pointerId !== this.activePointer) {
             return
@@ -332,10 +424,19 @@ export class InkCanvas {
             const points = this.livePoints
             this.livePoints = []
             this.drawLive(points)
-            this.callbacks.onStroke?.(this.tool.tool, this.inkColor, points)
+            this.callbacks.onStroke?.(this.tool.tool, this.tool.color, points, this.tool.width)
         } else if (this.tool.kind === "eraser") {
+            if (event.pointerType === "touch") {
+                this.hoverLocation = null
+                this.drawLive()
+            }
             if (this.pendingErased.length) {
                 this.callbacks.onErase?.([...this.pendingErased])
+            }
+            if (this.areaErase.size) {
+                const replacements = [...this.areaErase.entries()].map(([elementId, entry]) => ({ elementId, pieces: entry.pieces }))
+                this.areaErase = new Map()
+                this.callbacks.onEraseArea?.(replacements)
             }
         } else if (this.tool.kind === "text") {
             const point = this.camera.toPage(location[0], location[1])
@@ -355,6 +456,9 @@ export class InkCanvas {
 
     pointerCancel(event) {
         this.touchPointers.delete(event.pointerId)
+        if (this.touchPointers.size === 0) {
+            this.multiTouch = null
+        }
         if (event.pointerId !== this.activePointer) {
             return
         }
@@ -398,8 +502,36 @@ export class InkCanvas {
             return
         }
         const point = this.camera.toPage(location[0], location[1])
-        const reach = Math.max(tokens.tools.eraser.radius, minimumEraserReach / this.camera.scale)
+        const reach = this.eraserReach()
         let didErase = false
+        if (this.tool.mode === "area") {
+            for (const element of liveElements(this.page)) {
+                if (element.type !== "stroke") {
+                    continue
+                }
+                const entry = this.areaErase.get(element.id)
+                const pieces = entry ? entry.pieces : [element.points]
+                const strokeReach = reach + (element.width ?? 0) / 2
+                let isTouched = false
+                const nextPieces = []
+                for (const points of pieces) {
+                    if (isStrokeHit({ ...element, points }, point, reach)) {
+                        isTouched = true
+                        nextPieces.push(...cutStroke(points, point, strokeReach))
+                    } else {
+                        nextPieces.push(points)
+                    }
+                }
+                if (isTouched) {
+                    this.areaErase.set(element.id, { element, pieces: nextPieces, revision: (entry?.revision ?? 0) + 1 })
+                    didErase = true
+                }
+            }
+            if (didErase) {
+                this.requestDraw()
+            }
+            return
+        }
         for (const element of liveElements(this.page)) {
             if (element.type === "stroke" && !this.pendingErased.includes(element.id) && isStrokeHit(element, point, reach)) {
                 this.pendingErased.push(element.id)
@@ -444,6 +576,7 @@ export class InkCanvas {
 
     clearPendingFeedback() {
         this.pendingErased = []
+        this.areaErase = new Map()
         this.movingText = null
         this.textOffset = [0, 0]
     }
