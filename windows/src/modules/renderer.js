@@ -44,29 +44,50 @@ export function inkColor(element, style) {
     return tool ? withAlpha(base, tool.opacity) : base
 }
 
+const minimumSpan = 1e-4
+
+function span(first, second) {
+    return Math.max(minimumSpan, Math.sqrt(Math.hypot(second[0] - first[0], second[1] - first[1])))
+}
+
+function splineControls(before, start, end, after) {
+    const leading = span(before, start)
+    const middle = span(start, end)
+    const trailing = span(end, after)
+    const leadingWeight = 2 * leading * leading + 3 * leading * middle + middle * middle
+    const trailingWeight = 2 * trailing * trailing + 3 * trailing * middle + middle * middle
+    const leadingDivisor = 3 * leading * (leading + middle)
+    const trailingDivisor = 3 * trailing * (trailing + middle)
+    return [
+        [0, 1].map((axis) => (leading * leading * end[axis] - middle * middle * before[axis] + leadingWeight * start[axis]) / leadingDivisor),
+        [0, 1].map((axis) => (trailing * trailing * start[axis] - middle * middle * after[axis] + trailingWeight * end[axis]) / trailingDivisor),
+    ]
+}
+
 export function strokePath(points, transform = (point) => point) {
     const path = new Path2D()
     if (!points.length) {
         return path
     }
-    const first = transform(points[0])
-    path.moveTo(first[0], first[1])
-    if (points.length === 1) {
-        path.lineTo(first[0], first[1])
+    const shown = points.map(transform)
+    path.moveTo(shown[0][0], shown[0][1])
+    if (shown.length === 1) {
+        path.lineTo(shown[0][0], shown[0][1])
         return path
     }
-    if (points.length === 2) {
-        const second = transform(points[1])
-        path.lineTo(second[0], second[1])
+    if (shown.length === 2) {
+        path.lineTo(shown[1][0], shown[1][1])
         return path
     }
-    for (let index = 1; index < points.length - 1; index += 1) {
-        const control = transform(points[index])
-        const next = transform(points[index + 1])
-        path.quadraticCurveTo(control[0], control[1], (control[0] + next[0]) / 2, (control[1] + next[1]) / 2)
+    const last = shown.length - 1
+    for (let index = 0; index < last; index += 1) {
+        const start = shown[index]
+        const end = shown[index + 1]
+        const before = index > 0 ? shown[index - 1] : [start[0] * 2 - end[0], start[1] * 2 - end[1]]
+        const after = index + 2 <= last ? shown[index + 2] : [end[0] * 2 - start[0], end[1] * 2 - start[1]]
+        const [first, second] = splineControls(before, start, end, after)
+        path.bezierCurveTo(first[0], first[1], second[0], second[1], end[0], end[1])
     }
-    const last = transform(points[points.length - 1])
-    path.lineTo(last[0], last[1])
     return path
 }
 

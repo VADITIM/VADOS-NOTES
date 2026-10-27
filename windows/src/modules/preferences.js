@@ -48,6 +48,35 @@ export function setToolWidth(tool, width) {
     changed()
 }
 
+const widthPrecision = 100
+
+function roundedWidth(width) {
+    return Math.round(width * widthPrecision) / widthPrecision
+}
+
+export function isSameWidth(first, second) {
+    return roundedWidth(first) === roundedWidth(second)
+}
+
+export function widthPresets(tool) {
+    const stored = readSetting(`${tool}WidthPresets`, null)
+    return Array.isArray(stored) ? stored : [...tokens.tools[tool].width_presets]
+}
+
+export function addWidthPreset(tool, width) {
+    const presets = widthPresets(tool)
+    const rounded = roundedWidth(clamp(width, tokens.tools[tool].width_range))
+    if (!presets.some((candidate) => isSameWidth(candidate, rounded))) {
+        writeSetting(`${tool}WidthPresets`, [...presets, rounded].sort((first, second) => first - second))
+        changed()
+    }
+}
+
+export function removeWidthPreset(tool, width) {
+    writeSetting(`${tool}WidthPresets`, widthPresets(tool).filter((candidate) => candidate !== width))
+    changed()
+}
+
 export function colorPresets(tool) {
     const stored = readSetting(`${tool}Presets`, null)
     return Array.isArray(stored) ? stored : [...tokens.tools[tool].colors]

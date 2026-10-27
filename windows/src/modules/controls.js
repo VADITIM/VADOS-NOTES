@@ -143,8 +143,10 @@ export function swatchButton({ color, label, onSelect, onRemove }) {
         }
         onSelect()
     })
-    button.setState = ({ color: nextColor, isSelected }) => {
+    button.setState = ({ color: nextColor, isSelected, diameter = null }) => {
         dot.style.background = nextColor
+        dot.style.width = diameter === null ? "" : `${diameter}px`
+        dot.style.height = diameter === null ? "" : `${diameter}px`
         button.classList.toggle("is-selected", isSelected)
     }
     button.setState({ color, isSelected: false })

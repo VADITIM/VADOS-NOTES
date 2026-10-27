@@ -5,12 +5,15 @@ import { separator, slideWash } from "./navigation.js"
 import {
     activeTool,
     addColorPreset,
+    addWidthPreset,
     colorPresets,
     drawingTools,
     eraserMode,
     eraserRadius,
+    isSameWidth,
     paperStyle,
     removeColorPreset,
+    removeWidthPreset,
     setActiveTool,
     setEraserMode,
     setEraserRadius,
@@ -18,6 +21,7 @@ import {
     setToolWidth,
     toolColor,
     toolWidth,
+    widthPresets,
 } from "./preferences.js"
 import { inkOnPaper, isLight, tokens, withAlpha } from "./tokens.js"
 
@@ -36,6 +40,34 @@ function valueAt(share, [minimum, maximum]) {
 
 function previewDiameter(share) {
     return previewDiameterRange[0] + (previewDiameterRange[1] - previewDiameterRange[0]) * share
+}
+
+function presetRow() {
+    const row = create("span", "swatch-row")
+    const buttons = new Map()
+    const sync = (values, makeButton) => {
+        for (const [value, button] of buttons) {
+            if (!values.includes(value)) {
+                buttons.delete(value)
+                button.style.pointerEvents = "none"
+                popOut(button).finished.then(() => button.remove()).catch(() => button.remove())
+            }
+        }
+        values.forEach((value, index) => {
+            let button = buttons.get(value)
+            if (!button) {
+                button = makeButton(value)
+                buttons.set(value, button)
+                const following = values.slice(index + 1).map((candidate) => buttons.get(candidate)).find((candidate) => candidate?.isConnected)
+                row.insertBefore(button, following ?? null)
+                if (row.isConnected) {
+                    popInNow(button)
+                }
+            }
+        })
+        return buttons
+    }
+    return { row, sync }
 }
 
 export class PageTools {
@@ -150,9 +182,10 @@ export class PageTools {
             share: shareOf(toolWidth(tool), range),
             onChange: (share) => setToolWidth(tool, valueAt(share, range)),
         })
-        const swatchRow = create("span", "swatch-row")
-        const swatches = new Map()
-        const addButton = iconButton({ glyphName: "plus", label: "Save colour", onPress: () => addColorPreset(tool, toolColor(tool)) })
+        const sizes = presetRow()
+        const addSizeButton = iconButton({ glyphName: "plus", label: "Save size", onPress: () => addWidthPreset(tool, toolWidth(tool)) })
+        const colors = presetRow()
+        const addColorButton = iconButton({ glyphName: "plus", label: "Save colour", onPress: () => addColorPreset(tool, toolColor(tool)) })
         let panel = null
         const wheel = wheelButton({
             label: "Colour wheel",
@@ -174,42 +207,44 @@ export class PageTools {
         const update = () => {
             const style = paperStyle()
             const current = toolColor(tool)
-            const share = shareOf(toolWidth(tool), range)
+            const width = toolWidth(tool)
+            const share = shareOf(width, range)
+            const inkColor = withAlpha(inkOnPaper(current, style), Math.max(0.6, tokens.tools[tool].opacity))
             slider.setShare(share)
-            slider.setPreview({ diameter: previewDiameter(share), color: withAlpha(inkOnPaper(current, style), Math.max(0.6, tokens.tools[tool].opacity)) })
-            const presets = colorPresets(tool)
-            for (const [color, button] of swatches) {
-                if (!presets.includes(color)) {
-                    swatches.delete(color)
-                    button.style.pointerEvents = "none"
-                    popOut(button).finished.then(() => button.remove()).catch(() => button.remove())
-                }
+            slider.setPreview({ diameter: previewDiameter(share), color: inkColor })
+            const savedWidths = widthPresets(tool)
+            const sizeButtons = sizes.sync(savedWidths, (value) => {
+                const button = swatchButton({
+                    color: inkColor,
+                    label: `${value} mm`,
+                    onSelect: () => setToolWidth(tool, value),
+                    onRemove: () => removeWidthPreset(tool, value),
+                })
+                button.classList.add("size-preset")
+                return button
+            })
+            for (const [value, button] of sizeButtons) {
+                button.setState({ color: inkColor, isSelected: isSameWidth(value, width), diameter: previewDiameter(shareOf(value, range)) })
             }
-            for (const color of presets) {
-                let button = swatches.get(color)
-                if (!button) {
-                    button = swatchButton({
-                        color,
-                        label: color,
-                        onSelect: () => setToolColor(tool, color),
-                        onRemove: () => removeColorPreset(tool, color),
-                    })
-                    swatches.set(color, button)
-                    swatchRow.append(button)
-                    if (swatchRow.isConnected) {
-                        popInNow(button)
-                    }
-                }
-                button.setState({ color: inkOnPaper(color, style), isSelected: color === current.toUpperCase() || color === current })
+            addSizeButton.setEnabled(!savedWidths.some((value) => isSameWidth(value, width)))
+            const savedColors = colorPresets(tool)
+            const colorButtons = colors.sync(savedColors, (color) => swatchButton({
+                color,
+                label: color,
+                onSelect: () => setToolColor(tool, color),
+                onRemove: () => removeColorPreset(tool, color),
+            }))
+            for (const [color, button] of colorButtons) {
+                button.setState({ color: inkOnPaper(color, style), isSelected: color === current.toUpperCase() })
             }
-            addButton.setEnabled(!presets.includes(current.toUpperCase()) && !presets.includes(current))
+            addColorButton.setEnabled(!savedColors.includes(current.toUpperCase()))
             if (panel && this.nav.panel?.element === panel) {
                 panel.setColor(inkOnPaper(current, style))
             } else {
                 wheel.classList.remove("is-open")
             }
         }
-        return { children: [slider, separator(), swatchRow, addButton, separator(), wheel], update }
+        return { children: [slider, separator(), sizes.row, addSizeButton, separator(), colors.row, addColorButton, separator(), wheel], update }
     }
 
     eraserControls() {

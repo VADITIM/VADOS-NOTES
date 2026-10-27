@@ -1,6 +1,6 @@
-import { cutStroke, isStrokeHit, liveElements, roundedPoint, shouldAppend } from "./model.js"
+import { cutStroke, isStrokeSwept, liveElements, smoothStroke, straightened } from "./model.js"
 import { Camera, StrokePathCache, drawPage, strokePath, textRect } from "./renderer.js"
-import { duration } from "./motion.js"
+import { duration, tween } from "./motion.js"
 import { inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
 const fitMargin = 24
@@ -10,6 +10,37 @@ const wheelZoomPerPixel = 0.0025
 const multiTouchTapMilliseconds = 320
 const multiTouchDoubleTapMilliseconds = 420
 const multiTouchTapTolerance = 14
+const minimumSampleSpacingPoints = 0.25
+const minimumStraightLengthPoints = 24
+const boundsCache = new WeakMap()
+
+function pointsBounds(points) {
+    const cached = boundsCache.get(points)
+    if (cached) {
+        return cached
+    }
+    let minimumX = Infinity
+    let minimumY = Infinity
+    let maximumX = -Infinity
+    let maximumY = -Infinity
+    for (const [x, y] of points) {
+        minimumX = Math.min(minimumX, x)
+        minimumY = Math.min(minimumY, y)
+        maximumX = Math.max(maximumX, x)
+        maximumY = Math.max(maximumY, y)
+    }
+    const bounds = { minimumX, minimumY, maximumX, maximumY }
+    boundsCache.set(points, bounds)
+    return bounds
+}
+
+function isNearSweep(points, sweepStart, sweepEnd, reach) {
+    const bounds = pointsBounds(points)
+    return Math.min(sweepStart[0], sweepEnd[0]) - reach <= bounds.maximumX
+        && Math.max(sweepStart[0], sweepEnd[0]) + reach >= bounds.minimumX
+        && Math.min(sweepStart[1], sweepEnd[1]) - reach <= bounds.maximumY
+        && Math.max(sweepStart[1], sweepEnd[1]) + reach >= bounds.minimumY
+}
 
 export class InkCanvas {
     constructor(callbacks) {
@@ -37,7 +68,9 @@ export class InkCanvas {
         this.hasFitted = false
         this.activePointer = null
         this.touchPointers = new Map()
-        this.livePoints = []
+        this.stroke = null
+        this.liveRequest = null
+        this.lastErasePoint = null
         this.pendingErased = []
         this.movingText = null
         this.textOffset = [0, 0]
@@ -80,6 +113,7 @@ export class InkCanvas {
         window.removeEventListener("keydown", this.keyDown)
         window.removeEventListener("keyup", this.keyUp)
         clearTimeout(this.holdTimer)
+        this.endStroke()
     }
 
     configure({ page, tool, paperStyle, showsGuides, hiddenElementIds, isReadOnly }) {
@@ -169,7 +203,7 @@ export class InkCanvas {
             textOffsets,
             cache: this.cache,
         })
-        if (!this.livePoints.length) {
+        if (!this.stroke) {
             this.drawLive([])
         }
     }
@@ -178,7 +212,97 @@ export class InkCanvas {
         return Math.max(this.tool.radius ?? tokens.tools.eraser.radius, minimumEraserReach / this.camera.scale)
     }
 
-    drawLive(points = this.livePoints) {
+    strokePoints(predicted = []) {
+        const stroke = this.stroke
+        if (!stroke) {
+            return []
+        }
+        const smooth = smoothStroke([...stroke.raw, ...predicted], this.camera.scale)
+        if (!stroke.straight) {
+            return smooth
+        }
+        return straightened(smooth, stroke.raw[0], stroke.straight.end, stroke.straight.share)
+    }
+
+    finalStrokePoints() {
+        const stroke = this.stroke
+        if (stroke.straight) {
+            return smoothStroke([stroke.raw[0], stroke.straight.end], this.camera.scale)
+        }
+        return smoothStroke(stroke.raw, this.camera.scale)
+    }
+
+    requestLive() {
+        if (this.liveRequest) {
+            return
+        }
+        this.liveRequest = requestAnimationFrame(() => {
+            this.liveRequest = null
+            this.drawLive(this.strokePoints(this.stroke?.predicted ?? []))
+        })
+    }
+
+    beginStroke(location, point) {
+        this.endStroke()
+        this.stroke = { raw: [point], predicted: [], straight: null, still: null, stillTimer: null, snap: null, screenLength: 0, lastLocation: location }
+        this.restartStill(location)
+        this.drawLive([point])
+    }
+
+    extendStroke(location, point) {
+        const stroke = this.stroke
+        if (stroke.straight) {
+            stroke.straight.end = point
+            return
+        }
+        const travelled = Math.hypot(location[0] - stroke.lastLocation[0], location[1] - stroke.lastLocation[1])
+        if (travelled < minimumSampleSpacingPoints) {
+            return
+        }
+        stroke.screenLength += travelled
+        stroke.lastLocation = location
+        stroke.raw.push(point)
+        if (Math.hypot(location[0] - stroke.still.location[0], location[1] - stroke.still.location[1]) > tokens.ink.straighten_tolerance_points) {
+            this.restartStill(location)
+        }
+    }
+
+    restartStill(location) {
+        const stroke = this.stroke
+        clearTimeout(stroke.stillTimer)
+        stroke.still = { location }
+        stroke.stillTimer = setTimeout(() => this.straightenStroke(), duration("stroke_straighten_hold"))
+    }
+
+    straightenStroke() {
+        const stroke = this.stroke
+        if (!stroke || stroke.straight || stroke.screenLength < minimumStraightLengthPoints) {
+            return
+        }
+        stroke.straight = { end: stroke.raw[stroke.raw.length - 1], share: 0 }
+        stroke.predicted = []
+        stroke.snap = tween({
+            milliseconds: duration("stroke_straighten_snap"),
+            curveName: "power_two_out",
+            onFrame: (share) => {
+                if (this.stroke === stroke) {
+                    stroke.straight.share = share
+                    this.requestLive()
+                }
+            },
+        })
+    }
+
+    endStroke() {
+        if (!this.stroke) {
+            return
+        }
+        clearTimeout(this.stroke.stillTimer)
+        this.stroke.snap?.stop()
+        this.stroke = null
+    }
+
+    drawLive(points = this.strokePoints()) {
         const context = this.liveCanvas.getContext("2d")
         context.setTransform(1, 0, 0, 1, 0, 0)
         context.clearRect(0, 0, this.liveCanvas.width, this.liveCanvas.height)
@@ -193,7 +317,7 @@ export class InkCanvas {
             context.stroke()
             return
         }
-        if (!points.length || this.tool.kind !== "ink") {
+        if (!points.length || this.tool.kind !== "ink" || this.isPanning || this.isHolding) {
             return
         }
         const style = tokens.tools[this.tool.tool]
@@ -306,11 +430,11 @@ export class InkCanvas {
         }
         const point = this.camera.toPage(location[0], location[1])
         if (this.tool.kind === "ink") {
-            this.livePoints = [roundedPoint(point)]
-            this.drawLive()
+            this.beginStroke(location, point)
         } else if (this.tool.kind === "eraser") {
             this.hoverLocation = location
-            this.erase(location)
+            this.lastErasePoint = point
+            this.erase(point, point)
             this.drawLive()
         } else if (this.tool.kind === "text") {
             const element = this.textElement(point)
@@ -366,22 +490,22 @@ export class InkCanvas {
             return
         }
         const samples = event.getCoalescedEvents ? event.getCoalescedEvents() : [event]
-        if (this.tool.kind === "ink") {
+        if (this.tool.kind === "ink" && this.stroke) {
             for (const sample of samples.length ? samples : [event]) {
                 const sampleLocation = this.localPoint(sample)
-                const point = roundedPoint(this.camera.toPage(sampleLocation[0], sampleLocation[1]))
-                if (shouldAppend(point, this.livePoints[this.livePoints.length - 1])) {
-                    this.livePoints.push(point)
-                }
+                this.extendStroke(sampleLocation, this.camera.toPage(sampleLocation[0], sampleLocation[1]))
             }
-            const predicted = (event.getPredictedEvents ? event.getPredictedEvents() : []).map((sample) => {
+            this.stroke.predicted = this.stroke.straight ? [] : (event.getPredictedEvents ? event.getPredictedEvents() : []).slice(0, 1).map((sample) => {
                 const sampleLocation = this.localPoint(sample)
                 return this.camera.toPage(sampleLocation[0], sampleLocation[1])
             })
-            this.drawLive([...this.livePoints, ...predicted])
-        } else if (this.tool.kind === "eraser") {
+            this.requestLive()
+        } else if (this.tool.kind === "eraser" && this.lastErasePoint) {
             for (const sample of samples.length ? samples : [event]) {
-                this.erase(this.localPoint(sample))
+                const sampleLocation = this.localPoint(sample)
+                const point = this.camera.toPage(sampleLocation[0], sampleLocation[1])
+                this.erase(this.lastErasePoint, point)
+                this.lastErasePoint = point
             }
             this.hoverLocation = location
             this.drawLive()
@@ -413,19 +537,22 @@ export class InkCanvas {
             return
         }
         if (wasPanning || this.isReadOnly) {
-            this.livePoints = []
+            this.endStroke()
             this.drawLive()
             return
         }
         if (this.tool.kind === "ink") {
-            if (!this.livePoints.length) {
+            if (!this.stroke) {
                 return
             }
-            const points = this.livePoints
-            this.livePoints = []
+            const sampleLocation = this.localPoint(event)
+            this.extendStroke(sampleLocation, this.camera.toPage(sampleLocation[0], sampleLocation[1]))
+            const points = this.finalStrokePoints()
+            this.endStroke()
             this.drawLive(points)
             this.callbacks.onStroke?.(this.tool.tool, this.tool.color, points, this.tool.width)
         } else if (this.tool.kind === "eraser") {
+            this.lastErasePoint = null
             if (event.pointerType === "touch") {
                 this.hoverLocation = null
                 this.drawLive()
@@ -470,7 +597,8 @@ export class InkCanvas {
         if (this.isHolding) {
             this.callbacks.onHoldEnd?.(-1, -1)
         }
-        this.livePoints = []
+        this.endStroke()
+        this.lastErasePoint = null
         this.drawLive()
         this.clearPendingFeedback()
         this.resetGesture()
@@ -497,27 +625,27 @@ export class InkCanvas {
         this.cameraChanged()
     }
 
-    erase(location) {
+    erase(sweepStart, sweepEnd) {
         if (!this.page) {
             return
         }
-        const point = this.camera.toPage(location[0], location[1])
         const reach = this.eraserReach()
         let didErase = false
-        if (this.tool.mode === "area") {
-            for (const element of liveElements(this.page)) {
-                if (element.type !== "stroke") {
-                    continue
-                }
+        for (const element of liveElements(this.page)) {
+            if (element.type !== "stroke" || !element.points?.length) {
+                continue
+            }
+            const strokeReach = reach + (element.width ?? 0) / 2
+            if (this.tool.mode === "area") {
                 const entry = this.areaErase.get(element.id)
                 const pieces = entry ? entry.pieces : [element.points]
-                const strokeReach = reach + (element.width ?? 0) / 2
                 let isTouched = false
                 const nextPieces = []
                 for (const points of pieces) {
-                    if (isStrokeHit({ ...element, points }, point, reach)) {
+                    const cut = isNearSweep(points, sweepStart, sweepEnd, strokeReach) ? cutStroke(points, sweepStart, sweepEnd, strokeReach) : null
+                    if (cut) {
                         isTouched = true
-                        nextPieces.push(...cutStroke(points, point, strokeReach))
+                        nextPieces.push(...cut)
                     } else {
                         nextPieces.push(points)
                     }
@@ -526,14 +654,7 @@ export class InkCanvas {
                     this.areaErase.set(element.id, { element, pieces: nextPieces, revision: (entry?.revision ?? 0) + 1 })
                     didErase = true
                 }
-            }
-            if (didErase) {
-                this.requestDraw()
-            }
-            return
-        }
-        for (const element of liveElements(this.page)) {
-            if (element.type === "stroke" && !this.pendingErased.includes(element.id) && isStrokeHit(element, point, reach)) {
+            } else if (!this.pendingErased.includes(element.id) && isNearSweep(element.points, sweepStart, sweepEnd, strokeReach) && isStrokeSwept(element, sweepStart, sweepEnd, reach)) {
                 this.pendingErased.push(element.id)
                 didErase = true
             }
@@ -567,7 +688,7 @@ export class InkCanvas {
         }
         this.isHolding = true
         this.isPanning = false
-        this.livePoints = []
+        this.endStroke()
         this.drawLive()
         this.clearPendingFeedback()
         this.requestDraw()

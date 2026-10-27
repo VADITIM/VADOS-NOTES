@@ -12,10 +12,25 @@ const besideGap = 10
 const clickSwallowWindowMilliseconds = 600
 const childStaggerMilliseconds = 18
 
+const washSlideIdentifier = "wash-slide"
+
 function cancelAnimations(element) {
     for (const animation of element.getAnimations()) {
         animation.cancel()
     }
+}
+
+function cancelWashSlide(wash) {
+    for (const animation of wash.getAnimations()) {
+        if (animation.id === washSlideIdentifier) {
+            animation.cancel()
+        }
+    }
+}
+
+function popWashIn(wash, delay) {
+    cancelAnimations(wash)
+    animate(wash, [{ opacity: 0, transform: "scale(0.001)" }, { opacity: 1, transform: "scale(1)" }], { milliseconds: duration("state"), curveName: "back_out", delay, fill: "backwards" })
 }
 
 function lerp(from, to, share) {
@@ -40,7 +55,10 @@ export function slideWash(wash, button, orientation, isAnimated) {
     wash.style[isVertical ? "right" : "bottom"] = `${isVertical ? track.clientWidth - button.offsetLeft - button.offsetWidth : track.clientHeight - button.offsetTop - button.offsetHeight}px`
     const computed = getComputedStyle(wash)
     const previous = wash.edges && wash.edges.orientation === orientation ? { start: parseFloat(computed[startName]), end: parseFloat(computed[endName]) } : null
-    cancelAnimations(wash)
+    if (previous && previous.start === next.start && previous.end === next.end && wash.style.opacity === "1") {
+        return
+    }
+    cancelWashSlide(wash)
     wash.style[startName] = `${next.start}px`
     wash.style[endName] = `${next.end}px`
     wash.style.opacity = "1"
@@ -50,8 +68,8 @@ export function slideWash(wash, button, orientation, isAnimated) {
     }
     const isForward = next.start > previous.start
     const options = (delay) => ({ milliseconds: duration("nav_slide"), curveName: "power_two_out", delay })
-    animate(wash, [{ [startName]: `${previous.start}px` }, { [startName]: `${next.start}px` }], options(isForward ? duration("nav_trail") : 0))
-    animate(wash, [{ [endName]: `${previous.end}px` }, { [endName]: `${next.end}px` }], options(isForward ? 0 : duration("nav_trail")))
+    animate(wash, [{ [startName]: `${previous.start}px` }, { [startName]: `${next.start}px` }], options(isForward ? duration("nav_trail") : 0)).id = washSlideIdentifier
+    animate(wash, [{ [endName]: `${previous.end}px` }, { [endName]: `${next.end}px` }], options(isForward ? 0 : duration("nav_trail"))).id = washSlideIdentifier
 }
 
 export function separator() {
@@ -144,7 +162,7 @@ export class ToolNav {
         this.popFaceIn(face, state)
         this.morphTo(target, this.desiredCenter(target))
         this.select(selectedId, false)
-        animate(face.querySelector(".tool-nav-wash"), [{ opacity: 0 }, { opacity: 0 }], { milliseconds: state * 2, curveName: "power_two_out" })
+        popWashIn(face.querySelector(".tool-nav-wash"), state)
     }
 
     popFaceIn(face, delay) {
@@ -310,6 +328,9 @@ export class ToolNav {
             }
         })
         const finish = (event) => {
+            if (event.type === "lostpointercapture" && event.target !== element) {
+                return
+            }
             if (this.hold && event.pointerId === this.hold.pointerId) {
                 this.cancelHold()
             }
@@ -320,6 +341,7 @@ export class ToolNav {
         element.addEventListener("pointerup", finish)
         element.addEventListener("pointercancel", finish)
         element.addEventListener("lostpointercapture", finish)
+        element.addEventListener("contextmenu", (event) => event.preventDefault())
         element.addEventListener("click", (event) => {
             if (this.isSwallowingClick) {
                 this.isSwallowingClick = false
@@ -395,7 +417,7 @@ export class ToolNav {
         cancelAnimations(wash)
         wash.edges = null
         this.select(this.selectedId, false)
-        animate(wash, [{ opacity: 0 }, { opacity: 0 }], { milliseconds: state * 2, curveName: "power_two_out" })
+        popWashIn(wash, state)
         this.morphTo(target, center)
     }
 
@@ -406,6 +428,15 @@ export class ToolNav {
             return center.x > layer.width / 2 ? "left" : "right"
         }
         return center.y > layer.height / 2 ? "up" : "down"
+    }
+
+    navRect() {
+        const layerRect = this.layer.getBoundingClientRect()
+        const size = this.size ?? { width: 0, height: 0 }
+        const center = this.center ?? { x: 0, y: 0 }
+        const left = layerRect.left + center.x - size.width / 2
+        const top = layerRect.top + center.y - size.height / 2
+        return { left, top, width: size.width, height: size.height, right: left + size.width, bottom: top + size.height }
     }
 
     besideRect(anchor, size, side) {
@@ -463,12 +494,7 @@ export class ToolNav {
             return
         }
         const size = { width: subNav.track.offsetWidth, height: subNav.track.offsetHeight }
-        const center = this.besideRect(this.element.getBoundingClientRect(), size, this.outwardSide())
-        const anchorRect = anchor.getBoundingClientRect()
-        const layerRect = this.layer.getBoundingClientRect()
-        const aligned = this.orientation === "vertical"
-            ? this.clampCenter({ x: center.x, y: anchorRect.top + anchorRect.height / 2 - layerRect.top }, size)
-            : this.clampCenter({ x: anchorRect.left + anchorRect.width / 2 - layerRect.left, y: center.y }, size)
+        const aligned = this.besideRect(this.navRect(), size, this.outwardSide())
         const apply = (nextSize, nextCenter) => {
             subNav.size = nextSize
             subNav.center = nextCenter
@@ -533,14 +559,13 @@ export class ToolNav {
             return
         }
         const size = { width: panel.element.offsetWidth, height: panel.element.offsetHeight }
-        const subNavRect = this.subNav.panel.getBoundingClientRect()
-        const anchorRect = panel.anchor.getBoundingClientRect()
         const layerRect = this.layer.getBoundingClientRect()
-        const side = this.outwardSide()
-        const outward = this.besideRect(subNavRect, size, side)
-        const center = this.orientation === "vertical"
-            ? this.clampCenter({ x: outward.x, y: anchorRect.top + anchorRect.height / 2 - layerRect.top }, size)
-            : this.clampCenter({ x: anchorRect.left + anchorRect.width / 2 - layerRect.left, y: outward.y }, size)
+        const subNavSize = this.subNav.size ?? { width: 0, height: 0 }
+        const subNavCenter = this.subNav.center ?? { x: 0, y: 0 }
+        const subNavLeft = layerRect.left + subNavCenter.x - subNavSize.width / 2
+        const subNavTop = layerRect.top + subNavCenter.y - subNavSize.height / 2
+        const subNavRect = { left: subNavLeft, top: subNavTop, width: subNavSize.width, height: subNavSize.height, right: subNavLeft + subNavSize.width, bottom: subNavTop + subNavSize.height }
+        const center = this.besideRect(subNavRect, size, this.outwardSide())
         panel.element.style.left = `${center.x - size.width / 2}px`
         panel.element.style.top = `${center.y - size.height / 2}px`
     }
