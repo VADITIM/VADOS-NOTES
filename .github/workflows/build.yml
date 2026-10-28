@@ -75,9 +75,43 @@ jobs:
           name: windows
           path: out/*
 
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libssl-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows/src-tauri
+      - name: Install Tauri CLI
+        working-directory: windows
+        run: npm ci
+      - name: Build Linux bundles
+        working-directory: windows
+        run: npx tauri build --bundles appimage,deb
+      - name: Collect Linux files
+        shell: bash
+        run: |
+          mkdir -p out
+          cp windows/src-tauri/target/release/bundle/appimage/*.AppImage out/
+          cp windows/src-tauri/target/release/bundle/deb/*.deb out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/*
+
   release:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-    needs: [core-linux, ipad, windows]
+    needs: [core-linux, ipad, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -92,7 +126,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
-            Windows and iPad builds of commit ${{ github.sha }}.
+            Windows, Linux and iPad builds of commit ${{ github.sha }}.
 
             **Windows**
             - **VadosNotes-portable.exe**: download and run, nothing is installed.
@@ -100,6 +134,10 @@ jobs:
             - **.msi**: the same installer for MSI deployment.
 
             Windows SmartScreen warns about an unsigned app the first time: More info, then Run anyway.
+
+            **Linux**
+            - **.AppImage**: `chmod +x` it and run it.
+            - **.deb**: `sudo apt install ./vados-notes_*.deb`.
 
             **iPad**
             - **VadosNotes-iPad-unsigned.ipa**: unsigned. Install it from Windows with Sideloadly (or AltStore) and a free Apple ID; the free signature lasts 7 days, then sideload again.

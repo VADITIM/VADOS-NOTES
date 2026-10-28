@@ -14,25 +14,29 @@ import {
     nextOrder,
     notebookPath,
     pagePath,
+    repositoryPathKind,
+    scaledElement,
     schemaVersion,
     sortedByOrder,
     timestampMilliseconds,
     timestampNow,
     tombstone,
+    translatedElement,
 } from "./model.js"
-import { deviceIdentity, loadFiles, writeFile } from "./storage.js"
+import { deviceIdentity, loadFiles, readSetting, readSyncState, writeFile, writeSetting } from "./storage.js"
 import { tokens } from "./tokens.js"
 
 const undoLimit = 200
-
 const importMarginMillimetres = 5
 const sizeTolerance = 1
+const writeDelayMilliseconds = 250
+const dirtyPathsKey = "syncDirtyPaths"
 
 function rounded(value) {
     return Math.round(value * 100) / 100
 }
 
-function importElement(asset, index, [width, height], now, device) {
+function importElement(asset, index, [width, height], now, device, row = index) {
     const isA4 = Math.abs(width - cellWidth) <= sizeTolerance && Math.abs(height - cellHeight) <= sizeTolerance
     const scale = isA4 ? 1 : Math.min((cellWidth - importMarginMillimetres * 2) / width, (cellHeight - importMarginMillimetres * 2) / height)
     return {
@@ -43,7 +47,7 @@ function importElement(asset, index, [width, height], now, device) {
         asset,
         source_page: index,
         source_size_mm: [width, height],
-        placement: { x: rounded((cellWidth - width * scale) / 2), y: rounded(index * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
+        placement: { x: rounded((cellWidth - width * scale) / 2), y: rounded(row * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
         fit: isA4 ? "original" : "fit_cell",
         updated: now,
         device,
@@ -54,7 +58,6 @@ function importElement(asset, index, [width, height], now, device) {
 function endOrder(items) {
     return items.reduce((highest, item, index) => Math.max(highest, Number.isFinite(item.order) ? item.order : index), -1) + 1
 }
-const writeDelayMilliseconds = 250
 
 export class Library {
     constructor() {
@@ -62,6 +65,7 @@ export class Library {
         this.notebooks = new Map()
         this.pagesById = new Map()
         this.readOnlyPages = new Set()
+        this.blockedPaths = new Map()
         this.undoSteps = new Map()
         this.redoSteps = new Map()
         this.textEditing = null
@@ -69,25 +73,51 @@ export class Library {
         this.pendingWrites = new Map()
         this.writeTimer = null
         this.lastError = null
+        this.dirtyPaths = new Map()
+        this.changeCounter = 0
+        this.onChange = null
+        this.onInput = null
     }
 
     async open() {
         const files = await loadFiles()
         for (const file of files) {
             try {
-                const { value, isReadOnly } = decodeFile(file.contents)
+                const { value } = decodeFile(file.contents)
                 if (file.path.endsWith("/notebook.json")) {
                     this.notebooks.set(value.id, value)
                 } else if (file.path.includes("/pages/")) {
                     this.pagesById.set(value.id, value)
-                    if (isReadOnly) {
-                        this.readOnlyPages.add(value.id)
-                    }
                 }
             } catch (error) {
                 this.lastError = `${file.path}: ${error.message}`
             }
         }
+        const state = await readSyncState()
+        for (const [path, reason] of Object.entries(state?.blocked ?? {})) {
+            this.blockedPaths.set(path, reason)
+        }
+        this.refreshReadOnly()
+        const storedDirty = readSetting(dirtyPathsKey, null)
+        if (Array.isArray(storedDirty)) {
+            storedDirty.forEach((path) => this.dirtyPaths.set(path, 0))
+        } else if (!state?.head) {
+            files.forEach((file) => this.dirtyPaths.set(file.path, 0))
+            this.saveDirtyPaths()
+        }
+    }
+
+    refreshReadOnly() {
+        this.readOnlyPages = new Set()
+        for (const page of this.pagesById.values()) {
+            if (this.blockedPaths.has(pagePath(page.notebook, page.id)) || page.schema_version !== schemaVersion) {
+                this.readOnlyPages.add(page.id)
+            }
+        }
+    }
+
+    saveDirtyPaths() {
+        writeSetting(dirtyPathsKey, [...this.dirtyPaths.keys()])
     }
 
     subscribe(listener) {
@@ -136,16 +166,31 @@ export class Library {
         return false
     }
 
-    depth(notebookId) {
-        let depth = 0
-        let current = this.parentOf(notebookId)
+    path(notebookId) {
+        const names = []
         const visited = new Set()
+        let current = notebookId
         while (current && !visited.has(current)) {
             visited.add(current)
-            depth += 1
+            names.unshift(this.notebook(current)?.title ?? "")
             current = this.parentOf(current)
         }
-        return depth
+        return names.join(" / ")
+    }
+
+    folderSummary(notebookId) {
+        const noteCount = this.pages(notebookId).length
+        const folderCount = this.folders(notebookId).length
+        const noteText = `${noteCount} note${noteCount === 1 ? "" : "s"}`
+        return folderCount > 0 ? `${noteText} · ${folderCount} folder${folderCount === 1 ? "" : "s"}` : noteText
+    }
+
+    noteTitle(page) {
+        if (typeof page.title === "string") {
+            return page.title
+        }
+        const index = this.pages(page.notebook).findIndex((candidate) => candidate.id === page.id)
+        return `Note ${Math.max(0, index) + 1}`
     }
 
     updateNotebook(notebookId, changes) {
@@ -187,6 +232,7 @@ export class Library {
 
     createNotebook(title, parentId = null) {
         const now = this.timestamp()
+        const validParent = parentId && this.notebook(parentId) ? parentId : null
         const notebook = {
             schema_version: schemaVersion,
             id: makeIdentifier("nb", timestampMilliseconds(now)),
@@ -194,17 +240,13 @@ export class Library {
             updated: now,
             device: this.device,
             deleted: false,
-            order: endOrder(this.folders(parentId && this.notebook(parentId) ? parentId : null)),
+            order: endOrder(this.folders(validParent)),
         }
-        if (parentId && this.notebook(parentId)) {
-            notebook.parent = parentId
+        if (validParent) {
+            notebook.parent = validParent
         }
         this.applyNotebook(notebook)
         return notebook
-    }
-
-    rename(notebookId, title) {
-        this.updateNotebook(notebookId, { title })
     }
 
     deleteNotebook(notebookId) {
@@ -223,12 +265,13 @@ export class Library {
 
     createPage(notebookId, { title = null, pdf = null } = {}) {
         const now = this.timestamp()
+        const siblings = this.pages(notebookId)
         const header = {
             schema_version: schemaVersion,
             id: makeIdentifier("p", timestampMilliseconds(now)),
             notebook: notebookId,
-            title: title ?? `Note ${this.pages(notebookId).length + 1}`,
-            order: endOrder(this.pages(notebookId)),
+            title: title ?? `Note ${siblings.length + 1}`,
+            order: endOrder(siblings),
             updated: now,
             device: this.device,
             deleted: false,
@@ -239,12 +282,34 @@ export class Library {
         return this.pagesById.get(header.id)
     }
 
+    appendDocument(pdf, pageId) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId) || !pdf.pages.length) {
+            return
+        }
+        const now = this.timestamp()
+        const firstRow = page.extent.rows
+        const firstOrder = page.elements.reduce((highest, element) => Math.max(highest, element.order), -1) + 1
+        this.updatePage(pageId, { extent: { cols: page.extent.cols, rows: firstRow + pdf.pages.length } })
+        pdf.pages.forEach((size, index) => {
+            const element = importElement(pdf.asset, index, size, now, this.device, firstRow + index)
+            element.order = firstOrder + index
+            this.applyElement(pageId, element)
+        })
+    }
+
     updatePage(pageId, changes) {
         const page = this.page(pageId)
         if (!page || this.isReadOnly(pageId)) {
             return
         }
-        this.applyHeader({ ...this.header(page), ...changes, updated: this.timestamp(), device: this.device })
+        const next = { ...this.header(page), ...changes, updated: this.timestamp(), device: this.device }
+        for (const [key, value] of Object.entries(changes)) {
+            if (value === null || value === undefined) {
+                delete next[key]
+            }
+        }
+        this.applyHeader(next)
     }
 
     movePage(pageId, notebookId) {
@@ -257,9 +322,9 @@ export class Library {
         const { elements, ...header } = page
         const moved = { ...header, id: makeIdentifier("p", timestampMilliseconds(now)), notebook: notebookId, order: endOrder(this.pages(notebookId)), updated: now, device: this.device }
         this.applyHeader(moved)
-        const target = { ...this.pagesById.get(moved.id), elements: [...elements] }
-        this.pagesById.set(moved.id, target)
-        this.schedulePage(target)
+        for (const element of elements) {
+            this.applyElement(moved.id, element)
+        }
         this.deletePage(pageId)
         return moved.id
     }
@@ -296,7 +361,7 @@ export class Library {
             return
         }
         const extent = isColumns ? { cols: page.extent.cols * 2, rows: page.extent.rows } : { cols: page.extent.cols, rows: page.extent.rows * 2 }
-        this.applyHeader({ ...this.header(page), extent, updated: this.timestamp(), device: this.device })
+        this.updatePage(pageId, { extent })
     }
 
     addStrokes(pageId, tool, color, pieces, width = tokens.tools[tool].width) {
@@ -387,6 +452,57 @@ export class Library {
         this.record({ before: [element], after: [moved] }, pageId)
     }
 
+    transformElements(elementIds, pageId, transform) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId)) {
+            return
+        }
+        const now = this.timestamp()
+        const step = { before: [], after: [] }
+        for (const id of elementIds) {
+            const element = page.elements.find((candidate) => candidate.id === id)
+            if (!element || element.deleted) {
+                continue
+            }
+            const changed = transform(element)
+            if (!changed) {
+                continue
+            }
+            const next = { ...changed, updated: now, device: this.device }
+            this.applyElement(pageId, next)
+            step.before.push(element)
+            step.after.push(next)
+        }
+        if (step.after.length) {
+            this.record(step, pageId)
+        }
+    }
+
+    moveElements(elementIds, pageId, offset) {
+        this.transformElements(elementIds, pageId, (element) => translatedElement(element, offset))
+    }
+
+    scaleElements(elementIds, pageId, anchor, factor) {
+        this.transformElements(elementIds, pageId, (element) => scaledElement(element, anchor, factor))
+    }
+
+    setStrokeWidth(elementIds, pageId, width) {
+        this.transformElements(elementIds, pageId, (element) => (element.type === "stroke" && element.width !== width ? { ...element, width } : null))
+    }
+
+    placeText(box) {
+        const session = this.textEditing
+        if (!session || JSON.stringify(session.element.box) === JSON.stringify(box)) {
+            return
+        }
+        session.element = { ...session.element, box, updated: this.timestamp(), device: this.device }
+        if (session.isApplied) {
+            this.applyElement(session.pageId, session.element)
+        } else {
+            this.changed()
+        }
+    }
+
     beginText(pageId, point, fontSize = tokens.text.font_size) {
         const page = this.page(pageId)
         if (!page || this.isReadOnly(pageId)) {
@@ -464,8 +580,13 @@ export class Library {
             }
             return
         }
-        if (session.original?.content !== session.element.content || session.original?.font_size !== session.element.font_size || session.original?.color !== session.element.color) {
-            this.record({ before: session.original ? [session.original] : [], after: [session.element] }, session.pageId)
+        const original = session.original
+        const isChanged = original?.content !== session.element.content
+            || original?.font_size !== session.element.font_size
+            || original?.color !== session.element.color
+            || JSON.stringify(original?.box) !== JSON.stringify(session.element.box)
+        if (isChanged) {
+            this.record({ before: original ? [original] : [], after: [session.element] }, session.pageId)
         }
         this.changed()
     }
@@ -496,6 +617,10 @@ export class Library {
         }
         this.stack(this.undoSteps, pageId).push(this.revert(step, pageId))
         this.changed()
+    }
+
+    noteInput(pageId) {
+        this.onInput?.(pageId)
     }
 
     revert(step, pageId) {
@@ -556,7 +681,7 @@ export class Library {
         const existing = this.notebooks.get(notebook.id)
         const merged = existing ? mergeNotebook(existing, notebook) : notebook
         this.notebooks.set(notebook.id, merged)
-        this.schedule(notebookPath(notebook.id), () => encodeNotebook(this.notebooks.get(notebook.id)))
+        this.scheduleNotebook(notebook.id, true)
         this.changed()
     }
 
@@ -564,7 +689,7 @@ export class Library {
         const existing = this.pagesById.get(header.id)
         const page = existing ? { ...mergeHeader(this.header(existing), header), elements: existing.elements } : { ...header, elements: [] }
         this.pagesById.set(header.id, page)
-        this.schedulePage(page)
+        this.schedulePage(page, true)
         this.changed()
     }
 
@@ -587,12 +712,92 @@ export class Library {
             page.device = element.device
         }
         this.pagesById.set(pageId, page)
-        this.schedulePage(page)
+        this.schedulePage(page, true)
         this.changed()
     }
 
-    schedulePage(page) {
-        this.schedule(pagePath(page.notebook, page.id), () => encodePage(this.pagesById.get(page.id)))
+    absorbRemote(path, value) {
+        const kind = repositoryPathKind(path)
+        if (kind?.kind === "notebook") {
+            const existing = this.notebooks.get(value.id)
+            this.notebooks.set(value.id, existing ? mergeNotebook(existing, value) : value)
+            this.scheduleNotebook(value.id, false)
+        } else if (kind?.kind === "page") {
+            const existing = this.pagesById.get(value.id)
+            if (!existing) {
+                this.pagesById.set(value.id, value)
+            } else {
+                const byId = new Map(existing.elements.map((element) => [element.id, element]))
+                for (const element of value.elements ?? []) {
+                    const local = byId.get(element.id)
+                    byId.set(element.id, local ? mergeElement(local, element) : element)
+                }
+                const header = mergeHeader(this.header(existing), this.header(value))
+                const elements = [...byId.values()].sort((first, second) => (first.id === second.id ? 0 : isOrderedBefore(first, second) ? -1 : 1))
+                const merged = { ...header, elements }
+                for (const element of elements) {
+                    if (isNewer(element.updated, element.device, merged.updated, merged.device)) {
+                        merged.updated = element.updated
+                        merged.device = element.device
+                    }
+                }
+                this.pagesById.set(value.id, merged)
+            }
+            this.schedulePage(this.pagesById.get(value.id), false)
+        }
+    }
+
+    encodedFile(path) {
+        const kind = repositoryPathKind(path)
+        if (kind?.kind === "notebook") {
+            const notebook = this.notebooks.get(kind.notebookId)
+            return notebook ? encodeNotebook(notebook) : null
+        }
+        if (kind?.kind === "page") {
+            const page = this.pagesById.get(kind.pageId)
+            return page && page.notebook === kind.notebookId ? encodePage(page) : null
+        }
+        return null
+    }
+
+    markDirty(path) {
+        this.changeCounter += 1
+        const isNew = !this.dirtyPaths.has(path)
+        this.dirtyPaths.set(path, this.changeCounter)
+        if (isNew) {
+            this.saveDirtyPaths()
+        }
+    }
+
+    settle(paths) {
+        let isChanged = false
+        for (const [path, counter] of paths) {
+            if (this.dirtyPaths.get(path) === counter) {
+                this.dirtyPaths.delete(path)
+                isChanged = true
+            }
+        }
+        if (isChanged) {
+            this.saveDirtyPaths()
+        }
+    }
+
+    scheduleNotebook(notebookId, isLocal) {
+        const path = notebookPath(notebookId)
+        if (isLocal) {
+            this.markDirty(path)
+            this.onChange?.(notebookId)
+        }
+        this.schedule(path, () => encodeNotebook(this.notebooks.get(notebookId)))
+    }
+
+    schedulePage(page, isLocal) {
+        const path = pagePath(page.notebook, page.id)
+        if (isLocal) {
+            this.markDirty(path)
+            this.onChange?.(page.id)
+        }
+        this.schedule(path, () => encodePage(this.pagesById.get(page.id)))
     }
 
     schedule(path, encode) {
@@ -605,11 +810,9 @@ export class Library {
         clearTimeout(this.writeTimer)
         const writes = [...this.pendingWrites.entries()]
         this.pendingWrites.clear()
-        for (const [path, encode] of writes) {
-            writeFile(path, encode()).catch((error) => {
-                this.lastError = String(error)
-                this.changed()
-            })
-        }
+        return Promise.all(writes.map(([path, encode]) => writeFile(path, encode()).catch((error) => {
+            this.lastError = String(error)
+            this.changed()
+        })))
     }
 }

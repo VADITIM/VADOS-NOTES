@@ -4,7 +4,7 @@ import { tokens } from "./tokens.js"
 const millimetresPerPoint = 25.4 / 72
 const maximumImagePixels = 4096
 const minimumLevel = 0.5
-const cacheLimit = 36
+const cacheBytes = 192 * 1024 * 1024
 const edgeSampleCount = 48
 const whiteLuminance = 0.88
 const whiteShare = 0.8
@@ -127,12 +127,18 @@ function darkened(entry) {
     return entry.darkened
 }
 
+function entryBytes(entry) {
+    return [entry.canvas, entry.darkened].filter(Boolean).reduce((total, canvas) => total + canvas.width * canvas.height * 4, 0)
+}
+
 function evict() {
-    if (images.size <= cacheLimit) {
-        return
-    }
+    let total = [...images.values()].reduce((sum, entry) => sum + entryBytes(entry), 0)
     const ordered = [...images.entries()].filter(([, entry]) => entry.canvas).sort((first, second) => first[1].lastUsed - second[1].lastUsed)
-    for (const [key] of ordered.slice(0, images.size - cacheLimit)) {
+    for (const [key, entry] of ordered) {
+        if (total <= cacheBytes) {
+            break
+        }
+        total -= entryBytes(entry)
         images.delete(key)
     }
 }
@@ -148,7 +154,11 @@ function render(key, element, level) {
             canvas.width = Math.max(1, Math.ceil(viewport.width))
             canvas.height = Math.max(1, Math.ceil(viewport.height))
             await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise
-            images.set(key, { canvas, isWhite: isWhitePage(canvas), level, lastUsed: performance.now() })
+            const entry = { canvas, isWhite: isWhitePage(canvas), level, lastUsed: performance.now() }
+            if (entry.isWhite) {
+                darkened(entry)
+            }
+            images.set(key, entry)
             evict()
             announce()
         } catch (error) {

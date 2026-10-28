@@ -1,11 +1,12 @@
-import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth } from "./model.js"
+import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth, scaledElement, translatedElement } from "./model.js"
 import { importImage } from "./imports.js"
 import { markdownBlocks } from "./markdown.js"
 import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
 export const monoFamily = "\"Space Mono\""
-export const minimumScale = 0.6
+export const minimumScale = 0.01
 export const maximumScale = 40
+export const panSlackShare = 0.45
 const layoutScale = 10
 const minimumTextHeightPerFontSize = 1.4
 
@@ -30,13 +31,33 @@ export class Camera {
         return new Camera(scale, anchorX - pagePoint[0] * scale, anchorY - pagePoint[1] * scale)
     }
 
-    static fitting(extent, width, height, margin, topInset = 0) {
+    static smallestScale(extent, width, height, margin, topInset) {
         const availableWidth = Math.max(1, width - margin * 2)
-        const availableHeight = Math.max(1, height - topInset - margin * 2)
-        const scale = Math.min(availableWidth / cellWidth, availableHeight / cellHeight)
-        const shownWidth = extent.cols * cellWidth * scale
-        const horizontalOffset = shownWidth < width ? (width - shownWidth) / 2 : margin
-        return new Camera(scale, horizontalOffset, topInset + margin)
+        const availableHeight = Math.max(1, height - (topInset + margin) * 2)
+        return Math.min(maximumScale, Math.min(availableWidth / paperWidth(extent), availableHeight / paperHeight(extent)))
+    }
+
+    static fitting(extent, width, height, margin, topInset = 0) {
+        const scale = Camera.smallestScale(extent, width, height, margin, topInset)
+        return new Camera(scale, (width - paperWidth(extent) * scale) / 2, (height - paperHeight(extent) * scale) / 2)
+    }
+
+    constrained(extent, width, height, margin, topInset) {
+        const smallest = Camera.smallestScale(extent, width, height, margin, topInset)
+        let camera = new Camera(this.scale, this.offsetX, this.offsetY)
+        if (camera.scale < smallest) {
+            camera = camera.zoomed(smallest / camera.scale, width / 2, height / 2)
+        }
+        const axis = (offset, size, start, end, slack) => {
+            if (size <= end - start) {
+                const centred = start + (end - start - size) / 2
+                return Math.min(centred + slack, Math.max(centred - slack, offset))
+            }
+            return Math.min(start + slack, Math.max(end - size - slack, offset))
+        }
+        camera.offsetX = axis(camera.offsetX, paperWidth(extent) * camera.scale, margin, width - margin, width * panSlackShare)
+        camera.offsetY = axis(camera.offsetY, paperHeight(extent) * camera.scale, margin, height - margin, height * panSlackShare)
+        return camera
     }
 }
 
@@ -283,9 +304,10 @@ function drawGuides(context, visible, camera, colors) {
         context.moveTo(x, visible.minimumY)
         context.lineTo(x, visible.maximumY)
     }
-    for (let y = Math.floor(visible.minimumY / spacing) * spacing; y <= visible.maximumY; y += spacing) {
-        context.moveTo(visible.minimumX, y)
-        context.lineTo(visible.maximumX, y)
+    const rowSpacing = cellHeight / Math.max(1, Math.round(cellHeight / spacing))
+    for (let row = Math.floor(visible.minimumY / rowSpacing); row * rowSpacing <= visible.maximumY; row += 1) {
+        context.moveTo(visible.minimumX, row * rowSpacing)
+        context.lineTo(visible.maximumX, row * rowSpacing)
     }
     context.stroke()
     context.restore()
@@ -325,7 +347,7 @@ function drawStroke(context, element, visible, cache, style) {
     context.stroke(cached.path)
 }
 
-function drawText(context, element, camera, offset, pixelRatio, style) {
+function drawText(context, element, camera, pixelRatio, style) {
     if (!element.content || !element.box) {
         return
     }
@@ -333,8 +355,8 @@ function drawText(context, element, camera, offset, pixelRatio, style) {
     const scale = camera.scale * pixelRatio
     const color = inkOnPaper(element.color ?? tokens.text.color, style)
     const faint = withAlpha(color, 0.14)
-    const left = ((element.box.x + offset[0]) * camera.scale + camera.offsetX) * pixelRatio
-    const top = ((element.box.y + offset[1]) * camera.scale + camera.offsetY) * pixelRatio
+    const left = (element.box.x * camera.scale + camera.offsetX) * pixelRatio
+    const top = (element.box.y * camera.scale + camera.offsetY) * pixelRatio
     const boxWidth = element.box.width * scale
     context.save()
     context.setTransform(1, 0, 0, 1, 0, 0)
@@ -384,22 +406,31 @@ function drawText(context, element, camera, offset, pixelRatio, style) {
     context.restore()
 }
 
-function drawImport(context, element, camera, pixelRatio, paperStyle, colors) {
+export function importRect(element) {
     if (!element.source_size_mm || !element.placement) {
-        return
+        return null
     }
     const scale = element.placement.scale ?? 1
-    const width = element.source_size_mm[0] * scale
-    const height = element.source_size_mm[1] * scale
+    return { x: element.placement.x, y: element.placement.y, width: element.source_size_mm[0] * scale, height: element.source_size_mm[1] * scale }
+}
+
+function drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible) {
+    const rect = importRect(element)
+    if (!rect) {
+        return
+    }
+    if (visible && (rect.x > visible.maximumX || rect.x + rect.width < visible.minimumX || rect.y > visible.maximumY || rect.y + rect.height < visible.minimumY)) {
+        return
+    }
     const image = importImage(element, camera.scale * pixelRatio, paperStyle === "dark")
     if (!image) {
         context.fillStyle = colors.guide
-        context.fillRect(element.placement.x, element.placement.y, width, height)
+        context.fillRect(rect.x, rect.y, rect.width, rect.height)
         return
     }
     context.imageSmoothingEnabled = true
-    context.imageSmoothingQuality = "high"
-    context.drawImage(image, element.placement.x, element.placement.y, width, height)
+    context.imageSmoothingQuality = "medium"
+    context.drawImage(image, rect.x, rect.y, rect.width, rect.height)
 }
 
 export function clipToPaper(context, extent) {
@@ -408,11 +439,15 @@ export function clipToPaper(context, extent) {
     context.clip()
 }
 
-export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), textOffsets = new Map(), cache }) {
+export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), elementOffsets = new Map(), elementScale = null, fillsOutside = true, cache }) {
     const colors = paperColors(paperStyle)
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
-    context.fillStyle = tokens.page.outside
-    context.fillRect(0, 0, width, height)
+    if (fillsOutside) {
+        context.fillStyle = tokens.page.outside
+        context.fillRect(0, 0, width, height)
+    } else {
+        context.clearRect(0, 0, width, height)
+    }
 
     const paper = { minimumX: 0, minimumY: 0, maximumX: paperWidth(page.extent), maximumY: paperHeight(page.extent) }
     const topLeft = camera.toPage(0, 0)
@@ -426,6 +461,7 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     if (visible.minimumX > visible.maximumX || visible.minimumY > visible.maximumY) {
         return
     }
+    const everywhere = { minimumX: -Infinity, minimumY: -Infinity, maximumX: Infinity, maximumY: Infinity }
 
     context.save()
     context.translate(camera.offsetX, camera.offsetY)
@@ -443,13 +479,30 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
         if (hiddenElementIds.has(element.id)) {
             continue
         }
-        if (element.type === "import") {
-            drawImport(context, element, camera, pixelRatio, paperStyle, colors)
-        } else if (element.type === "stroke") {
-            drawStroke(context, element, visible, cache, paperStyle)
-        } else if (element.type === "text") {
-            drawText(context, element, camera, textOffsets.get(element.id) ?? [0, 0], pixelRatio, paperStyle)
+        const offset = elementOffsets.get(element.id)
+        const scale = elementScale?.ids.has(element.id) ? elementScale : null
+        if (element.type === "text") {
+            let shown = scale ? scaledElement(element, scale.anchor, scale.factor) : element
+            shown = offset ? translatedElement(shown, offset) : shown
+            drawText(context, shown, camera, pixelRatio, paperStyle)
+            continue
         }
+        context.save()
+        if (offset) {
+            context.translate(offset[0], offset[1])
+        }
+        if (scale) {
+            context.translate(scale.anchor[0], scale.anchor[1])
+            context.scale(scale.factor, scale.factor)
+            context.translate(-scale.anchor[0], -scale.anchor[1])
+        }
+        const isMoved = Boolean(offset || scale)
+        if (element.type === "import") {
+            drawImport(context, element, camera, pixelRatio, paperStyle, colors, isMoved ? null : visible)
+        } else if (element.type === "stroke") {
+            drawStroke(context, element, isMoved ? everywhere : visible, cache, paperStyle)
+        }
+        context.restore()
     }
     context.restore()
 }

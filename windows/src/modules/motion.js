@@ -15,6 +15,7 @@ export function applyDesignVariables(root) {
     for (const [name, value] of Object.entries(tokens.semantic)) {
         root.style.setProperty(`--semantic-${name.replaceAll("_", "-")}`, value)
     }
+    root.style.setProperty("--page-outside", tokens.page.outside)
     for (const name of Object.keys(tokens.motion.curves)) {
         root.style.setProperty(`--curve-${name.replaceAll("_", "-")}`, curve(name))
     }

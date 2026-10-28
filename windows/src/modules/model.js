@@ -27,6 +27,23 @@ export function makeIdentifier(prefix, milliseconds) {
     return `${prefix}_${characters}`
 }
 
+export function creationDate(identifier) {
+    const separator = identifier.indexOf("_")
+    const characters = identifier.slice(separator + 1, separator + 1 + identifierTimeCharacters)
+    if (separator < 0 || characters.length !== identifierTimeCharacters) {
+        return null
+    }
+    let milliseconds = 0
+    for (const character of characters) {
+        const value = identifierAlphabet.indexOf(character)
+        if (value < 0) {
+            return null
+        }
+        milliseconds = milliseconds * 32 + value
+    }
+    return new Date(milliseconds)
+}
+
 export function timestampNow() {
     return new Date().toISOString()
 }
@@ -204,13 +221,13 @@ function cleaned(points) {
     return rounded
 }
 
-export function smoothStroke(points, scale) {
+export function smoothStroke(points, scale, smoothing = tokens.ink.smoothing_points) {
     if (points.length < 3) {
         return cleaned(points)
     }
     const spacing = tokens.ink.sample_spacing_points / scale
     const even = evenlySpaced(points, spacing)
-    const smooth = gaussianSmoothed(even, tokens.ink.smoothing_points / tokens.ink.sample_spacing_points)
+    const smooth = gaussianSmoothed(even, smoothing / tokens.ink.sample_spacing_points)
     return cleaned(simplified(smooth, tokens.ink.simplify_points / scale))
 }
 
@@ -542,4 +559,123 @@ export function decodeFile(contents) {
         value.elements.sort(compareElements)
     }
     return { value, isReadOnly: false }
+}
+
+export function repositoryPathKind(path) {
+    const notebook = /^notebooks\/([^/]+)\/notebook\.json$/.exec(path)
+    if (notebook) {
+        return { kind: "notebook", notebookId: notebook[1] }
+    }
+    const page = /^notebooks\/([^/]+)\/pages\/([^/]+)\.json$/.exec(path)
+    if (page) {
+        return { kind: "page", notebookId: page[1], pageId: page[2] }
+    }
+    return null
+}
+
+export function polygonContains(polygon, point) {
+    if (polygon.length < 3) {
+        return false
+    }
+    let isInside = false
+    let previous = polygon[polygon.length - 1]
+    for (const current of polygon) {
+        if ((current[1] > point[1]) !== (previous[1] > point[1])) {
+            const crossingX = current[0] + ((point[1] - current[1]) / (previous[1] - current[1])) * (previous[0] - current[0])
+            if (point[0] < crossingX) {
+                isInside = !isInside
+            }
+        }
+        previous = current
+    }
+    return isInside
+}
+
+function segmentsOf(points, isClosed) {
+    const result = []
+    for (let index = 1; index < points.length; index += 1) {
+        result.push([points[index - 1], points[index]])
+    }
+    if (isClosed && points.length >= 2) {
+        result.push([points[points.length - 1], points[0]])
+    }
+    return result
+}
+
+function anySegmentCrosses(first, second) {
+    return first.some(([start, end]) => second.some(([otherStart, otherEnd]) => segmentsCross(start, end, otherStart, otherEnd)))
+}
+
+export function lassoTouchesLine(polygon, points) {
+    if (polygon.length < 3 || points.length === 0) {
+        return false
+    }
+    if (points.some((point) => polygonContains(polygon, point))) {
+        return true
+    }
+    return anySegmentCrosses(segmentsOf(points, false), segmentsOf(polygon, true))
+}
+
+export function lassoTouchesArea(polygon, corners) {
+    if (polygon.length < 3 || corners.length < 3) {
+        return false
+    }
+    if (corners.some((point) => polygonContains(polygon, point)) || polygon.some((point) => polygonContains(corners, point))) {
+        return true
+    }
+    return anySegmentCrosses(segmentsOf(corners, true), segmentsOf(polygon, true))
+}
+
+export function translatedElement(element, offset) {
+    const moved = { ...element }
+    if (element.points) {
+        moved.points = element.points.map((point) => roundedPoint([point[0] + offset[0], point[1] + offset[1]]))
+    }
+    if (element.box) {
+        moved.box = { ...element.box, x: element.box.x + offset[0], y: element.box.y + offset[1] }
+    }
+    if (element.placement) {
+        moved.placement = { ...element.placement, x: element.placement.x + offset[0], y: element.placement.y + offset[1] }
+    }
+    return moved
+}
+
+export function scaledElement(element, anchor, factor) {
+    const scale = (x, y) => [anchor[0] + (x - anchor[0]) * factor, anchor[1] + (y - anchor[1]) * factor]
+    const scaled = { ...element }
+    if (element.points) {
+        scaled.points = element.points.map((point) => roundedPoint(scale(point[0], point[1])))
+    }
+    if (Number.isFinite(element.width)) {
+        scaled.width = element.width * factor
+    }
+    if (Number.isFinite(element.font_size)) {
+        scaled.font_size = element.font_size * factor
+    }
+    if (element.box) {
+        const [x, y] = scale(element.box.x, element.box.y)
+        scaled.box = { ...element.box, x, y, width: element.box.width * factor }
+    }
+    if (element.placement) {
+        const [x, y] = scale(element.placement.x, element.placement.y)
+        scaled.placement = { ...element.placement, x, y, scale: (element.placement.scale ?? 1) * factor }
+    }
+    return scaled
+}
+
+export function pointsBounds(points) {
+    if (!points?.length) {
+        return null
+    }
+    let minimumX = Infinity
+    let minimumY = Infinity
+    let maximumX = -Infinity
+    let maximumY = -Infinity
+    for (const [x, y] of points) {
+        minimumX = Math.min(minimumX, x)
+        minimumY = Math.min(minimumY, y)
+        maximumX = Math.max(maximumX, x)
+        maximumY = Math.max(maximumY, y)
+    }
+    return { minimumX, minimumY, maximumX, maximumY }
 }
