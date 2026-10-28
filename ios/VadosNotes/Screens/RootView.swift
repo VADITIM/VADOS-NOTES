@@ -57,6 +57,7 @@ final class Navigator: ObservableObject {
     @Published private(set) var route: Route = .library
     @Published private(set) var sheet: SheetRequest?
     @Published private(set) var isSheetLeaving = false
+    @Published private(set) var isChromeLeaving = false
     private(set) var isReturningFromPage = false
     var openingTile: CGRect?
 
@@ -79,7 +80,19 @@ final class Navigator: ObservableObject {
     }
 
     func go(_ route: Route, from tile: CGRect? = nil) {
-        guard route != self.route else { return }
+        guard route != self.route, !isChromeLeaving else { return }
+        guard route.isPage != self.route.isPage else {
+            switchRoute(route, from: tile)
+            return
+        }
+        isChromeLeaving = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.chromeLeaveMilliseconds)) { [weak self] in
+            self?.switchRoute(route, from: tile)
+            self?.isChromeLeaving = false
+        }
+    }
+
+    private func switchRoute(_ route: Route, from tile: CGRect?) {
         openingTile = tile
         isReturningFromPage = self.route.isPage && !route.isPage
         withAnimation(Motion.powerTwoOut(Motion.sectionEnterMilliseconds)) {
@@ -245,7 +258,7 @@ struct SettingsButton: View {
     @EnvironmentObject private var navigator: Navigator
 
     var body: some View {
-        RoundIconButton(glyph: "settings", action: { navigator.show(.settings) })
+        RoundIconButton(glyph: "gear", action: { navigator.show(.settings) })
     }
 }
 
@@ -257,28 +270,31 @@ struct TopBar<Trailing: View>: View {
     var onBack: (() -> Void)?
     var onRename: ((String) -> Void)?
     var isBare = false
+    var popsTrailing = true
     @ViewBuilder var trailing: () -> Trailing
 
     @Environment(\.screenInsets) private var insets
 
     private static var bareTitleSize: CGFloat { 15 }
-    private static var bareTopGap: CGFloat { 6 }
+    private static var topGap: CGFloat { 6 }
+    private static var titlesDrop: CGFloat { 10 }
 
     var body: some View {
-        HStack(alignment: isBare ? .top : .center, spacing: 14) {
+        HStack(alignment: .top, spacing: 14) {
             Group {
                 if isBare {
                     bareTitles
                 } else {
                     titles
+                        .modifier(ChromePop(isShown: chromeShown ?? true, order: 0))
+                        .padding(.top, Self.titlesDrop)
                 }
             }
-                .modifier(ChromePop(isShown: chromeShown ?? true, order: 0))
                 .chromeFrame("title")
             Spacer(minLength: 12)
             HStack(spacing: 14) {
                 trailing()
-                    .modifier(ChromePop(isShown: chromeShown ?? true, order: 1))
+                    .modifier(ChromePop(isShown: popsTrailing ? chromeShown ?? true : true, order: 1))
                 if let onBack {
                     HoldableButton(action: onBack) {
                         GlyphView(name: "back", color: Palette.navigation)
@@ -296,24 +312,31 @@ struct TopBar<Trailing: View>: View {
             .chromeFrame("controls")
         }
         .padding(.horizontal, 24)
-        .padding(.top, (isBare ? Self.bareTopGap : 16) + insets.top)
+        .padding(.top, Self.topGap + insets.top)
         .background(GeometryReader { proxy in Color.clear.preference(key: TopBarHeightKey.self, value: proxy.frame(in: .global).maxY) })
     }
 
     private var bareTitles: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        let isShown = chromeShown ?? true
+        let stagger = Motion.chromeStaggerMilliseconds
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
             if let label {
                 MicroLabel(text: label)
+                    .labelReveal(isShown)
             }
-            if let onRename {
-                InlineTitle(title: title, size: Self.bareTitleSize, onRename: onRename)
-            } else {
-                SweepTitle(text: title, size: Self.bareTitleSize)
+            Group {
+                if let onRename {
+                    InlineTitle(title: title, size: Self.bareTitleSize, isSweeping: false, onRename: onRename)
+                } else {
+                    SweepTitle(text: title, size: Self.bareTitleSize, isSweeping: false)
+                }
             }
+            .labelReveal(isShown, delay: stagger)
             if let detail {
                 Text(detail)
                     .font(Typography.mono(10))
                     .foregroundColor(Palette.textMuted)
+                    .labelReveal(isShown, delay: stagger * 2)
             }
         }
     }
@@ -347,6 +370,7 @@ struct TopBar<Trailing: View>: View {
 struct InlineTitle: View {
     let title: String
     var size: CGFloat = 34
+    var isSweeping = true
     let onRename: (String) -> Void
 
     @State private var isEditing = false
@@ -373,7 +397,7 @@ struct InlineTitle: View {
                 }
                 .onAppear { isFocused = true }
         } else {
-            SweepTitle(text: title, size: size)
+            SweepTitle(text: title, size: size, isSweeping: isSweeping)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     text = title
@@ -385,6 +409,7 @@ struct InlineTitle: View {
 
 struct SearchField: View {
     @Binding var text: String
+    var isShown = true
     @FocusState private var isFocused: Bool
     @StateObject private var motion = PillMotion()
     @State private var typedCount = 0
@@ -423,7 +448,19 @@ struct SearchField: View {
         .allowsHitTesting(motion.areElementsShown)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: text.isEmpty)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isFocused)
-        .onAppear { motion.enter() }
+        .onAppear {
+            if isShown {
+                motion.enter()
+            }
+        }
+        .onChange(of: isShown) { _, shown in
+            if shown {
+                motion.enter()
+            } else {
+                isFocused = false
+                motion.leave()
+            }
+        }
         .onChange(of: motion.areElementsShown) { _, shown in
             guard shown, typedCount == 0 else { return }
             Task { @MainActor in

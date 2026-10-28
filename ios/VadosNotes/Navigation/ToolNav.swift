@@ -76,6 +76,10 @@ enum NavMetrics {
     static let sizingSlop: CGFloat = 6
     static let navSizingSlop: CGFloat = 22
     static let navSizingDominance: CGFloat = 2
+    static let shadowReach: CGFloat = 32
+    static let edgeStripDepth: CGFloat = 28
+    static let edgeHandleSize = CGSize(width: 36, height: 4)
+    static let pillPanelPrefix = "variations-"
     static let layerSpace = "navLayer"
 
     static func itemSize(_ orientation: NavOrientation) -> CGSize {
@@ -143,11 +147,16 @@ struct ToolNav<PanelContent: View>: View {
     let isShown: Bool
     let onReorderTools: ([String]) -> Void
     let onReorderSubNavigation: ([String]) -> Void
-    @ViewBuilder var panel: (NavOrientation) -> PanelContent
+    @ViewBuilder var panel: (String, NavOrientation) -> PanelContent
 
     @Namespace private var washSpace
     @StateObject private var navigationMotion = PillMotion()
     @StateObject private var subNavigationMotion = PillMotion()
+    @StateObject private var panelMotion = PillMotion()
+    @State private var shownPillPanelKey: String?
+    @State private var edgeOffset: CGFloat = 0
+    @State private var edgeDragStart: CGFloat?
+    @State private var isEdgeHidden = false
     @State private var orientation: NavOrientation = Preferences.shared.navPlacement?.orientation == NavOrientation.vertical.rawValue ? .vertical : .horizontal
     @State private var placement: NavPlacement? = Preferences.shared.navPlacement
     @State private var navSize: CGSize = .zero
@@ -206,6 +215,16 @@ struct ToolNav<PanelContent: View>: View {
         subNavKey != nil && isShown
     }
 
+    private var wantedPillPanelKey: String? {
+        guard isSubNavigationWanted, let panelKey, panelKey.hasPrefix(NavMetrics.pillPanelPrefix) else { return nil }
+        return panelKey
+    }
+
+    private var wheelPanelKey: String? {
+        guard isSubNavigationWanted, let panelKey, !panelKey.hasPrefix(NavMetrics.pillPanelPrefix) else { return nil }
+        return panelKey
+    }
+
     private var sizingItem: NavItem? {
         guard let sizingDrag else { return nil }
         return groups.joined().first { $0.id == sizingDrag.id }
@@ -235,6 +254,8 @@ struct ToolNav<PanelContent: View>: View {
             let center = navCenter(in: layer, blocked: blocked)
             let navigationRect = rect(center: center, size: navSize)
             let side = outwardSide(center: center, layer: layer)
+            let edge = edgeSide(of: side)
+            let hiddenReach = hiddenDistance(center: center, layer: layer, edge: edge)
             let subNavCenter = placeBeside(navigationRect, size: subNavSize, side: side, layer: layer, blocked: blocked + [navigationRect])
             let subNavRect = rect(center: subNavCenter, size: subNavSize)
             ZStack(alignment: .topLeading) {
@@ -245,17 +266,29 @@ struct ToolNav<PanelContent: View>: View {
                 }
                 .position(subNavCenter)
                 ZStack {
-                    if panelKey != nil, isSubNavigationWanted {
-                        panel(orientation)
+                    if let key = wheelPanelKey {
+                        panel(key, orientation)
                             .fixedSize()
                             .background(GeometryReader { panelProxy in Color.clear.preference(key: PanelSizeKey.self, value: panelProxy.size) })
-                            .id(panelKey)
+                            .id(key)
                             .transition(.popTogether)
+                    }
+                    if let key = shownPillPanelKey {
+                        pillPanelBody(key)
                     }
                 }
                 .position(placeBeside(panelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
                 navBody(layer: layer, center: center)
+                    .simultaneousGesture(edgeHideGesture(edge: edge, limit: hiddenReach))
                     .position(center)
+                    .offset(edgeVector(edge, edgeOffset))
+                ZStack {
+                    if isEdgeHidden {
+                        edgeStrip(edge: edge, limit: hiddenReach)
+                            .transition(.popTogether)
+                    }
+                }
+                .position(edgeStripCenter(center: center, layer: layer, edge: edge))
             }
             .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: center)
             .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: subNavCenter)
@@ -264,7 +297,11 @@ struct ToolNav<PanelContent: View>: View {
             .onPreferenceChange(SubNavSizeKey.self) { subNavSize = $0 }
             .onPreferenceChange(PanelSizeKey.self) { panelSize = $0 }
             .onPreferenceChange(GroupExtentKey.self) { groupSizes = $0 }
-            .onPreferenceChange(PanelAnchorKey.self) { panelAnchor = $0 }
+            .onPreferenceChange(PanelAnchorKey.self) { anchor in
+                if anchor != nil || shownPillPanelKey == nil {
+                    panelAnchor = anchor
+                }
+            }
         }
         .onAppear {
             if isShown {
@@ -293,6 +330,163 @@ struct ToolNav<PanelContent: View>: View {
                 shownSubNavigationKey = key
             }
         }
+        .onChange(of: wantedPillPanelKey) { _, key in
+            if let key {
+                let isEntering = shownPillPanelKey == nil || !panelMotion.areElementsShown
+                shownPillPanelKey = key
+                if isEntering {
+                    panelMotion.enter()
+                }
+            } else if shownPillPanelKey != nil {
+                panelMotion.leave {
+                    shownPillPanelKey = nil
+                }
+            }
+        }
+        .onChange(of: shownSubNavigationKey) { _, key in
+            if key == nil, isEdgeHidden {
+                showFromEdge()
+            }
+        }
+    }
+
+    private func pillPanelBody(_ key: String) -> some View {
+        panel(key, orientation)
+            .environment(\.isElementRevealed, panelMotion.areElementsShown)
+            .padding(NavMetrics.padding)
+            .fixedSize()
+            .background(GeometryReader { panelProxy in Color.clear.preference(key: PanelSizeKey.self, value: panelProxy.size) })
+            .background(PillShell(scale: panelMotion.shellScale, spread: panelMotion.shellSpread, isWide: orientation == .horizontal))
+            .allowsHitTesting(panelMotion.areElementsShown)
+    }
+
+    private func edgeSide(of outward: NavSide) -> NavSide {
+        switch outward {
+        case .up: return .down
+        case .down: return .up
+        case .left: return .right
+        case .right: return .left
+        }
+    }
+
+    private func edgeVector(_ edge: NavSide, _ distance: CGFloat) -> CGSize {
+        switch edge {
+        case .up: return CGSize(width: 0, height: -distance)
+        case .down: return CGSize(width: 0, height: distance)
+        case .left: return CGSize(width: -distance, height: 0)
+        case .right: return CGSize(width: distance, height: 0)
+        }
+    }
+
+    private func outwardTravel(_ translation: CGSize, _ edge: NavSide) -> (outward: CGFloat, across: CGFloat) {
+        switch edge {
+        case .up: return (-translation.height, translation.width)
+        case .down: return (translation.height, translation.width)
+        case .left: return (-translation.width, translation.height)
+        case .right: return (translation.width, translation.height)
+        }
+    }
+
+    private func crossExtent(_ edge: NavSide) -> CGFloat {
+        edge == .up || edge == .down ? navSize.height : navSize.width
+    }
+
+    private func hiddenDistance(center: CGPoint, layer: CGSize, edge: NavSide) -> CGFloat {
+        switch edge {
+        case .up: return center.y + navSize.height / 2 + NavMetrics.shadowReach
+        case .down: return layer.height - center.y + navSize.height / 2 + NavMetrics.shadowReach
+        case .left: return center.x + navSize.width / 2 + NavMetrics.shadowReach
+        case .right: return layer.width - center.x + navSize.width / 2 + NavMetrics.shadowReach
+        }
+    }
+
+    private func rubberBanded(_ distance: CGFloat, limit: CGFloat) -> CGFloat {
+        let rubber = CGFloat(Motion.shares.navEdgeRubber)
+        if distance < 0 {
+            return distance * rubber
+        }
+        if distance > limit {
+            return limit + (distance - limit) * rubber
+        }
+        return distance
+    }
+
+    private func edgeHideGesture(edge: NavSide, limit: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+            .onChanged { value in
+                guard sizingDrag == nil, toolReordering == nil, carryPoint == nil, !isEdgeHidden else { return }
+                let travel = outwardTravel(value.translation, edge)
+                if edgeDragStart == nil {
+                    guard shownSubNavigationKey != nil, abs(travel.outward) > abs(travel.across) * NavMetrics.navSizingDominance else { return }
+                    swallowUntil = .distantFuture
+                    Haptics.tick()
+                    edgeDragStart = travel.outward
+                }
+                guard let start = edgeDragStart else { return }
+                edgeOffset = rubberBanded(travel.outward - start, limit: limit)
+            }
+            .onEnded { _ in
+                guard edgeDragStart != nil else { return }
+                edgeDragStart = nil
+                swallowUntil = Date().addingTimeInterval(0.6)
+                if edgeOffset > crossExtent(edge) * CGFloat(Motion.shares.navEdgeHide) {
+                    Haptics.landed()
+                    withAnimation(Motion.powerTwoIn(Motion.navigationEdgeHideMilliseconds * 2 / 3)) {
+                        edgeOffset = limit
+                        isEdgeHidden = true
+                    }
+                } else {
+                    withAnimation(Motion.backOut(Motion.navigationEdgeHideMilliseconds)) {
+                        edgeOffset = 0
+                    }
+                }
+            }
+    }
+
+    private func showFromEdge() {
+        Haptics.landed()
+        withAnimation(Motion.backOut(Motion.navigationEdgeHideMilliseconds)) {
+            edgeOffset = 0
+            isEdgeHidden = false
+        }
+    }
+
+    private func edgeStripCenter(center: CGPoint, layer: CGSize, edge: NavSide) -> CGPoint {
+        let half = NavMetrics.edgeStripDepth / 2
+        switch edge {
+        case .up: return CGPoint(x: center.x, y: half)
+        case .down: return CGPoint(x: center.x, y: layer.height - half)
+        case .left: return CGPoint(x: half, y: center.y)
+        case .right: return CGPoint(x: layer.width - half, y: center.y)
+        }
+    }
+
+    private func edgeStrip(edge: NavSide, limit: CGFloat) -> some View {
+        let isAcross = edge == .up || edge == .down
+        let handle = NavMetrics.edgeHandleSize
+        return Capsule()
+            .fill(Palette.borderHover)
+            .frame(width: isAcross ? handle.width : handle.height, height: isAcross ? handle.height : handle.width)
+            .frame(width: isAcross ? max(navSize.width, handle.width) : NavMetrics.edgeStripDepth, height: isAcross ? NavMetrics.edgeStripDepth : max(navSize.height, handle.width))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 4, coordinateSpace: .named(NavMetrics.layerSpace))
+                    .onChanged { value in
+                        let inward = -outwardTravel(value.translation, edge).outward
+                        edgeOffset = limit - rubberBanded(inward, limit: limit)
+                    }
+                    .onEnded { _ in
+                        if limit - edgeOffset > crossExtent(edge) * CGFloat(Motion.shares.navEdgeHide) {
+                            showFromEdge()
+                        } else {
+                            withAnimation(Motion.powerTwoIn(Motion.navigationEdgeHideMilliseconds * 2 / 3)) {
+                                edgeOffset = limit
+                            }
+                        }
+                    }
+            )
+            .accessibilityLabel("Show the nav")
+            .accessibilityAction { showFromEdge() }
     }
 
     private func openSubNavigation() {
@@ -355,8 +549,7 @@ struct ToolNav<PanelContent: View>: View {
 
     private func grip(layer: CGSize, center: CGPoint) -> some View {
         let size = NavMetrics.itemSize(orientation)
-        return GlyphView(name: "grip", color: carryPoint == nil ? Palette.textFaint : Palette.accent, size: NavMetrics.glyphSize * 0.7)
-            .rotationEffect(orientation == .horizontal ? .zero : .degrees(90))
+        return Color.clear
             .frame(width: orientation == .horizontal ? NavMetrics.gripLength : size.width, height: orientation == .horizontal ? size.height : NavMetrics.gripLength)
             .contentShape(Rectangle())
             .gesture(carryGesture(layer: layer, center: center))

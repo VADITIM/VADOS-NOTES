@@ -47,8 +47,11 @@ struct PageScreen: View {
     @State private var subNavKey: String?
     @State private var lastSubNavKey: String?
     @State private var panelKey: String?
-    @State private var variationSource: String?
-    @State private var isDeleteArmed = false
+    @State private var variationColors: [String] = []
+    @State private var variationMain: String?
+    @State private var variationSlot: String?
+    @State private var eraserReturn: ActiveTool?
+    @State private var previousTool: ActiveTool?
     @State private var textFocusRequest = 0
     @State private var textDragOrigin: TextBox?
     @State private var flightTile: CGRect?
@@ -63,7 +66,6 @@ struct PageScreen: View {
     private static let minimumTextWidth = 20.0
     private static let handleSize = CGSize(width: 8, height: 36)
     private static let editorInset = EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22)
-    private static let armedSeconds = 2.4
     private static let equalWidthTravel: CGFloat = 240
     private static let createdFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -131,6 +133,14 @@ struct PageScreen: View {
             }
         }
         .onAppear(perform: startFlight)
+        .onChange(of: navigator.isChromeLeaving) { _, leaving in
+            guard leaving else { return }
+            isChromeShown = false
+            library.finishText()
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                selectionMenu = nil
+            }
+        }
     }
 
     private func startFlight() {
@@ -193,6 +203,7 @@ struct PageScreen: View {
                 showsGuides: preferences.showsGuides,
                 showsDividers: preferences.showsDividers,
                 showsBackdrop: preferences.showsAsciiBackground,
+                inkSmoothing: preferences.inkSmoothing,
                 hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
                 isReadOnly: library.isReadOnly(pageId),
                 topInset: topInset,
@@ -300,13 +311,68 @@ struct PageScreen: View {
                     selectionMenu = request
                 }
             },
-            onInput: { library.noteInput(on: pageId) },
+            onInput: {
+                library.noteInput(on: pageId)
+                closePanel()
+            },
             onHold: { point in showPageMenu(at: point) },
             onHoldMove: { point in menu.drag(to: point) },
             onHoldEnd: { point in menu.release(at: point) },
             onUndo: { library.undo(pageId) },
-            onRedo: { library.redo(pageId) }
+            onRedo: { library.redo(pageId) },
+            onPencilTap: pencilTapped,
+            onEraseLift: returnFromEraser
         )
+    }
+
+    private func closePanel() {
+        guard panelKey != nil else { return }
+        withAnimation(Motion.powerTwoOut(Motion.overlayLeaveMilliseconds)) {
+            panelKey = nil
+        }
+    }
+
+    private func pencilTapped() {
+        switch UIPencilInteraction.preferredTapAction {
+        case .switchEraser:
+            if let eraserReturn {
+                self.eraserReturn = nil
+                switchTool(eraserReturn)
+            } else if activeTool != .eraser {
+                eraserReturn = activeTool
+                switchTool(.eraser)
+            } else if let previousTool {
+                switchTool(previousTool)
+            }
+        case .switchPrevious:
+            if let previousTool {
+                switchTool(previousTool)
+            }
+        default:
+            break
+        }
+    }
+
+    private func returnFromEraser() {
+        guard let eraserReturn else { return }
+        self.eraserReturn = nil
+        switchTool(eraserReturn)
+    }
+
+    private func switchTool(_ tool: ActiveTool) {
+        guard tool != activeTool else { return }
+        previousTool = activeTool
+        Haptics.tick()
+        preferences.setActiveTool(tool)
+        guard subNavKey != nil else { return }
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            panelKey = nil
+            switch tool {
+            case .lasso: subNavKey = nil
+            case .text: subNavKey = "text-size"
+            default: subNavKey = tool.rawValue
+            }
+        }
     }
 
     private func closeSubNav() {
@@ -369,7 +435,6 @@ struct PageScreen: View {
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             panelKey = nil
             subNavKey = subNavKey == key ? nil : key
-            isDeleteArmed = false
         }
     }
 
@@ -383,28 +448,35 @@ struct PageScreen: View {
         panelKey?.hasPrefix("wheel-") ?? false
     }
 
-    private static func variationsKey(_ tool: Tool, _ color: String) -> String {
-        "variations-\(tool.rawValue)-\(color.uppercased())"
+    private static func variationsKey(_ tool: Tool) -> String {
+        NavMetrics.pillPanelPrefix + tool.rawValue
+    }
+
+    private func isVariationAnchor(_ color: String, for tool: Tool) -> Bool {
+        panelKey == Self.variationsKey(tool) && variationSlot == color.uppercased()
     }
 
     private func chooseColor(_ color: String, for tool: Tool) {
         preferences.setColor(color, for: tool)
-        let key = Self.variationsKey(tool, color)
+        let normalized = color.uppercased()
+        guard !isVariationAnchor(normalized, for: tool) else {
+            closePanel()
+            return
+        }
+        variationMain = normalized
+        variationSlot = normalized
+        variationColors = ColorVariations.around(normalized)
         withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
-            variationSource = color
-            panelKey = panelKey == key ? nil : key
+            panelKey = Self.variationsKey(tool)
         }
     }
 
-    private func pickVariation(_ variation: String, replacing source: String, for tool: Tool) {
-        if variation != source.uppercased() {
-            Haptics.tick()
-            preferences.replaceColorPreset(source, with: variation, for: tool)
-            preferences.setColor(variation, for: tool)
-        }
-        withAnimation(Motion.powerTwoOut(Motion.overlayLeaveMilliseconds)) {
-            panelKey = nil
-        }
+    private func pickVariation(_ variation: String, for tool: Tool) {
+        guard let slot = variationSlot, variation != slot, !preferences.colorPresets(tool).contains(variation) else { return }
+        Haptics.tick()
+        preferences.replaceColorPreset(slot, with: variation, for: tool)
+        preferences.setColor(variation, for: tool)
+        variationSlot = variation
     }
 
     private func displayColor(_ tool: Tool) -> String {
@@ -450,8 +522,7 @@ struct PageScreen: View {
                 return NavItem(id: "lasso", glyph: "lasso", label: "Lasso", tint: Palette.accent, action: { _ in press(.lasso) })
             }
         }
-        let more = [NavItem(id: "page-menu", glyph: "more", label: "Page menu", isTinted: subNavKey == "page-menu", action: { _ in toggleSubNav("page-menu") })]
-        return [tools, more]
+        return [tools]
     }
 
     private func inkSizing(_ tool: Tool) -> NavSizing {
@@ -493,8 +564,10 @@ struct PageScreen: View {
             toggleSubNav(tool == .text ? "text-size" : tool.rawValue)
             return
         }
+        previousTool = activeTool
+        eraserReturn = nil
         preferences.setActiveTool(tool)
-        if subNavKey != nil, subNavKey != "page-menu", tool != .lasso {
+        if subNavKey != nil, tool != .lasso {
             withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                 panelKey = nil
                 subNavKey = tool == .text ? "text-size" : tool.rawValue
@@ -521,15 +594,15 @@ struct PageScreen: View {
                     preferences.setSubNavigationOrder(order, for: subNavKey)
                 }
             },
-            panel: { orientation in panel(orientation) }
+            panel: { key, orientation in panel(key, orientation) }
         )
     }
 
     @ViewBuilder
-    private func panel(_ orientation: NavOrientation) -> some View {
-        if let key = subNavKey, let tool = Tool(rawValue: key), let source = variationSource, panelKey == Self.variationsKey(tool, source) {
-            VariationPanel(source: source, orientation: orientation, display: { Color(hex: Palette.inkOnPaper($0, style: preferences.paperStyle)) }) { variation in
-                pickVariation(variation, replacing: source, for: tool)
+    private func panel(_ shownKey: String, _ orientation: NavOrientation) -> some View {
+        if shownKey.hasPrefix(NavMetrics.pillPanelPrefix), let tool = Tool(rawValue: String(shownKey.dropFirst(NavMetrics.pillPanelPrefix.count))), let main = variationMain {
+            VariationPanel(colors: variationColors, main: main, selected: variationSlot ?? main, orientation: orientation, display: { Color(hex: Palette.inkOnPaper($0, style: preferences.paperStyle)) }) { variation in
+                pickVariation(variation, for: tool)
             }
         } else if let key = subNavKey {
             switch key {
@@ -584,8 +657,6 @@ struct PageScreen: View {
             return [textSizeGroup()]
         case "text-color":
             return textColorGroups()
-        case "page-menu":
-            return pageGroups()
         default:
             return []
         }
@@ -618,8 +689,8 @@ struct PageScreen: View {
             group("\(tool.rawValue)-colours") { orientation in
                 let layout = stack(orientation)
                 layout {
-                    ForEach(colors, id: \.self) { color in
-                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: panelKey == Self.variationsKey(tool, color), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
+                    ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
+                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: isVariationAnchor(color, for: tool), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
                             .transition(.elementLeave)
                     }
                     NavIconButton(glyph: "plus", isEnabled: !colors.contains(current), orientation: orientation) {
@@ -683,60 +754,6 @@ struct PageScreen: View {
                 WheelButton(isOpen: isWheelOpen, orientation: orientation, action: togglePanel)
             },
         ]
-    }
-
-    private func pageGroups() -> [SubNavigationGroup] {
-        let page = library.page(pageId)
-        let isReadOnly = library.isReadOnly(pageId)
-        let showsGuides = preferences.showsGuides
-        let showsDividers = preferences.showsDividers
-        return [
-            group("page-file") { orientation in
-                let layout = stack(orientation)
-                layout {
-                    NavIconButton(glyph: "trash", tint: Palette.destructive, isSelected: isDeleteArmed, isEnabled: page != nil, orientation: orientation) {
-                        deletePressed()
-                    }
-                    NavIconButton(glyph: "import", tint: Palette.importAsset, isEnabled: false, orientation: orientation) {}
-                }
-            },
-            group("page-extent") { orientation in
-                let layout = stack(orientation)
-                layout {
-                    NavIconButton(glyph: "add_column", tint: Palette.create, isEnabled: page != nil && !isReadOnly, orientation: orientation) {
-                        library.expand(pageId, columns: true)
-                    }
-                    NavIconButton(glyph: "add_row", tint: Palette.create, isEnabled: page != nil && !isReadOnly, orientation: orientation) {
-                        library.expand(pageId, columns: false)
-                    }
-                }
-            },
-            group("page-view") { orientation in
-                let layout = stack(orientation)
-                layout {
-                    NavIconButton(glyph: "guides", tint: Palette.view, isSelected: showsGuides, orientation: orientation) {
-                        preferences.setShowsGuides(!showsGuides)
-                    }
-                    NavIconButton(glyph: "cell_lines", tint: Palette.view, isSelected: showsDividers, isEnabled: (page?.extent.cellCount ?? 1) > 1, orientation: orientation) {
-                        preferences.setShowsDividers(!showsDividers)
-                    }
-                }
-            },
-        ]
-    }
-
-    private func deletePressed() {
-        guard isDeleteArmed else {
-            Haptics.tick()
-            isDeleteArmed = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.armedSeconds) {
-                isDeleteArmed = false
-            }
-            return
-        }
-        Haptics.landed()
-        library.deletePage(pageId)
-        navigator.go(.notebook(notebookId))
     }
 
     private func showPageMenu(at point: CGPoint) {

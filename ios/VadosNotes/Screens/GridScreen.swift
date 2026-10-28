@@ -54,6 +54,7 @@ struct GridScreen: View {
     @State private var arrangedFolders: [String]?
     @State private var arrangedNotes: [String]?
     @State private var openGroups: Set<String> = []
+    @State private var isLeaving = false
 
     private let folderColumns = [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 18, alignment: .top)]
     private let noteColumns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 18, alignment: .top)]
@@ -119,6 +120,11 @@ struct GridScreen: View {
             .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
         }
         .onAppear(perform: leaveIfMissing)
+        .onChange(of: navigator.isChromeLeaving) { _, leaving in
+            if leaving {
+                isLeaving = true
+            }
+        }
         .onChange(of: notebookId) { _, _ in
             drag = nil
             arrangedFolders = nil
@@ -156,6 +162,7 @@ struct GridScreen: View {
         TopBar(
             title: title,
             label: label,
+            chromeShown: !isLeaving,
             onBack: notebookId == nil ? nil : goBack,
             onRename: notebookId.map { folderId -> (String) -> Void in
                 { title in
@@ -163,9 +170,10 @@ struct GridScreen: View {
                     guard !trimmed.isEmpty else { return }
                     library.updateNotebook(folderId) { $0.title = title }
                 }
-            }
+            },
+            popsTrailing: false
         ) {
-            SearchField(text: $query)
+            SearchField(text: $query, isShown: !isLeaving)
         }
     }
 
@@ -221,20 +229,18 @@ struct GridScreen: View {
 
     @ViewBuilder
     private func notesSection(_ notebookId: String) -> some View {
-        let noteAspect = PaperGeometry.cellWidth / PaperGeometry.cellHeight
         heading("Notes")
             .padding(.top, 12)
         groupRows(isFolders: false)
         MasonryLayout(minimumColumnWidth: Self.noteColumnWidth, spacing: 18, unitHeight: Self.noteUnitHeight) {
             VStack(spacing: 18) {
-                AddTile(glyph: "note", title: "Add note", aspect: noteAspect, isFolder: false) {
+                CompactAddTile(glyph: "note", title: "Add note") {
                     navigator.show(.newNote(notebookId: notebookId))
                 }
-                AddTile(glyph: "folder", title: "Add folder", aspect: noteAspect, isFolder: false) {
+                CompactAddTile(glyph: "folder", title: "Add folder") {
                     navigator.show(.newFolder(parentId: notebookId))
                 }
             }
-            .layoutValue(key: MasonryRows.self, value: 2)
             ForEach(Array(notes.enumerated()), id: \.element.id) { index, page in
                 noteTile(page, rank: index + 1, isDraggable: true)
                     .layoutValue(key: MasonrySpan.self, value: page.extent.columns)
@@ -247,7 +253,7 @@ struct GridScreen: View {
     }
 
     static func noteUnitHeight(_ width: CGFloat) -> CGFloat {
-        (width - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + 18
+        (width - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + TileIcons.note
     }
 
     @ViewBuilder
@@ -614,7 +620,7 @@ struct AddTile: View {
             VStack(alignment: .leading, spacing: isFolder ? 12 : 10) {
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                    .overlay(GlyphView(name: glyph, color: Palette.create, size: 34))
+                    .overlay(GlyphView(name: glyph, color: Palette.create, size: TileIcons.folder))
                     .aspectRatio(aspect, contentMode: .fit)
                 HStack(spacing: 8) {
                     GlyphView(name: "plus", color: Palette.create, size: 16)
@@ -634,6 +640,40 @@ struct AddTile: View {
     }
 }
 
+enum TileIcons {
+    static let folder: CGFloat = 64
+    static let add: CGFloat = 40
+    static let note: CGFloat = 22
+}
+
+struct CompactAddTile: View {
+    let glyph: String
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                GlyphView(name: glyph, color: Palette.create, size: TileIcons.add)
+                HStack(spacing: 8) {
+                    GlyphView(name: "plus", color: Palette.create, size: 16)
+                    Text(title)
+                        .font(Typography.monoBold(13))
+                        .tracking(1)
+                        .foregroundColor(Palette.create)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Squircle.tile.fill(Palette.ground))
+            .overlay(Squircle.tile.stroke(Palette.borderControl, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+            .contentShape(Squircle.tile)
+        }
+        .buttonStyle(PressableStyle())
+        .modifier(Appear(rank: 0))
+    }
+}
+
 struct FolderTile: View {
     let notebook: Notebook
     let caption: String
@@ -646,7 +686,7 @@ struct FolderTile: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Palette.sunkenDeep)
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(color.opacity(0.35), lineWidth: 1))
-                .overlay(GlyphView(name: look.icon, color: color, size: 44))
+                .overlay(GlyphView(name: look.icon, color: color, size: TileIcons.folder))
                 .aspectRatio(1.25, contentMode: .fit)
             VStack(alignment: .leading, spacing: 6) {
                 Text(notebook.title)
@@ -674,7 +714,7 @@ struct NoteTile: View {
         let look = Looks.note(page)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                GlyphView(name: look.icon, color: Color(hex: look.color), size: 16)
+                GlyphView(name: look.icon, color: Color(hex: look.color), size: TileIcons.note)
                 Text(title)
                     .font(Typography.mono(12))
                     .foregroundColor(Palette.textBright)
@@ -684,7 +724,7 @@ struct NoteTile: View {
                     MicroLabel(text: caption)
                 }
             }
-            .frame(minHeight: 18)
+            .frame(minHeight: TileIcons.note)
             PageThumbnail(page: page)
                 .aspectRatio(CGFloat(PaperGeometry.width(of: page.extent) / PaperGeometry.height(of: page.extent)), contentMode: .fit)
                 .clipShape(Squircle(radius: 6))

@@ -206,7 +206,22 @@ final class Library: ObservableObject {
         return page(header.id) ?? Page(header: header)
     }
 
-    private func importElement(asset: String, index: Int, size: [Double], now: Date) -> Element {
+    func appendDocument(_ document: ImportedDocument, to pageId: String) {
+        guard let page = page(pageId), !isReadOnly(pageId), !document.pages.isEmpty else { return }
+        let now = store.timestamp()
+        let firstRow = page.extent.rows
+        let firstOrder = (page.elements.map(\.order).max() ?? -1) + 1
+        updatePage(pageId) { header in
+            header.extent = Extent(columns: header.extent.columns, rows: firstRow + document.pages.count)
+        }
+        for (index, size) in document.pages.enumerated() {
+            var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index)
+            element.order = firstOrder + index
+            apply(.element(pageId: pageId, element: element), page: pageId)
+        }
+    }
+
+    private func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil) -> Element {
         let width = size[0]
         let height = size[1]
         let cellWidth = PaperGeometry.cellWidth
@@ -224,7 +239,7 @@ final class Library: ObservableObject {
             asset: asset,
             sourcePage: index,
             sourceSizeMillimetres: [width, height],
-            placement: Placement(x: rounded((cellWidth - width * scale) / 2), y: rounded(Double(index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
+            placement: Placement(x: rounded((cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight +(cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
             fit: isA4 ? .original : .fitCell,
             updated: now,
             device: device

@@ -187,3 +187,40 @@ Every motion value below lives in `shared/tokens.json`; the reference is VADOS G
 - **ASCII motion can skip the canvas.** With Moving on, Settings offers Both / Exclude canvas. Exclude canvas holds the art still while a note is open and lets it drift on the folder screens.
 - **Imported PDFs are cheaper to draw.** Imported pages outside the visible part of the paper are skipped. The rest draw at medium interpolation instead of high. The dark-paper version of a white page is made on the render queue instead of on the main thread during a draw. The image cache is capped at 192 MB instead of 36 entries, since a single entry could reach ~47 MB.
 - **One finger pans like two.** A one-finger pan now glides on release like the two-finger pan. Its release velocity comes from the last 80 ms of movement, so a finger that stopped before lifting does not glide.
+
+#### Seventh behaviour pass (2026-10-28)
+
+- **Panels close on canvas input.** Any touch that reaches the canvas (pen stroke, finger tap, pan, pinch) closes the colour wheel and the variations pill through the canvas's `onInput`; the stroke still draws.
+- **Variations are fixed per opening.** Tapping a swatch makes the set once (`ColorVariations.around`) from that colour, the *main* colour, and keeps it while the pill is open. A pick replaces the preset that currently holds the slot and moves the ring to it; the set is not remade. The main colour carries a 12 × 2 pt line under it (horizontal pill) or on its trailing side (vertical pill). Tapping the slot's swatch again closes the pill. A pick equal to another preset is ignored, since presets are unique. Nav colour presets are keyed by position, so a replaced colour changes in place instead of popping out and back in.
+- **The variations pill uses `PillMotion`.** It is a `PillShell` with revealed elements, kept alive by `ToolNav` until its leave has played (`shownPillPanelKey`). Keys starting `variations-` take this path; the wheel keeps its pop. While the pill leaves, it holds the last reported swatch frame as its anchor.
+- **No grip glyphs.** The two "=" grips are gone. Their hold-and-drag zones stay at both ends of the nav, invisible, so carrying the nav works as before. **Assumption:** keeping the zones is better than moving the carry to a gesture the user would have to learn.
+- **Top bar controls share one height.** The bar is top-aligned on both screens. Back and settings sit 6 pt below the status bar, and the folder title pill keeps its old place by dropping 10 pt on its own.
+- **Screen changes play the chrome's leave first.** `Navigator.go` between the folder grid and a note sets `isChromeLeaving`, waits `chromeLeaveMilliseconds` (leave element + ¾ of leave spread + leave pop = 360 ms, the nav's full leave), then switches. The grid's search pill and title play their leaves. The note's title, nav, secondary nav, panels and selection nav play theirs. Each screen latches its leaving state, so it does not come back while its removal fades. **Assumption:** the chrome leaves *before* the canvas enters rather than overlapping it, because a removed view's own animations are not reliable during its removal.
+- **Canvas title labels reveal.** Folder, note name and date are each a label reveal (`LabelReveal`: the accent bar grows over `sweep_grow`, the text appears under it, then the bar retracts over `sweep_retract`), staggered by `chrome_stagger`. Their leave is the same bar on `navigation_leave_element` both ways, faster than the enter. They no longer pop.
+- **PDF lag: the cause.** Every pan or zoom frame redrew the whole canvas on the CPU in `draw(_:)`, and that redraw resampled the imported page's bitmap (up to 4096 px on its long side, about 47 MB) into the full-screen backing store. The further the view was zoomed in, the more of the screen that resample covered. Skipping off-screen pages and lowering interpolation (sixth pass) only trimmed it. The pages are now `CALayer`s whose `contents` is the cached bitmap, positioned and scaled each frame by a layer transform and composited on the GPU. Strokes and text draw in a transparent view above them, and the paper and guides draw in the base view below. A note without imports keeps the single-pass draw. Thumbnails and export still draw imports through `PageRenderer`.
+- **Zoom out to the fit.** `CanvasCamera.minimumScale` went from 0.6 to 0.01, so the only floor is the fit scale that `constrained` applies. An 8 × 1 note could open fitted at 0.58, but once zoomed in, the pinch stopped at 0.6.
+- **Undo needs a clean tap.** Two-finger undo and three-finger redo use `CleanTapGestureRecognizer`, which fails if any finger moves more than 10 pt or the touch lasts longer than `undo_tap` (250 ms). Both also wait for the pinch and the two-finger pan to fail, so a zoom or pan in the same touch sequence never undoes. 10 pt matches UIKit's own tap slop, and 250 ms is a quick tap; even a pinch that barely moves lasts longer than that.
+- **Pencil double-tap** follows `UIPencilInteraction.preferredTapAction`. Switch-to-eraser borrows the eraser and gives the previous tool back when the Pencil lifts after erasing, or on a second double-tap. Switch-to-previous swaps with the last tool. Ignore and the palette actions do nothing here.
+- **Add tiles share one cell.** Add note and Add folder are each half of a 1 × 1 note cell (`CompactAddTile`: a dashed squircle with a 40 pt glyph over the label), stacked with the grid gap between them.
+- **Tile icons.** Folder tiles and the top-level Add folder go from 44/34 to 64 pt, about 40 % of the 1.25:1 preview box. Note tile header icons go from 16 to 22 pt, the header's height. Compact add tiles use 40 pt, about a third of their height. The glyph stroke stays 1.7 pt, so larger icons read lighter, in keeping with V/AS's thin-line glyphs.
+- **Settings in modules.** Settings is a set of V/AS modules (micro-label top-left, translucent squircle surface), up to 820 pt wide, laid out as in the sketch:
+  - Left column: ASCII (On/Off, the colour wheel and the background colours, the opacity slider, then Still/Moving and Both/Exclude canvas), with Import and Export under it.
+  - Right column: Paper (Dark/White, a short rule, then Row, Column, Grid and Divider) and Pen.
+  - Below both: GitHub sync (Owner / Repository | Branch, Token, Save), then Delete.
+
+  **V/AS over the sketch:** Paper's switch is Dark/White segments, because module 05 says nothing with two states is a switch. Grid and Divider are link buttons, lit with an inset ring when on.
+
+  **Assumptions:**
+  - The colour wheel sets a custom ASCII colour.
+  - Divider is the cell-lines toggle.
+  - Import appends the PDF's pages as new rows under the note.
+  - Export shares the note as a PDF at its paper size.
+  - Page-only actions are disabled when settings is opened from the folders.
+  - The sheet scrolls only when it does not fit.
+- **The "…" nav button is gone.** Delete (tap twice), Import, Add row and column, guides and cell lines all moved into Settings. The long-press page menu still offers them too.
+- **The settings glyph is a gear.** It is a new `gear` glyph (eight teeth, 3 pt hub), so the Windows app keeps its slider glyph.
+- **Pen smoothing.** Strokes are smoothed by a Gaussian over evenly spaced samples, whose sigma was the fixed `ink.smoothing_points` (2.6 screen points). It is now a Pen setting over `ink.smoothing_range` (0–8 pt). At 0 the line stays raw, because sigma 0 skips the filter; at 8 wobble is strongly eased. The value persists in Preferences, and NotesCore is unchanged.
+- **The main nav hides off its edge.** While a secondary nav is open, the main nav can be dragged towards its nearest edge, across the nav, with the same 22 pt slop and twice-as-far rule as the size slide.
+  - On release past `nav_edge_hide` (35 %) of its thickness, it leaves off-screen on `power_two_in`; short of that, it springs back on `back_out`.
+  - Dragged inward, or past the edge, it is rubber-banded at `nav_edge_rubber` (0.3).
+  - While it is hidden, a 36 × 4 pt handle in a 28 pt strip at that edge brings it back when dragged inward. It also comes back when the secondary nav closes.

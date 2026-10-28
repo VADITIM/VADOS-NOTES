@@ -23,6 +23,8 @@ struct CanvasCallbacks {
     var onHoldEnd: (CGPoint) -> Void
     var onUndo: () -> Void
     var onRedo: () -> Void
+    var onPencilTap: () -> Void
+    var onEraseLift: () -> Void
 }
 
 struct CanvasView: UIViewRepresentable {
@@ -35,6 +37,7 @@ struct CanvasView: UIViewRepresentable {
     let showsGuides: Bool
     let showsDividers: Bool
     let showsBackdrop: Bool
+    let inkSmoothing: Double
     let hiddenElementIds: Set<String>
     let isReadOnly: Bool
     let topInset: CGFloat
@@ -60,6 +63,7 @@ struct CanvasView: UIViewRepresentable {
         view.showsGuides = showsGuides
         view.showsDividers = showsDividers
         view.showsBackdrop = showsBackdrop
+        view.inkSmoothing = inkSmoothing
         view.hiddenElementIds = hiddenElementIds
         view.isReadOnly = isReadOnly
         view.topInset = topInset
@@ -78,6 +82,8 @@ struct CanvasView: UIViewRepresentable {
         view.onHoldEnd = callbacks.onHoldEnd
         view.onUndo = callbacks.onUndo
         view.onRedo = callbacks.onRedo
+        view.onPencilTap = callbacks.onPencilTap
+        view.onEraseLift = callbacks.onEraseLift
     }
 }
 

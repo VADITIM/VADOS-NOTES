@@ -1,6 +1,7 @@
 import NotesCore
 import QuartzCore
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 enum CanvasTool: Equatable {
     case ink(Tool)
@@ -39,7 +40,70 @@ private struct PressedText {
     let height: Double
 }
 
-final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
+final class CleanTapGestureRecognizer: UITapGestureRecognizer {
+    var maximumTravel: CGFloat = 10
+    var maximumDuration: TimeInterval = 0.25
+
+    private var starts: [ObjectIdentifier: CGPoint] = [:]
+    private var beganAt: TimeInterval?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        for touch in touches {
+            starts[ObjectIdentifier(touch)] = touch.location(in: view)
+            beganAt = beganAt ?? touch.timestamp
+        }
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        for touch in touches {
+            guard let start = starts[ObjectIdentifier(touch)] else { continue }
+            let location = touch.location(in: view)
+            if hypot(location.x - start.x, location.y - start.y) > maximumTravel {
+                state = .failed
+                return
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let beganAt, let touch = touches.first, touch.timestamp - beganAt > maximumDuration {
+            state = .failed
+            return
+        }
+        super.touchesEnded(touches, with: event)
+    }
+
+    override func reset() {
+        super.reset()
+        starts = [:]
+        beganAt = nil
+    }
+}
+
+private final class ElementCanvasView: UIView {
+    var render: ((CGContext, CGRect) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        isUserInteractionEnabled = false
+        contentMode = .redraw
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("ElementCanvasView is created in code")
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        render?(context, bounds)
+    }
+}
+
+final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteractionDelegate {
     var page: Page? {
         didSet {
             guard page != oldValue else { return }
@@ -75,6 +139,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             setNeedsDisplay()
         }
     }
+    var inkSmoothing = Tokens.shared.ink.smoothingPoints
     var hiddenElementIds: Set<String> = [] {
         didSet { if hiddenElementIds != oldValue { setNeedsDisplay() } }
     }
@@ -103,6 +168,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     var onHoldEnd: ((CGPoint) -> Void)?
     var onUndo: (() -> Void)?
     var onRedo: (() -> Void)?
+    var onPencilTap: (() -> Void)?
+    var onEraseLift: (() -> Void)?
 
     private(set) var camera = CanvasCamera()
     private let cache = StrokePathCache()
@@ -111,6 +178,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private let eraserLayer = CAShapeLayer()
     private let lassoLayer = CAShapeLayer()
     private let selectionLayer = CAShapeLayer()
+    private let elementCanvas = ElementCanvasView(frame: .zero)
+    private let importContainer = CALayer()
+    private let importMask = CAShapeLayer()
+    private var importLayers: [String: CALayer] = [:]
     private var activeTouch: UITouch?
     private var isFingerTouch = false
     private var stroke: StrokeSession?
@@ -155,6 +226,15 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private static let selectionScaleRange: ClosedRange<CGFloat> = 0.1...10
     private static let glideStopSpeed: CGFloat = 12
     private static let glideSampleWindow: TimeInterval = 0.08
+    private static let undoTapTravel: CGFloat = 10
+
+    private var hasImports: Bool {
+        page?.liveElements.contains { $0.type == .importPage } ?? false
+    }
+
+    private var pixelScale: CGFloat {
+        window?.screen.scale ?? 2
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -180,6 +260,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         selectionLayer.lineWidth = 1.5
         selectionLayer.lineDashPattern = Self.lassoDash
         layer.addSublayer(selectionLayer)
+        insertSubview(elementCanvas, at: 0)
+        importContainer.mask = importMask
+        layer.insertSublayer(importContainer, below: elementCanvas.layer)
+        elementCanvas.render = { [weak self] context, rect in
+            self?.drawElements(in: context, rect: rect)
+        }
+
+        let pencil = UIPencilInteraction()
+        pencil.delegate = self
+        addInteraction(pencil)
 
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         pinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -193,20 +283,28 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         pan.delegate = self
         addGestureRecognizer(pan)
 
-        let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap))
+        let undoTap = CleanTapGestureRecognizer(target: self, action: #selector(handleUndoTap))
+        undoTap.maximumTravel = Self.undoTapTravel
+        undoTap.maximumDuration = Motion.seconds(Motion.undoTapMilliseconds)
         undoTap.numberOfTouchesRequired = 2
         undoTap.numberOfTapsRequired = 1
         undoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         undoTap.delegate = self
         addGestureRecognizer(undoTap)
 
-        let redoTap = UITapGestureRecognizer(target: self, action: #selector(handleRedoTap))
+        let redoTap = CleanTapGestureRecognizer(target: self, action: #selector(handleRedoTap))
+        redoTap.maximumTravel = Self.undoTapTravel
+        redoTap.maximumDuration = Motion.seconds(Motion.undoTapMilliseconds)
         redoTap.numberOfTouchesRequired = 3
         redoTap.numberOfTapsRequired = 1
         redoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         redoTap.delegate = self
         addGestureRecognizer(redoTap)
         undoTap.require(toFail: redoTap)
+        for tap in [undoTap, redoTap] {
+            tap.require(toFail: pinch)
+            tap.require(toFail: pan)
+        }
 
         importObserver = NotificationCenter.default.addObserver(forName: ImportImages.didRender, object: nil, queue: .main) { [weak self] _ in
             self?.setNeedsDisplay()
@@ -243,15 +341,95 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
         eraserLayer.frame = bounds
         lassoLayer.frame = bounds
         selectionLayer.frame = bounds
+        elementCanvas.frame = bounds
+        importContainer.frame = bounds
+        importMask.frame = bounds
         if !hasFitted || fittedSize != bounds.size {
             fit()
         }
     }
 
+    override func setNeedsDisplay() {
+        super.setNeedsDisplay()
+        elementCanvas.setNeedsDisplay()
+        layoutImports()
+    }
+
     override func draw(_ rect: CGRect) {
-        guard let context = UIGraphicsGetCurrentContext(), var page else { return }
-        var options = RenderOptions(showsGuides: showsGuides, showsDividers: showsDividers, paperStyle: paperStyle, hiddenElementIds: hiddenElementIds.union(pendingErased), pixelScale: window?.screen.scale ?? 2)
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        var options = renderOptions()
         options.fillsOutside = !showsBackdrop
+        options.drawsElements = !hasImports
+        render(in: context, options: options)
+    }
+
+    private func drawElements(in context: CGContext, rect: CGRect) {
+        guard hasImports else { return }
+        var options = renderOptions()
+        options.drawsPaper = false
+        options.drawsImports = false
+        render(in: context, options: options)
+    }
+
+    private func renderOptions() -> RenderOptions {
+        RenderOptions(showsGuides: showsGuides, showsDividers: showsDividers, paperStyle: paperStyle, hiddenElementIds: hiddenElementIds.union(pendingErased), pixelScale: pixelScale)
+    }
+
+    private func layoutImports() {
+        let imports = page?.liveElements.filter { $0.type == .importPage } ?? []
+        elementCanvas.isHidden = imports.isEmpty
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        var seen = Set<String>()
+        let hidden = hiddenElementIds.union(pendingErased)
+        let screenPage = camera.toPage(bounds)
+        for element in imports {
+            guard let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { continue }
+            seen.insert(element.id)
+            let sublayer = importLayers[element.id] ?? makeImportLayer(element.id)
+            var rect = CGRect(x: placement.x, y: placement.y, width: size[0] * placement.scale, height: size[1] * placement.scale)
+            if selectedIds.contains(element.id) {
+                rect = rect.offsetBy(dx: selectionOffset.dx, dy: selectionOffset.dy)
+                if let selectionScaleAnchor {
+                    rect = rect.applying(scaling(about: selectionScaleAnchor))
+                }
+            }
+            sublayer.bounds = CGRect(origin: .zero, size: rect.size)
+            sublayer.position = camera.toScreen(Point(x: Double(rect.minX), y: Double(rect.minY)))
+            sublayer.transform = CATransform3DMakeScale(camera.scale, camera.scale, 1)
+            sublayer.isHidden = hidden.contains(element.id) || !rect.intersects(screenPage)
+            guard !sublayer.isHidden else { continue }
+            if let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark) {
+                if (sublayer.contents as AnyObject?) !== image {
+                    sublayer.contents = image
+                }
+                sublayer.backgroundColor = nil
+            } else {
+                sublayer.contents = nil
+                sublayer.backgroundColor = UIColor(hex: Palette.paperColors(paperStyle).guide).cgColor
+            }
+        }
+        for (id, sublayer) in importLayers where !seen.contains(id) {
+            sublayer.removeFromSuperlayer()
+            importLayers[id] = nil
+        }
+        CATransaction.commit()
+    }
+
+    private func makeImportLayer(_ id: String) -> CALayer {
+        let sublayer = CALayer()
+        sublayer.anchorPoint = .zero
+        sublayer.magnificationFilter = .linear
+        sublayer.minificationFilter = .linear
+        sublayer.contentsGravity = .resize
+        importContainer.addSublayer(sublayer)
+        importLayers[id] = sublayer
+        return sublayer
+    }
+
+    private func render(in context: CGContext, options baseOptions: RenderOptions) {
+        guard var page else { return }
+        var options = baseOptions
         if let pressedText, isTextLifted {
             options.elementOffsets[pressedText.id] = textOffset
         }
@@ -472,6 +650,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
                 areaErase = [:]
                 onEraseArea?(replacements)
             }
+            if touch.type == .pencil {
+                onEraseLift?()
+            }
         case .text:
             if !wasMoved, Ink.isInsidePaper(point, extent: page.extent) {
                 onTextTap?(point, nil)
@@ -508,6 +689,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         true
+    }
+
+    func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+        onPencilTap?()
     }
 
     @objc private func handleUndoTap() {
@@ -650,7 +835,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
             let paper = CGRect(x: camera.offset.x, y: camera.offset.y, width: CGFloat(PaperGeometry.width(of: page.extent)) * camera.scale, height: CGFloat(PaperGeometry.height(of: page.extent)) * camera.scale)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            liveMask.path = CGPath(roundedRect: paper, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            let paperPath = CGPath(roundedRect: paper, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            liveMask.path = paperPath
+            importMask.path = paperPath
             CATransaction.commit()
         }
         if stroke != nil {
@@ -731,7 +918,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
 
     private func liveStrokePoints() -> [Point] {
         guard let stroke else { return [] }
-        let smooth = Ink.smoothStroke(stroke.raw + stroke.predicted, scale: Double(camera.scale), settings: InkStyle.settings)
+        let smooth = Ink.smoothStroke(stroke.raw + stroke.predicted, scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))
         guard stroke.straightEnd != nil else { return smooth }
         return Ink.straightened(smooth, start: stroke.raw[0], end: snappedEnd(stroke), share: stroke.straightShare)
     }
@@ -739,9 +926,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate {
     private func finalStrokePoints() -> [Point] {
         guard let stroke else { return [] }
         if stroke.straightEnd != nil {
-            return Ink.smoothStroke([stroke.raw[0], snappedEnd(stroke)], scale: Double(camera.scale), settings: InkStyle.settings)
+            return Ink.smoothStroke([stroke.raw[0], snappedEnd(stroke)], scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))
         }
-        return Ink.smoothStroke(stroke.raw, scale: Double(camera.scale), settings: InkStyle.settings)
+        return Ink.smoothStroke(stroke.raw, scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))
     }
 
     private func endStroke() {

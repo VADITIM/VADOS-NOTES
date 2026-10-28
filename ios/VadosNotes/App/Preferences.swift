@@ -208,6 +208,14 @@ final class Preferences: ObservableObject {
         write("\(tool.rawValue)Presets", presets.map { $0 == color ? normalized : $0 })
     }
 
+    var inkSmoothing: Double {
+        clamp(read("inkSmoothing", tokens.ink.smoothingPoints), tokens.ink.smoothingRange)
+    }
+
+    func setInkSmoothing(_ value: Double) {
+        write("inkSmoothing", clamp(value, tokens.ink.smoothingRange))
+    }
+
     var eraserRadius: Double {
         clamp(read("eraserRadius", tokens.tools.eraser.radius), tokens.tools.eraser.radiusRange)
     }

@@ -85,6 +85,7 @@ struct Tokens: Decodable {
     struct InkTokens: Decodable {
         let sampleSpacingPoints: Double
         let smoothingPoints: Double
+        let smoothingRange: [Double]
         let simplifyPoints: Double
         let straightenTolerancePoints: Double
         let straightenAxisSnapDegrees: Double
@@ -148,6 +149,8 @@ struct Tokens: Decodable {
         let navigationLeavePop: Int
         let keyboard: Int
         let type: Int
+        let undoTap: Int
+        let navEdgeHide: Int
     }
 
     struct SpringToken: Decodable {
@@ -175,6 +178,8 @@ struct Tokens: Decodable {
         let stackStagger: Double
         let flightCornerFade: Double
         let panGlideDecay: Double
+        let navEdgeHide: Double
+        let navEdgeRubber: Double
     }
 
     struct MotionTokens: Decodable {

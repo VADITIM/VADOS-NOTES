@@ -345,24 +345,40 @@ enum ColorVariations {
 }
 
 struct VariationPanel: View {
-    let source: String
+    let colors: [String]
+    let main: String
+    let selected: String
     let orientation: NavOrientation
     let display: (String) -> Color
     let onPick: (String) -> Void
 
     @Namespace private var ringSpace
 
+    private static let markLength: CGFloat = 12 * NavMetrics.scale
+    private static let markThickness: CGFloat = 2
+    private static let markGap: CGFloat = 1 * NavMetrics.scale
+
     var body: some View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
         layout {
-            ForEach(ColorVariations.around(source), id: \.self) { color in
-                SwatchButton(color: display(color), isSelected: color == source.uppercased(), orientation: orientation, ring: ("variation-ring", ringSpace), onSelect: { onPick(color) })
+            ForEach(colors, id: \.self) { color in
+                SwatchButton(color: display(color), isSelected: color == selected.uppercased(), orientation: orientation, ring: ("variation-ring", ringSpace), onSelect: { onPick(color) })
+                    .overlay(alignment: orientation == .horizontal ? .bottom : .trailing) {
+                        if color == main.uppercased() {
+                            mainMark
+                        }
+                    }
             }
         }
-        .padding(NavMetrics.padding)
-        .background(Capsule().fill(Palette.panelSolid))
-        .overlay(Capsule().stroke(Palette.border, lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
+    }
+
+    private var mainMark: some View {
+        Capsule()
+            .fill(Palette.textBright)
+            .frame(width: orientation == .horizontal ? Self.markLength : Self.markThickness, height: orientation == .horizontal ? Self.markThickness : Self.markLength)
+            .offset(x: orientation == .horizontal ? 0 : Self.markGap, y: orientation == .horizontal ? Self.markGap : 0)
+            .revealedElement()
+            .accessibilityLabel("Main colour")
     }
 }
 

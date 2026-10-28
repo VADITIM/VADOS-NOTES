@@ -5,7 +5,7 @@ struct CanvasCamera: Equatable {
     var scale: CGFloat = 3
     var offset: CGPoint = .zero
 
-    static let minimumScale: CGFloat = 0.6
+    static let minimumScale: CGFloat = 0.01
     static let maximumScale: CGFloat = 40
 
     func toScreen(_ point: Point) -> CGPoint {
@@ -73,9 +73,9 @@ enum InkStyle {
         return base.withAlphaComponent(CGFloat(tokens(for: tool).opacity))
     }
 
-    static var settings: InkSettings {
+    static func settings(smoothing: Double) -> InkSettings {
         let ink = Tokens.shared.ink
-        return InkSettings(sampleSpacing: ink.sampleSpacingPoints, smoothing: ink.smoothingPoints, simplify: ink.simplifyPoints, axisSnapDegrees: ink.straightenAxisSnapDegrees)
+        return InkSettings(sampleSpacing: ink.sampleSpacingPoints, smoothing: smoothing, simplify: ink.simplifyPoints, axisSnapDegrees: ink.straightenAxisSnapDegrees)
     }
 }
 
@@ -159,6 +159,9 @@ struct RenderOptions {
     var elementTransforms: [String: CGAffineTransform] = [:]
     var pixelScale: CGFloat = 2
     var fillsOutside = true
+    var drawsPaper = true
+    var drawsElements = true
+    var drawsImports = true
 }
 
 enum MarkdownText {
@@ -282,7 +285,7 @@ enum MarkdownText {
 
 enum PageRenderer {
     static func draw(_ page: Page, in context: CGContext, camera: CanvasCamera, visibleRect: CGRect, options: RenderOptions, cache: StrokePathCache) {
-        if options.fillsOutside {
+        if options.fillsOutside && options.drawsPaper {
             context.setFillColor(Palette.outside.cgColor)
             context.fill(visibleRect)
         } else {
@@ -300,15 +303,18 @@ enum PageRenderer {
         let radius = CGFloat(Tokens.shared.page.cornerRadius)
         context.addPath(CGPath(roundedRect: paperRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
         context.clip()
-        context.setFillColor(UIColor(hex: colors.paper).cgColor)
-        context.fill(paperRect)
-        if options.showsGuides {
-            drawGuides(in: context, visiblePage: visiblePage, camera: camera, color: UIColor(hex: colors.guide))
+        if options.drawsPaper {
+            context.setFillColor(UIColor(hex: colors.paper).cgColor)
+            context.fill(paperRect)
+            if options.showsGuides {
+                drawGuides(in: context, visiblePage: visiblePage, camera: camera, color: UIColor(hex: colors.guide))
+            }
+            if options.showsDividers {
+                drawCellBoundaries(in: context, extent: page.extent, camera: camera, color: UIColor(hex: colors.cellBoundary))
+            }
         }
-        if options.showsDividers {
-            drawCellBoundaries(in: context, extent: page.extent, camera: camera, color: UIColor(hex: colors.cellBoundary))
-        }
-        for element in page.liveElements where !options.hiddenElementIds.contains(element.id) {
+        let elements = options.drawsElements ? page.liveElements : []
+        for element in elements where !options.hiddenElementIds.contains(element.id) && (options.drawsImports || element.type != .importPage) {
             let offset = options.elementOffsets[element.id] ?? .zero
             let transform = options.elementTransforms[element.id]
             context.saveGState()
