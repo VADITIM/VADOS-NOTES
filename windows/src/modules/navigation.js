@@ -911,16 +911,16 @@ export class ToolNav {
                 return
             }
             clearTimeout(timer)
-            grip.removeEventListener("pointermove", move)
-            grip.removeEventListener("pointerup", end)
-            grip.removeEventListener("pointercancel", end)
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", end)
+            window.removeEventListener("pointercancel", end)
             if (isCarrying) {
                 this.finishCarry()
             }
         }
-        grip.addEventListener("pointermove", move)
-        grip.addEventListener("pointerup", end)
-        grip.addEventListener("pointercancel", end)
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", end)
+        window.addEventListener("pointercancel", end)
     }
 
     finishCarry() {
@@ -1015,9 +1015,9 @@ export class ToolNav {
                 return
             }
             clearTimeout(timer)
-            button.removeEventListener("pointermove", move)
-            button.removeEventListener("pointerup", end)
-            button.removeEventListener("pointercancel", end)
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", end)
+            window.removeEventListener("pointercancel", end)
             if (!reordering) {
                 return
             }
@@ -1034,9 +1034,9 @@ export class ToolNav {
             springAnimate(button, [{ translate: offset }, { translate: "0px 0px" }], "placement")
             this.swallowUntil = performance.now() + swallowMilliseconds
         }
-        button.addEventListener("pointermove", move)
-        button.addEventListener("pointerup", end)
-        button.addEventListener("pointercancel", end)
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", end)
+        window.addEventListener("pointercancel", end)
     }
 
     applyToolOffsets(reordering, extent) {
@@ -1112,9 +1112,9 @@ export class ToolNav {
                 return
             }
             clearTimeout(timer)
-            element.removeEventListener("pointermove", move)
-            element.removeEventListener("pointerup", end)
-            element.removeEventListener("pointercancel", end)
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", end)
+            window.removeEventListener("pointercancel", end)
             if (!reordering) {
                 return
             }
@@ -1128,9 +1128,9 @@ export class ToolNav {
             const offset = this.orientation === "horizontal" ? `${residual}px 0px` : `0px ${residual}px`
             springAnimate(element, [{ translate: offset }, { translate: "0px 0px" }], "placement")
         }
-        element.addEventListener("pointermove", move)
-        element.addEventListener("pointerup", end)
-        element.addEventListener("pointercancel", end)
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", end)
+        window.addEventListener("pointercancel", end)
     }
 }
 

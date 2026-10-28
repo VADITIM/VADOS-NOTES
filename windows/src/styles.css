@@ -1036,6 +1036,12 @@ svg.squircle ~ * {
     touch-action: none;
 }
 
+.pill-body.is-interactive,
+.wheel-host > *,
+.edge-strip {
+    pointer-events: auto;
+}
+
 .pill-body:not(.is-interactive) {
     pointer-events: none;
 }
