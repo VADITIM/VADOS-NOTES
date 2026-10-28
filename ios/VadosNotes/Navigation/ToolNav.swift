@@ -258,6 +258,7 @@ struct ToolNav<PanelContent: View>: View {
             let hiddenReach = hiddenDistance(center: center, layer: layer, edge: edge)
             let subNavCenter = placeBeside(navigationRect, size: subNavSize, side: side, layer: layer, blocked: blocked + [navigationRect])
             let subNavRect = rect(center: subNavCenter, size: subNavSize)
+            let panelCenter = placeBeside(panelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect])
             ZStack(alignment: .topLeading) {
                 ZStack {
                     if shownSubNavigationKey != nil {
@@ -277,7 +278,8 @@ struct ToolNav<PanelContent: View>: View {
                         pillPanelBody(key)
                     }
                 }
-                .position(placeBeside(panelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect]))
+                .position(panelCenter)
+                .animation(shownPillPanelKey != nil && panelMotion.areElementsShown ? Motion.placement : nil, value: panelCenter)
                 navBody(layer: layer, center: center)
                     .simultaneousGesture(edgeHideGesture(edge: edge, limit: hiddenReach))
                     .position(center)

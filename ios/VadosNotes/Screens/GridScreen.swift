@@ -1,6 +1,15 @@
 import NotesCore
 import SwiftUI
 
+extension Library {
+    func folderSummary(_ notebookId: String) -> String {
+        let noteCount = pages(in: notebookId).count
+        let folderCount = folders(in: notebookId).count
+        let noteText = "\(noteCount) note\(noteCount == 1 ? "" : "s")"
+        return folderCount > 0 ? "\(noteText) · \(folderCount) folder\(folderCount == 1 ? "" : "s")" : noteText
+    }
+}
+
 enum Looks {
     static func folder(_ notebook: Notebook?) -> (color: String, icon: String) {
         (notebook?.color ?? Tokens.shared.folders.defaultColor, notebook?.icon ?? Tokens.shared.folders.defaultIcon)
@@ -46,15 +55,12 @@ struct GridScreen: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var menu: MenuController
     @EnvironmentObject private var preferences: Preferences
-    @State private var query = ""
-    @State private var topBarBottom: CGFloat = 96
+    @Environment(\.chromeLayout) private var chrome
     @State private var frames: [String: CGRect] = [:]
-    @State private var backFrame: CGRect = .zero
     @State private var drag: TileDrag?
     @State private var arrangedFolders: [String]?
     @State private var arrangedNotes: [String]?
     @State private var openGroups: Set<String> = []
-    @State private var isLeaving = false
 
     private let folderColumns = [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 18, alignment: .top)]
     private let noteColumns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 18, alignment: .top)]
@@ -62,7 +68,7 @@ struct GridScreen: View {
     private static let noteColumnWidth: CGFloat = 170
 
     private var trimmedQuery: String {
-        query.trimmingCharacters(in: .whitespaces).lowercased()
+        navigator.query.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
     private var groups: [TileGroup] {
@@ -94,7 +100,7 @@ struct GridScreen: View {
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        Color.clear.frame(height: max(0, topBarBottom - origin.y))
+                        Color.clear.frame(height: max(0, chrome.bottom - origin.y))
                         Group {
                             if trimmedQuery.isEmpty {
                                 browse
@@ -108,7 +114,6 @@ struct GridScreen: View {
                     .padding(.bottom, 48)
                 }
                 .scrollDisabled(drag != nil)
-                topBar
                 if let drag {
                     ghost(drag)
                         .position(x: drag.location.x - origin.x - drag.grab.width + drag.size.width / 2, y: drag.location.y - origin.y - drag.grab.height + drag.size.height / 2)
@@ -116,15 +121,8 @@ struct GridScreen: View {
                 }
             }
             .onPreferenceChange(TileFramesKey.self) { frames = $0 }
-            .onPreferenceChange(BackButtonFrameKey.self) { backFrame = $0 }
-            .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
         }
         .onAppear(perform: leaveIfMissing)
-        .onChange(of: navigator.isChromeLeaving) { _, leaving in
-            if leaving {
-                isLeaving = true
-            }
-        }
         .onChange(of: notebookId) { _, _ in
             drag = nil
             arrangedFolders = nil
@@ -135,53 +133,6 @@ struct GridScreen: View {
 
     private func leaveIfMissing() {
         if let notebookId, library.notebook(notebookId) == nil {
-            navigator.go(.library)
-        }
-    }
-
-    private var title: String {
-        notebookId.flatMap { library.notebook($0)?.title } ?? "Folders"
-    }
-
-    private var label: String {
-        guard let notebookId else {
-            let count = library.folders(in: nil).count
-            return "\(count) folder\(count == 1 ? "" : "s")"
-        }
-        return summary(notebookId)
-    }
-
-    private func summary(_ notebookId: String) -> String {
-        let notes = library.pages(in: notebookId).count
-        let folders = library.folders(in: notebookId).count
-        let noteText = "\(notes) note\(notes == 1 ? "" : "s")"
-        return folders > 0 ? "\(noteText) · \(folders) folder\(folders == 1 ? "" : "s")" : noteText
-    }
-
-    private var topBar: some View {
-        TopBar(
-            title: title,
-            label: label,
-            chromeShown: !isLeaving,
-            onBack: notebookId == nil ? nil : goBack,
-            onRename: notebookId.map { folderId -> (String) -> Void in
-                { title in
-                    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    library.updateNotebook(folderId) { $0.title = title }
-                }
-            },
-            popsTrailing: false
-        ) {
-            SearchField(text: $query, isShown: !isLeaving)
-        }
-    }
-
-    private func goBack() {
-        guard let notebookId else { return }
-        if let parent = library.parent(of: notebookId) {
-            navigator.go(.notebook(parent))
-        } else {
             navigator.go(.library)
         }
     }
@@ -336,7 +287,7 @@ struct GridScreen: View {
     }
 
     private func folderTile(_ folder: Notebook, rank: Int, isDraggable: Bool, isResult: Bool = false) -> some View {
-        let caption = isResult && library.parent(of: folder.id) != nil ? library.path(of: library.parent(of: folder.id) ?? "") : summary(folder.id)
+        let caption = isResult && library.parent(of: folder.id) != nil ? library.path(of: library.parent(of: folder.id) ?? "") : library.folderSummary(folder.id)
         return FolderTile(notebook: folder, caption: caption, rank: rank)
             .modifier(TileBehaviour(
                 key: "folder:\(folder.id)",
@@ -375,7 +326,7 @@ struct GridScreen: View {
             switch drag.kind {
             case .folder:
                 if let folder = library.notebook(drag.id) {
-                    FolderTile(notebook: folder, caption: summary(folder.id), rank: 0)
+                    FolderTile(notebook: folder, caption: library.folderSummary(folder.id), rank: 0)
                 }
             case .note:
                 if let page = library.page(drag.id) {
@@ -438,7 +389,7 @@ struct GridScreen: View {
     }
 
     private func dropTarget(for drag: TileDrag, at location: CGPoint) -> DropTarget? {
-        if let notebookId, backFrame.contains(location) {
+        if let notebookId, chrome.back.contains(location) {
             let parentId = library.parent(of: notebookId)
             return drag.kind == .folder || parentId != nil ? .up(parentId) : nil
         }

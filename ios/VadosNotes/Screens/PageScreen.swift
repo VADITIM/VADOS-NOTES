@@ -42,8 +42,7 @@ struct PageScreen: View {
     @Namespace private var ringSpace
     @State private var overlayCamera: CanvasCamera?
     @State private var cameraHolder = CameraHolder()
-    @State private var topBarBottom: CGFloat = 0
-    @State private var chromeFrames: [String: CGRect] = [:]
+    @Environment(\.chromeLayout) private var chrome
     @State private var subNavKey: String?
     @State private var lastSubNavKey: String?
     @State private var panelKey: String?
@@ -56,7 +55,6 @@ struct PageScreen: View {
     @State private var textDragOrigin: TextBox?
     @State private var flightTile: CGRect?
     @State private var flightProgress: CGFloat = 1
-    @State private var isChromeShown = false
     @State private var selectionMenu: SelectionMenuRequest?
     @State private var equalWidth = Tokens.shared.tools.pen.width
     @State private var equalWidthStart: Double?
@@ -67,11 +65,10 @@ struct PageScreen: View {
     private static let handleSize = CGSize(width: 8, height: 36)
     private static let editorInset = EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22)
     private static let equalWidthTravel: CGFloat = 240
-    private static let createdFormat: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "dd/MM/yy"
-        return formatter
-    }()
+
+    private var isChromeShown: Bool {
+        navigator.isPageChromeShown
+    }
 
     private var activeTool: ActiveTool {
         preferences.activeTool
@@ -99,7 +96,7 @@ struct PageScreen: View {
             ZStack(alignment: .topLeading) {
                 Group {
                     if let page = library.page(pageId) {
-                        canvas(for: page, topInset: max(0, topBarBottom - canvasTop))
+                        canvas(for: page, topInset: max(0, chrome.bottom - canvasTop))
                     } else {
                         VStack {
                             Spacer()
@@ -116,11 +113,8 @@ struct PageScreen: View {
                             .transition(.popTogether)
                     }
                 }
-                topBar
                 toolNav
             }
-            .onPreferenceChange(TopBarHeightKey.self) { topBarBottom = $0 }
-            .onPreferenceChange(ChromeFramesKey.self) { chromeFrames = $0 }
         }
         .background(KeyboardCommands(onUndo: { library.undo(pageId) }, onRedo: { library.redo(pageId) }))
         .onChange(of: session?.element.id) { _, _ in
@@ -135,7 +129,6 @@ struct PageScreen: View {
         .onAppear(perform: startFlight)
         .onChange(of: navigator.isChromeLeaving) { _, leaving in
             guard leaving else { return }
-            isChromeShown = false
             library.finishText()
             withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                 selectionMenu = nil
@@ -146,46 +139,22 @@ struct PageScreen: View {
     private func startFlight() {
         guard let tile = navigator.openingTile else {
             DispatchQueue.main.async {
-                isChromeShown = true
+                navigator.showPageChrome(true)
             }
             return
         }
         navigator.openingTile = nil
         flightTile = tile
         flightProgress = 0
-        isChromeShown = false
         withAnimation(Motion.powerTwoOut(Motion.viewerEnterMilliseconds)) {
             flightProgress = 1
         }
         let arrival = Motion.seconds(Motion.viewerEnterMilliseconds) * Motion.shares.chromeArrival
         DispatchQueue.main.asyncAfter(deadline: .now() + arrival) {
-            isChromeShown = true
+            navigator.showPageChrome(true)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.viewerEnterMilliseconds)) {
             flightTile = nil
-        }
-    }
-
-    private var createdText: String? {
-        Identifier.creationDate(of: pageId).map { Self.createdFormat.string(from: $0) }
-    }
-
-    private var topBar: some View {
-        TopBar(
-            title: library.page(pageId).map { library.noteTitle($0) } ?? "Note",
-            label: library.notebook(notebookId)?.title ?? "Folder",
-            detail: createdText,
-            chromeShown: isChromeShown,
-            onBack: { navigator.go(.notebook(notebookId)) },
-            onRename: { title in
-                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                library.updatePage(pageId) { $0.title = trimmed.isEmpty ? nil : title }
-            },
-            isBare: true
-        ) {
-            if library.isReadOnly(pageId) {
-                MicroLabel(text: "Read only", color: Palette.destructive)
-            }
         }
     }
 
@@ -463,9 +432,12 @@ struct PageScreen: View {
             closePanel()
             return
         }
-        variationMain = normalized
-        variationSlot = normalized
-        variationColors = ColorVariations.around(normalized)
+        let isOpen = panelKey == Self.variationsKey(tool)
+        withAnimation(isOpen ? Motion.placement : nil) {
+            variationMain = normalized
+            variationSlot = normalized
+            variationColors = ColorVariations.around(normalized)
+        }
         withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
             panelKey = Self.variationsKey(tool)
         }
@@ -585,7 +557,7 @@ struct PageScreen: View {
             subNavKey: subNavKey,
             subNavigationGroups: orderedSubNavigationGroups,
             panelKey: panelKey,
-            obstacles: Array(chromeFrames.values),
+            obstacles: Array(chrome.frames.values),
             keyboardHeight: keyboard.height,
             isShown: isChromeShown,
             onReorderTools: { order in preferences.setToolOrder(order) },

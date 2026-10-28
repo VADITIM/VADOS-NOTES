@@ -361,11 +361,12 @@ struct VariationPanel: View {
     var body: some View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
         layout {
-            ForEach(colors, id: \.self) { color in
+            ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
                 SwatchButton(color: display(color), isSelected: color == selected.uppercased(), orientation: orientation, ring: ("variation-ring", ringSpace), onSelect: { onPick(color) })
                     .overlay(alignment: orientation == .horizontal ? .bottom : .trailing) {
                         if color == main.uppercased() {
                             mainMark
+                                .matchedGeometryEffect(id: "main-mark", in: ringSpace)
                         }
                     }
             }

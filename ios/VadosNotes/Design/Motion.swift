@@ -40,10 +40,6 @@ enum Motion {
     static let undoTapMilliseconds = durations.undoTap
     static let navigationEdgeHideMilliseconds = durations.navEdgeHide
 
-    static var chromeLeaveMilliseconds: Int {
-        navigationLeaveElementMilliseconds + navigationLeaveSpreadMilliseconds * 3 / 4 + navigationLeavePopMilliseconds
-    }
-
     static var placement: Animation { spring(springs.placement) }
     static var wash: Animation { spring(springs.wash) }
     static var selection: Animation { spring(springs.selection) }

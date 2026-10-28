@@ -12,6 +12,14 @@ enum Route: Hashable {
         }
         return false
     }
+
+    var folderId: String? {
+        switch self {
+        case .library: return nil
+        case .notebook(let notebookId): return notebookId
+        case .page(let notebookId, _): return notebookId
+        }
+    }
 }
 
 enum TileTarget: Hashable {
@@ -58,7 +66,10 @@ final class Navigator: ObservableObject {
     @Published private(set) var sheet: SheetRequest?
     @Published private(set) var isSheetLeaving = false
     @Published private(set) var isChromeLeaving = false
+    @Published private(set) var isPageChromeShown = false
+    @Published var query = ""
     private(set) var isReturningFromPage = false
+    private(set) var lastPage: (notebookId: String, pageId: String)?
     var openingTile: CGRect?
 
     func show(_ sheet: SheetRequest?) {
@@ -86,17 +97,27 @@ final class Navigator: ObservableObject {
             return
         }
         isChromeLeaving = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.chromeLeaveMilliseconds)) { [weak self] in
+        isPageChromeShown = false
+        DispatchQueue.main.async { [weak self] in
             self?.switchRoute(route, from: tile)
             self?.isChromeLeaving = false
         }
     }
 
+    func showPageChrome(_ shown: Bool) {
+        guard route.isPage else { return }
+        isPageChromeShown = shown
+    }
+
     private func switchRoute(_ route: Route, from tile: CGRect?) {
         openingTile = tile
         isReturningFromPage = self.route.isPage && !route.isPage
+        if case .page(let notebookId, let pageId) = route {
+            lastPage = (notebookId, pageId)
+        }
         withAnimation(Motion.powerTwoOut(Motion.sectionEnterMilliseconds)) {
             self.route = route
+            query = ""
         }
     }
 }
@@ -105,10 +126,25 @@ private struct ScreenInsetsKey: EnvironmentKey {
     static let defaultValue = EdgeInsets()
 }
 
+struct ChromeLayout: Equatable {
+    var bottom: CGFloat = 0
+    var back: CGRect = .zero
+    var frames: [String: CGRect] = [:]
+}
+
+private struct ChromeLayoutKey: EnvironmentKey {
+    static let defaultValue = ChromeLayout()
+}
+
 extension EnvironmentValues {
     var screenInsets: EdgeInsets {
         get { self[ScreenInsetsKey.self] }
         set { self[ScreenInsetsKey.self] = newValue }
+    }
+
+    var chromeLayout: ChromeLayout {
+        get { self[ChromeLayoutKey.self] }
+        set { self[ChromeLayoutKey.self] = newValue }
     }
 }
 
@@ -117,6 +153,7 @@ struct RootView: View {
     @StateObject private var navigator = Navigator()
     @StateObject private var menu = MenuController()
     @StateObject private var preferences = Preferences.shared
+    @State private var chromeLayout = ChromeLayout()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -132,7 +169,17 @@ struct RootView: View {
                 screen
                     .id(screenIdentity)
                     .transition(isFlight ? .flight : navigator.isReturningFromPage ? .returning : .section)
+                    .environment(\.chromeLayout, chromeLayout)
+                VStack {
+                    TopBar()
+                        .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 }
+                        .onPreferenceChange(BackButtonFrameKey.self) { chromeLayout.back = $0 }
+                        .onPreferenceChange(ChromeFramesKey.self) { chromeLayout.frames = $0 }
+                    Spacer(minLength: 0)
+                }
+                .zIndex(1)
                 MenuOverlay(controller: menu)
+                    .zIndex(1)
                 if let sheet = navigator.sheet {
                     SheetHost(request: sheet)
                         .id(sheet.id)
@@ -195,10 +242,8 @@ struct RootView: View {
     @ViewBuilder
     private var screen: some View {
         switch navigator.route {
-        case .library:
-            GridScreen(notebookId: nil)
-        case .notebook(let notebookId):
-            GridScreen(notebookId: notebookId)
+        case .library, .notebook:
+            GridScreen(notebookId: navigator.route.folderId)
         case .page(let notebookId, let pageId):
             PageScreen(notebookId: notebookId, pageId: pageId)
         }
@@ -230,8 +275,12 @@ struct ChromeFramesKey: PreferenceKey {
 }
 
 extension View {
-    func chromeFrame(_ key: String) -> some View {
-        background(GeometryReader { proxy in Color.clear.preference(key: ChromeFramesKey.self, value: [key: proxy.frame(in: .global)]) })
+    func reportsChrome(_ key: String, isActive: Bool = true) -> some View {
+        background(GeometryReader { proxy in
+            Color.clear
+                .preference(key: ChromeFramesKey.self, value: isActive ? [key: proxy.frame(in: .global)] : [:])
+                .preference(key: TopBarHeightKey.self, value: isActive ? proxy.frame(in: .global).maxY : 0)
+        })
     }
 }
 
@@ -262,101 +311,104 @@ struct SettingsButton: View {
     }
 }
 
-struct TopBar<Trailing: View>: View {
-    let title: String
-    var label: String?
-    var detail: String?
-    var chromeShown: Bool?
-    var onBack: (() -> Void)?
-    var onRename: ((String) -> Void)?
-    var isBare = false
-    var popsTrailing = true
-    @ViewBuilder var trailing: () -> Trailing
-
+struct TopBar: View {
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var navigator: Navigator
     @Environment(\.screenInsets) private var insets
 
     private static var bareTitleSize: CGFloat { 15 }
     private static var topGap: CGFloat { 6 }
     private static var titlesDrop: CGFloat { 10 }
+    private static let createdFormat: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM/yy"
+        return formatter
+    }()
+
+    private var isPage: Bool {
+        navigator.route.isPage
+    }
+
+    private var folderId: String? {
+        navigator.route.folderId
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            Group {
-                if isBare {
-                    bareTitles
-                } else {
-                    titles
-                        .modifier(ChromePop(isShown: chromeShown ?? true, order: 0))
-                        .padding(.top, Self.titlesDrop)
-                }
+            ZStack(alignment: .topLeading) {
+                folderTitles
+                    .modifier(ChromePop(isShown: !isPage, order: 0))
+                    .padding(.top, Self.titlesDrop)
+                    .allowsHitTesting(!isPage)
+                    .reportsChrome("title", isActive: !isPage)
+                pageTitles
+                    .allowsHitTesting(isPage)
+                    .reportsChrome("title", isActive: isPage)
             }
-                .chromeFrame("title")
             Spacer(minLength: 12)
             HStack(spacing: 14) {
-                trailing()
-                    .modifier(ChromePop(isShown: popsTrailing ? chromeShown ?? true : true, order: 1))
-                if let onBack {
-                    HoldableButton(action: onBack) {
-                        GlyphView(name: "back", color: Palette.navigation)
-                            .frame(width: 48, height: 48)
-                            .background(Circle().fill(Palette.panel))
-                            .overlay(Circle().stroke(Palette.border, lineWidth: 1))
+                ZStack(alignment: .trailing) {
+                    SearchField(text: $navigator.query, isShown: !isPage)
+                        .reportsChrome("search", isActive: !isPage)
+                    if isPage, let page = navigator.lastPage, library.isReadOnly(page.pageId) {
+                        MicroLabel(text: "Read only", color: Palette.destructive)
+                            .transition(.popTogether)
                     }
-                    .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
-                    .modifier(ChromePop(isShown: chromeShown ?? true, order: 2))
-                    .transition(.popTogether)
                 }
-                SettingsButton()
-                    .modifier(ChromePop(isShown: chromeShown ?? true, order: 3))
+                HStack(spacing: 14) {
+                    if folderId != nil {
+                        HoldableButton(action: goBack) {
+                            GlyphView(name: "back", color: Palette.navigation)
+                                .frame(width: 48, height: 48)
+                                .background(Circle().fill(Palette.panel))
+                                .overlay(Circle().stroke(Palette.border, lineWidth: 1))
+                        }
+                        .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
+                        .transition(.popTogether)
+                    }
+                    SettingsButton()
+                }
+                .reportsChrome("controls")
             }
-            .chromeFrame("controls")
         }
         .padding(.horizontal, 24)
         .padding(.top, Self.topGap + insets.top)
-        .background(GeometryReader { proxy in Color.clear.preference(key: TopBarHeightKey.self, value: proxy.frame(in: .global).maxY) })
     }
 
-    private var bareTitles: some View {
-        let isShown = chromeShown ?? true
-        let stagger = Motion.chromeStaggerMilliseconds
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            if let label {
-                MicroLabel(text: label)
-                    .labelReveal(isShown)
-            }
-            Group {
-                if let onRename {
-                    InlineTitle(title: title, size: Self.bareTitleSize, isSweeping: false, onRename: onRename)
-                } else {
-                    SweepTitle(text: title, size: Self.bareTitleSize, isSweeping: false)
-                }
-            }
-            .labelReveal(isShown, delay: stagger)
-            if let detail {
-                Text(detail)
-                    .font(Typography.mono(10))
-                    .foregroundColor(Palette.textMuted)
-                    .labelReveal(isShown, delay: stagger * 2)
-            }
+    private func goBack() {
+        switch navigator.route {
+        case .library:
+            break
+        case .notebook(let notebookId):
+            navigator.go(library.parent(of: notebookId).map(Route.notebook) ?? .library)
+        case .page(let notebookId, _):
+            navigator.go(.notebook(notebookId))
         }
     }
 
-    private var titles: some View {
+    private var folderTitle: String {
+        folderId.flatMap { library.notebook($0)?.title } ?? "Folders"
+    }
+
+    private var folderLabel: String {
+        guard let folderId else {
+            let count = library.folders(in: nil).count
+            return "\(count) folder\(count == 1 ? "" : "s")"
+        }
+        return library.folderSummary(folderId)
+    }
+
+    private var folderTitles: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let label {
-                MicroLabel(text: label)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                if let onRename {
-                    InlineTitle(title: title, onRename: onRename)
-                } else {
-                    SweepTitle(text: title)
+            MicroLabel(text: folderLabel)
+            if let folderId {
+                InlineTitle(title: folderTitle) { title in
+                    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    library.updateNotebook(folderId) { $0.title = title }
                 }
-                if let detail {
-                    Text(detail)
-                        .font(Typography.mono(12))
-                        .foregroundColor(Palette.textMuted)
-                }
+            } else {
+                SweepTitle(text: folderTitle)
             }
         }
         .padding(.horizontal, 20)
@@ -364,6 +416,29 @@ struct TopBar<Trailing: View>: View {
         .padding(.bottom, 11)
         .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.panel))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.border, lineWidth: 1))
+    }
+
+    private var pageTitles: some View {
+        let isShown = isPage && navigator.isPageChromeShown
+        let stagger = Motion.chromeStaggerMilliseconds
+        let page = navigator.lastPage
+        let note = page.flatMap { library.page($0.pageId) }
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            MicroLabel(text: page.flatMap { library.notebook($0.notebookId)?.title } ?? "Folder")
+                .labelReveal(isShown)
+            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false) { title in
+                guard let page else { return }
+                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                library.updatePage(page.pageId) { $0.title = trimmed.isEmpty ? nil : title }
+            }
+            .labelReveal(isShown, delay: stagger)
+            if let created = page.flatMap({ Identifier.creationDate(of: $0.pageId) }) {
+                Text(Self.createdFormat.string(from: created))
+                    .font(Typography.mono(10))
+                    .foregroundColor(Palette.textMuted)
+                    .labelReveal(isShown, delay: stagger * 2)
+            }
+        }
     }
 }
 
