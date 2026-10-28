@@ -239,7 +239,7 @@ final class Library: ObservableObject {
             asset: asset,
             sourcePage: index,
             sourceSizeMillimetres: [width, height],
-            placement: Placement(x: rounded((cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight +(cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
+            placement: Placement(x: rounded((cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
             fit: isA4 ? .original : .fitCell,
             updated: now,
             device: device
