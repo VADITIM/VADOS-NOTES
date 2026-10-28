@@ -1,7 +1,7 @@
 import { create } from "./components.js"
 import { KeyedList, itemSize, navMetrics, navSizeSlider, separator, separatorExtent } from "./controls.js"
 import { animate, duration, tween } from "./motion.js"
-import { PillMotion, hideTurned, popTogether, revealElement, shapePillShell, spring, springAnimate } from "./pill.js"
+import { PillMotion, hideTurned, popTogether, revealElement, shapePillShell, spring, springAnimate, switchOut } from "./pill.js"
 import { navPlacement, setNavPlacement } from "./preferences.js"
 import { glyph } from "./shapes.js"
 import { tokens } from "./tokens.js"
@@ -43,6 +43,7 @@ class SpringPoint {
             this.onFrame(this.value)
             return
         }
+        this.onFrame(this.value)
         if (!this.request) {
             this.last = performance.now()
             this.request = requestAnimationFrame((now) => this.step(now))
@@ -351,7 +352,7 @@ export class ToolNav {
     }
 
     syncItems(isFaceChange) {
-        const before = this.navigation.content.getBoundingClientRect()
+        const before = snapshot(this.navigation.content, this.navigation.size)
         this.items.sync(this.entries(), { isSwitch: true })
         this.navigation.content.append(this.endGrip)
         this.navigation.content.prepend(this.startGrip)
@@ -363,11 +364,13 @@ export class ToolNav {
         }
         this.navigation.isWide = this.orientation === "horizontal"
         this.navigation.resize(Boolean(isFaceChange))
-        this.moveWash(before)
+        const isSwitchShown = Boolean(isFaceChange) && this.navigation.motion.areElementsShown
+        settleSwitch(this.navigation.content, before, this.navigation.size, isSwitchShown, this.wash)
+        this.moveWash(before, isSwitchShown)
         this.syncSlider()
     }
 
-    moveWash() {
+    moveWash(before, isSwitchShown) {
         const selectedId = this.props.selectedId
         const target = selectedId ? this.items.elements.get(selectedId) : null
         if (!target || !this.navigation.motion.isPresent) {
@@ -378,14 +381,21 @@ export class ToolNav {
             this.lastSelectedId = selectedId
             return
         }
-        const from = { left: this.wash.offsetLeft, top: this.wash.offsetTop }
+        const from = before.positions.get(this.wash)
+        const shift = switchShift(before, this.navigation.size)
         const isVisible = this.wash.style.opacity === "1"
         this.positionWash(target)
         this.wash.style.opacity = "1"
-        if (isVisible && this.lastSelectedId !== selectedId) {
-            const deltaX = from.left - this.wash.offsetLeft
-            const deltaY = from.top - this.wash.offsetTop
-            springAnimate(this.wash, [{ translate: `${deltaX}px ${deltaY}px` }, { translate: "0px 0px" }], "wash")
+        const isSelectionChange = this.lastSelectedId !== selectedId
+        if (isVisible && from && (isSelectionChange || isSwitchShown)) {
+            const deltaX = from[0] + shift[0] - this.wash.offsetLeft
+            const deltaY = from[1] + shift[1] - this.wash.offsetTop
+            if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+                cancelSwitchShift(this.wash)
+                const keyframes = [{ translate: `${deltaX}px ${deltaY}px` }, { translate: "0px 0px" }]
+                const running = isSelectionChange ? springAnimate(this.wash, keyframes, "wash") : animate(this.wash, keyframes, { milliseconds: duration("navigation_switch") * 2, curveName: "power_three_in_out" })
+                running.id = "switch"
+            }
         }
         this.lastSelectedId = selectedId
     }
@@ -444,11 +454,12 @@ export class ToolNav {
         }
         const groups = this.groupList()
         const wanted = new Set(groups.map((group) => group.id))
+        const before = snapshot(content, this.subNavigation.size)
         for (const [id, record] of this.groupElements) {
             if (!wanted.has(id)) {
                 this.groupElements.delete(id)
                 for (const element of [record.element, record.separator].filter(Boolean)) {
-                    leaveGroup(element, isSwitch)
+                    leaveGroup(element, before.positions.get(element))
                 }
             }
         }
@@ -470,7 +481,7 @@ export class ToolNav {
                 record.separator = separator(this.orientation)
                 record.separator.dataset.revealedElement = ""
             } else if (index === 0 && record.separator) {
-                leaveGroup(record.separator, isSwitch)
+                leaveGroup(record.separator, before.positions.get(record.separator))
                 record.separator = null
             }
             const nodes = [record.separator, record.element].filter(Boolean)
@@ -504,6 +515,7 @@ export class ToolNav {
         })
         this.subNavigation.isWide = this.orientation === "horizontal"
         this.subNavigation.resize(isSwitch)
+        settleSwitch(content, before, this.subNavigation.size, isSwitch && this.subNavigation.motion.areElementsShown)
         for (const group of groups) {
             group.afterLayout?.(this.groupElements.get(group.id)?.element)
         }
@@ -1181,23 +1193,68 @@ function morphFrom(element, before) {
     animate(element, [{ translate: `${deltaX}px ${deltaY}px` }, { translate: "0px 0px" }], { milliseconds: duration("state") * 2, curveName: "power_three_in_out" })
 }
 
-function leaveGroup(element, isSwitch) {
-    const parent = element.parentElement
-    if (!parent) {
+function leaveGroup(element, position = [element.offsetLeft, element.offsetTop]) {
+    if (!element.parentElement) {
         return
     }
     element.style.position = "absolute"
-    element.style.left = `${element.offsetLeft}px`
-    element.style.top = `${element.offsetTop}px`
+    element.style.left = `${position[0]}px`
+    element.style.top = `${position[1]}px`
     element.style.pointerEvents = "none"
-    const targets = [...element.querySelectorAll("[data-revealed-element]")]
-    if (element.hasAttribute("data-revealed-element") || element.classList.contains("nav-separator")) {
-        targets.push(element)
+    element.classList.add("is-leaving")
+    const leaving = element.classList.contains("nav-separator") ? switchOut(element) : animate(element, [{ opacity: 1 }, { opacity: 0 }], { milliseconds: duration("press"), curveName: "power_two_in", fill: "forwards" })
+    leaving.finished.then(() => element.remove(), () => element.remove())
+}
+
+function shownTranslate(element) {
+    const value = getComputedStyle(element).translate
+    if (!value || value === "none") {
+        return [0, 0]
     }
-    if (isSwitch && targets.length) {
-        Promise.all(targets.map((target) => revealElement(target, false).finished.catch(() => null))).then(() => element.remove())
-    } else {
-        animate(element, [{ opacity: 1 }, { opacity: 0 }], { milliseconds: duration("press"), curveName: "power_two_in", fill: "forwards" }).finished.then(() => element.remove(), () => element.remove())
+    const parts = value.split(" ").map((part) => parseFloat(part) || 0)
+    return [parts[0] ?? 0, parts[1] ?? 0]
+}
+
+function snapshot(container, size) {
+    const positions = new Map()
+    for (const child of container.children) {
+        const translate = shownTranslate(child)
+        positions.set(child, [child.offsetLeft + translate[0], child.offsetTop + translate[1]])
+    }
+    return { positions, size: [...size] }
+}
+
+function switchShift(before, size) {
+    return [(size[0] - before.size[0]) / 2, (size[1] - before.size[1]) / 2]
+}
+
+function cancelSwitchShift(element) {
+    element.getAnimations().filter((running) => running.id === "switch").forEach((running) => running.cancel())
+}
+
+function settleSwitch(container, before, size, isAnimated, skipped = null) {
+    const shift = switchShift(before, size)
+    for (const child of container.children) {
+        const position = before.positions.get(child)
+        if (!position || child === skipped) {
+            continue
+        }
+        if (child.classList.contains("is-leaving")) {
+            child.style.left = `${(parseFloat(child.style.left) || 0) + shift[0]}px`
+            child.style.top = `${(parseFloat(child.style.top) || 0) + shift[1]}px`
+            continue
+        }
+        if (!isAnimated) {
+            continue
+        }
+        const deltaX = position[0] + shift[0] - child.offsetLeft
+        const deltaY = position[1] + shift[1] - child.offsetTop
+        if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+            continue
+        }
+        cancelSwitchShift(child)
+        const running = animate(child, [{ translate: `${deltaX}px ${deltaY}px` }, { translate: "0px 0px" }], { milliseconds: duration("navigation_switch") * 2, curveName: "power_three_in_out" })
+        running.id = "switch"
     }
 }
 

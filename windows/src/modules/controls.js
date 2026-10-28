@@ -45,12 +45,12 @@ export class KeyedList {
 
     sync(entries, { isSwitch = true } = {}) {
         const wanted = new Set(entries.map((entry) => entry.key))
-        for (const [key, element] of this.elements) {
-            if (!wanted.has(key)) {
-                this.elements.delete(key)
-                leaveInPlace(element)
-            }
-        }
+        const leaving = [...this.elements].filter(([key]) => !wanted.has(key))
+        const positions = leaving.map(([, element]) => [element.offsetLeft, element.offsetTop])
+        leaving.forEach(([key, element], index) => {
+            this.elements.delete(key)
+            leaveInPlace(element, positions[index])
+        })
         let previous = null
         for (const entry of entries) {
             let element = this.elements.get(entry.key)
@@ -100,12 +100,11 @@ function firstInFlow(container) {
     return [...container.children].find((child) => !child.classList.contains("is-leaving") && child.dataset.key !== undefined) ?? null
 }
 
-export function leaveInPlace(element) {
-    const parent = element.offsetParent
-    if (parent) {
+export function leaveInPlace(element, position = [element.offsetLeft, element.offsetTop]) {
+    if (element.offsetParent) {
         element.style.position = "absolute"
-        element.style.left = `${element.offsetLeft}px`
-        element.style.top = `${element.offsetTop}px`
+        element.style.left = `${position[0]}px`
+        element.style.top = `${position[1]}px`
     }
     element.classList.add("is-leaving")
     element.style.pointerEvents = "none"
