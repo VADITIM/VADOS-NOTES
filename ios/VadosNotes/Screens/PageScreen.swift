@@ -354,7 +354,7 @@ struct PageScreen: View {
         let halfWidth: CGFloat = 150
         let x = min(layer.width - halfWidth - NavMetrics.edgeMargin, max(halfWidth + NavMetrics.edgeMargin, request.frame.midX - origin.x))
         let above = request.frame.minY - origin.y - NavMetrics.besideGap - 27
-        let y = above > max(topBarBottom - origin.y, 0) + 27 ? above : request.frame.maxY - origin.y + NavMetrics.besideGap + 27
+        let y = above > max(chrome.bottom - origin.y, 0) + 27 ? above : request.frame.maxY - origin.y + NavMetrics.besideGap + 27
         return HStack(spacing: NavMetrics.spacing) {
             Button {
                 Haptics.landed()
