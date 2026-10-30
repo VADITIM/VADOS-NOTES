@@ -35,17 +35,28 @@ private enum TileKind: String {
 private struct TileDrag {
     let kind: TileKind
     let id: String
+    let groupId: String?
     var location: CGPoint
     let grab: CGSize
     let size: CGSize
     var target: DropTarget?
+
+    var isLoose: Bool {
+        guard groupId != nil, case .slot = target else { return false }
+        return true
+    }
+
+    var slotIndex: Int? {
+        guard case .slot(let index) = target else { return nil }
+        return index
+    }
 }
 
 private enum DropTarget: Equatable {
     case into(String)
     case up(String?)
-    case before(String)
-    case after(String)
+    case group(String)
+    case slot(Int)
 }
 
 struct GridScreen: View {
@@ -61,11 +72,24 @@ struct GridScreen: View {
     @State private var arrangedFolders: [String]?
     @State private var arrangedNotes: [String]?
     @State private var openGroups: Set<String> = []
+    @State private var isSwipeSpent = false
 
     private let folderColumns = [GridItem(.adaptive(minimum: 230, maximum: 320), spacing: 18, alignment: .top)]
     private let noteColumns = [GridItem(.adaptive(minimum: 170, maximum: 240), spacing: 18, alignment: .top)]
     private static let dropEdgeShare: CGFloat = 0.22
     private static let noteColumnWidth: CGFloat = 170
+    private static let folderColumnWidth: CGFloat = 230
+    private static let tileSpacing: CGFloat = 18
+    private static let slotReach: CGFloat = 48
+    private static let groupSwipeDistance: CGFloat = 24
+
+    private var folderLayout: MasonryLayout {
+        MasonryLayout(minimumColumnWidth: Self.folderColumnWidth, spacing: Self.tileSpacing, unitHeight: Self.folderUnitHeight)
+    }
+
+    private var noteLayout: MasonryLayout {
+        MasonryLayout(minimumColumnWidth: Self.noteColumnWidth, spacing: Self.tileSpacing, unitHeight: Self.noteUnitHeight)
+    }
 
     private var trimmedQuery: String {
         navigator.query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -79,15 +103,19 @@ struct GridScreen: View {
         groups.contains { $0.members.contains(id) }
     }
 
+    private func isShownInGrid(_ id: String) -> Bool {
+        !isGrouped(id) || (drag?.id == id && drag?.isLoose == true)
+    }
+
     private var folders: [Notebook] {
-        let items = library.folders(in: notebookId).filter { !isGrouped($0.id) }
+        let items = library.folders(in: notebookId).filter { isShownInGrid($0.id) }
         guard let arrangedFolders else { return items }
         return arrangedFolders.compactMap { id in items.first { $0.id == id } }
     }
 
     private var notes: [Page] {
         guard let notebookId else { return [] }
-        let items = library.pages(in: notebookId).filter { !isGrouped($0.id) }
+        let items = library.pages(in: notebookId).filter { isShownInGrid($0.id) }
         guard let arrangedNotes else { return items }
         return arrangedNotes.compactMap { id in items.first { $0.id == id } }
     }
@@ -112,6 +140,9 @@ struct GridScreen: View {
                         .transition(.folder)
                     }
                     .padding(.bottom, 48)
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .topLeading)
+                    .background(Color.clear.contentShape(Rectangle()).onTapGesture(perform: closeGroups))
+                    .simultaneousGesture(groupSwipe)
                 }
                 .scrollDisabled(drag != nil)
                 if let drag {
@@ -141,18 +172,40 @@ struct GridScreen: View {
         groups.contains { $0.isFolders == isFolders }
     }
 
+    private func closeGroups() {
+        guard !openGroups.isEmpty else { return }
+        Haptics.tick()
+        openGroups.removeAll()
+    }
+
+    private var groupSwipe: some Gesture {
+        DragGesture(minimumDistance: Self.groupSwipeDistance, coordinateSpace: .global)
+            .onChanged { _ in
+                if drag != nil {
+                    isSwipeSpent = true
+                }
+            }
+            .onEnded { value in
+                defer { isSwipeSpent = false }
+                guard !isSwipeSpent, drag == nil, abs(value.translation.width) > abs(value.translation.height) else { return }
+                let startsInGroup = openGroups.contains { frames["group:\($0)"]?.contains(value.startLocation) == true }
+                if !startsInGroup {
+                    closeGroups()
+                }
+            }
+    }
+
+    private func areaReport(_ key: String) -> some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: TileFramesKey.self, value: [key: proxy.frame(in: .global)])
+        }
+    }
+
     @ViewBuilder
     private var browse: some View {
+        foldersSection
         if let notebookId {
-            if notes.isEmpty && !hasGroups(isFolders: false) {
-                notesSection(notebookId)
-                foldersSection
-            } else {
-                foldersSection
-                notesSection(notebookId)
-            }
-        } else {
-            foldersSection
+            notesSection(notebookId)
         }
     }
 
@@ -163,7 +216,7 @@ struct GridScreen: View {
                 heading("Folders")
             }
             groupRows(isFolders: true)
-            LazyVGrid(columns: folderColumns, alignment: .leading, spacing: 18) {
+            folderLayout {
                 if notebookId == nil {
                     AddTile(glyph: "folder", title: "Add folder", aspect: 1.25, isFolder: true) {
                         navigator.show(.newFolder(parentId: nil))
@@ -173,6 +226,8 @@ struct GridScreen: View {
                     folderTile(folder, rank: index + 1, isDraggable: true)
                 }
             }
+            .animation(Motion.placement, value: folders.map(\.id))
+            .background(areaReport("folders"))
             .padding(.horizontal, 28)
             .padding(.top, notebookId == nil ? 24 : 12)
         }
@@ -183,8 +238,8 @@ struct GridScreen: View {
         heading("Notes")
             .padding(.top, 12)
         groupRows(isFolders: false)
-        MasonryLayout(minimumColumnWidth: Self.noteColumnWidth, spacing: 18, unitHeight: Self.noteUnitHeight) {
-            VStack(spacing: 18) {
+        noteLayout {
+            VStack(spacing: Self.tileSpacing) {
                 CompactAddTile(glyph: "note", title: "Add note") {
                     navigator.show(.newNote(notebookId: notebookId))
                 }
@@ -199,12 +254,17 @@ struct GridScreen: View {
             }
         }
         .animation(Motion.placement, value: notes.map(\.id))
+        .background(areaReport("notes"))
         .padding(.horizontal, 28)
         .padding(.top, 12)
     }
 
     static func noteUnitHeight(_ width: CGFloat) -> CGFloat {
         (width - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + TileIcons.note
+    }
+
+    static func folderUnitHeight(_ width: CGFloat) -> CGFloat {
+        (width - 28) / 1.25 + 28 + 12 + 44
     }
 
     @ViewBuilder
@@ -215,11 +275,13 @@ struct GridScreen: View {
             return live
         }.filter { !$0.members.isEmpty }
         ForEach(shown) { group in
+            let isDropTarget = drag?.target == .group(group.id) && drag?.groupId != group.id
             StackGroupView(
                 group: group,
                 caption: "\(group.members.count) \(isFolders ? "folder" : "note")\(group.members.count == 1 ? "" : "s")",
                 isOpen: openGroups.contains(group.id),
-                cardHeight: { cell in isFolders ? (cell - 28) / 1.25 + 28 + 12 + 44 : Self.noteUnitHeight(cell) },
+                isSwipeEnabled: drag == nil,
+                cardHeight: { cell in isFolders ? Self.folderUnitHeight(cell) : Self.noteUnitHeight(cell) },
                 onToggle: { isOpen in
                     if isOpen {
                         openGroups.insert(group.id)
@@ -228,19 +290,22 @@ struct GridScreen: View {
                     }
                 },
                 onMenu: { point in showGroupMenu(group, at: point) },
-                card: { id in groupCard(id, isFolders: isFolders) }
+                card: { id in groupCard(id, isFolders: isFolders, groupId: group.id) }
             )
+            .background(areaReport("group:\(group.id)"))
+            .overlay(Squircle.panel.stroke(Palette.accent, lineWidth: 2).padding(-8).opacity(isDropTarget ? 1 : 0).allowsHitTesting(false))
+            .animation(Motion.backOut(Motion.stateMilliseconds), value: isDropTarget)
             .padding(.horizontal, 28)
             .padding(.top, 18)
         }
     }
 
-    private func groupCard(_ id: String, isFolders: Bool) -> AnyView {
+    private func groupCard(_ id: String, isFolders: Bool, groupId: String) -> AnyView {
         if isFolders, let folder = library.notebook(id) {
-            return AnyView(folderTile(folder, rank: 0, isDraggable: false))
+            return AnyView(folderTile(folder, rank: 0, isDraggable: true, groupId: groupId))
         }
         if let page = library.page(id) {
-            return AnyView(noteTile(page, rank: 0, isDraggable: false))
+            return AnyView(noteTile(page, rank: 0, isDraggable: true, groupId: groupId))
         }
         return AnyView(EmptyView())
     }
@@ -286,35 +351,41 @@ struct GridScreen: View {
             .padding(.top, 18)
     }
 
-    private func folderTile(_ folder: Notebook, rank: Int, isDraggable: Bool, isResult: Bool = false) -> some View {
+    private func frameKey(_ kind: TileKind, _ id: String, groupId: String?) -> String {
+        groupId == nil ? "\(kind.rawValue):\(id)" : "member:\(id)"
+    }
+
+    private func folderTile(_ folder: Notebook, rank: Int, isDraggable: Bool, isResult: Bool = false, groupId: String? = nil) -> some View {
         let caption = isResult && library.parent(of: folder.id) != nil ? library.path(of: library.parent(of: folder.id) ?? "") : library.folderSummary(folder.id)
         return FolderTile(notebook: folder, caption: caption, rank: rank)
             .modifier(TileBehaviour(
-                key: "folder:\(folder.id)",
+                key: frameKey(.folder, folder.id, groupId: groupId),
                 isDraggable: isDraggable,
                 isSource: drag?.id == folder.id,
+                isHidden: groupId != nil && drag?.id == folder.id && drag?.isLoose == true,
                 isTarget: drag?.target == .into(folder.id),
-                callbacks: callbacks(kind: .folder, id: folder.id, isDraggable: isDraggable, onTap: { _ in navigator.go(.notebook(folder.id)) }, onMenu: { showFolderMenu(folder.id, at: $0) })
+                callbacks: callbacks(kind: .folder, id: folder.id, groupId: groupId, isDraggable: isDraggable, onTap: { _ in navigator.go(.notebook(folder.id)) }, onMenu: { showFolderMenu(folder.id, at: $0) })
             ))
     }
 
-    private func noteTile(_ page: Page, rank: Int, isDraggable: Bool, isResult: Bool = false) -> some View {
+    private func noteTile(_ page: Page, rank: Int, isDraggable: Bool, isResult: Bool = false, groupId: String? = nil) -> some View {
         let caption = isResult ? library.path(of: page.notebook) : (page.extent.cellCount > 1 ? "\(page.extent.columns)×\(page.extent.rows)" : "")
         return NoteTile(page: page, title: library.noteTitle(page), caption: caption, rank: rank)
             .modifier(TileBehaviour(
-                key: "note:\(page.id)",
+                key: frameKey(.note, page.id, groupId: groupId),
                 isDraggable: isDraggable,
                 isSource: drag?.id == page.id,
+                isHidden: groupId != nil && drag?.id == page.id && drag?.isLoose == true,
                 isTarget: false,
-                callbacks: callbacks(kind: .note, id: page.id, isDraggable: isDraggable, onTap: { frame in navigator.go(.page(notebookId: page.notebook, pageId: page.id), from: frame) }, onMenu: { showNoteMenu(page.id, at: $0) })
+                callbacks: callbacks(kind: .note, id: page.id, groupId: groupId, isDraggable: isDraggable, onTap: { frame in navigator.go(.page(notebookId: page.notebook, pageId: page.id), from: frame) }, onMenu: { showNoteMenu(page.id, at: $0) })
             ))
     }
 
-    private func callbacks(kind: TileKind, id: String, isDraggable: Bool, onTap: @escaping (CGRect) -> Void, onMenu: @escaping (CGPoint) -> Void) -> TileCallbacks {
+    private func callbacks(kind: TileKind, id: String, groupId: String?, isDraggable: Bool, onTap: @escaping (CGRect) -> Void, onMenu: @escaping (CGPoint) -> Void) -> TileCallbacks {
         TileCallbacks(
             onTap: onTap,
             onMenu: onMenu,
-            onDragBegin: isDraggable ? { location in beginDrag(kind: kind, id: id, at: location) } : nil,
+            onDragBegin: isDraggable ? { location in beginDrag(kind: kind, id: id, groupId: groupId, at: location) } : nil,
             onDragMove: isDraggable ? { location in moveDrag(to: location) } : nil,
             onDragEnd: isDraggable ? { location, isDrop in endDrag(at: location, isDrop: isDrop) } : nil
         )
@@ -326,66 +397,63 @@ struct GridScreen: View {
             switch drag.kind {
             case .folder:
                 if let folder = library.notebook(drag.id) {
-                    FolderTile(notebook: folder, caption: library.folderSummary(folder.id), rank: 0)
+                    FolderTile(notebook: folder, caption: library.folderSummary(folder.id), rank: 0, isEntering: false)
                 }
             case .note:
                 if let page = library.page(drag.id) {
-                    NoteTile(page: page, title: library.noteTitle(page), caption: "", rank: 0)
+                    NoteTile(page: page, title: library.noteTitle(page), caption: "", rank: 0, isEntering: false)
                 }
             }
         }
         .frame(width: drag.size.width, height: drag.size.height)
-        .scaleEffect(1.04)
+        .scaleEffect(CGFloat(Motion.scales.held), anchor: UnitPoint(x: drag.grab.width / max(1, drag.size.width), y: drag.grab.height / max(1, drag.size.height)))
         .shadow(color: .black.opacity(0.6), radius: 18, y: 14)
-        .opacity(isIntoTarget(drag.target) ? 0.85 : 1)
+        .opacity(isIntoTarget(drag) ? 0.85 : 1)
     }
 
-    private func isIntoTarget(_ target: DropTarget?) -> Bool {
-        if case .some(.into) = target {
-            return true
+    private func isIntoTarget(_ drag: TileDrag) -> Bool {
+        switch drag.target {
+        case .into: return true
+        case .group(let groupId): return groupId != drag.groupId
+        default: return false
         }
-        return false
     }
 
-    private func beginDrag(kind: TileKind, id: String, at location: CGPoint) {
+    private func beginDrag(kind: TileKind, id: String, groupId: String?, at location: CGPoint) {
         menu.dismiss()
-        guard let frame = frames["\(kind.rawValue):\(id)"] else { return }
+        guard let frame = frames[frameKey(kind, id, groupId: groupId)] else { return }
         arrangedFolders = folders.map(\.id)
         arrangedNotes = notes.map(\.id)
-        drag = TileDrag(kind: kind, id: id, location: location, grab: CGSize(width: location.x - frame.minX, height: location.y - frame.minY), size: frame.size, target: nil)
+        drag = TileDrag(kind: kind, id: id, groupId: groupId, location: location, grab: CGSize(width: location.x - frame.minX, height: location.y - frame.minY), size: frame.size, target: nil)
     }
 
     private func moveDrag(to location: CGPoint) {
         guard var current = drag else { return }
         current.location = location
-        let target = dropTarget(for: current, at: location)
-        current.target = target
+        if let target = dropTarget(for: current, at: location) {
+            current.target = target
+        } else if let index = slotIndex(for: current, at: location) {
+            current.target = .slot(index)
+        } else if current.slotIndex == nil {
+            current.target = nil
+        }
         drag = current
-        switch target {
-        case .before(let otherId), .after(let otherId):
-            let isAfter: Bool
-            if case .after = target {
-                isAfter = true
+        guard let index = current.slotIndex else { return }
+        let others = shownOrder(of: current.kind).filter { $0 != current.id }
+        var order = others
+        order.insert(current.id, at: min(index, others.count))
+        guard order != shownOrder(of: current.kind) else { return }
+        withAnimation(Motion.placement) {
+            if current.kind == .folder {
+                arrangedFolders = order
             } else {
-                isAfter = false
+                arrangedNotes = order
             }
-            withAnimation(Motion.placement) {
-                if current.kind == .folder {
-                    arrangedFolders = moved(arrangedFolders ?? [], current.id, next: otherId, isAfter: isAfter)
-                } else {
-                    arrangedNotes = moved(arrangedNotes ?? [], current.id, next: otherId, isAfter: isAfter)
-                }
-            }
-        default:
-            break
         }
     }
 
-    private func moved(_ order: [String], _ id: String, next otherId: String, isAfter: Bool) -> [String] {
-        var result = order.filter { $0 != id }
-        guard let index = result.firstIndex(of: otherId) else { return order }
-        result.insert(id, at: isAfter ? index + 1 : index)
-        return result
+    private func shownOrder(of kind: TileKind) -> [String] {
+        (kind == .folder ? arrangedFolders : arrangedNotes) ?? []
     }
 
     private func dropTarget(for drag: TileDrag, at location: CGPoint) -> DropTarget? {
@@ -393,52 +461,107 @@ struct GridScreen: View {
             let parentId = library.parent(of: notebookId)
             return drag.kind == .folder || parentId != nil ? .up(parentId) : nil
         }
+        if let folderId = folder(under: location, for: drag) {
+            return .into(folderId)
+        }
+        if let group = groups.first(where: { $0.isFolders == (drag.kind == .folder) && frames["group:\($0.id)"]?.contains(location) == true }) {
+            return .group(group.id)
+        }
+        return nil
+    }
+
+    private func folder(under location: CGPoint, for drag: TileDrag) -> String? {
         for (key, frame) in frames where frame.contains(location) {
             let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
-            guard parts.count == 2, parts[1] != drag.id, let kind = TileKind(rawValue: parts[0]) else { continue }
-            let share = (location.x - frame.minX) / max(1, frame.width)
-            if kind == .folder && (drag.kind == .note || (share > Self.dropEdgeShare && share < 1 - Self.dropEdgeShare)) {
-                if drag.kind == .folder && !library.canMoveNotebook(drag.id, into: parts[1]) {
-                    return nil
+            guard parts.count == 2, parts[1] != drag.id, library.notebook(parts[1]) != nil else { continue }
+            switch (parts[0], drag.kind) {
+            case ("folder", .note), ("member", .note):
+                return parts[1]
+            case ("folder", .folder):
+                let share = (location.x - frame.minX) / max(1, frame.width)
+                if share > Self.dropEdgeShare && share < 1 - Self.dropEdgeShare && library.canMoveNotebook(drag.id, into: parts[1]) {
+                    return parts[1]
                 }
-                return .into(parts[1])
+            default:
+                continue
             }
-            guard kind == drag.kind else { return nil }
-            return share < 0.5 ? .before(parts[1]) : .after(parts[1])
         }
-        return drag.target.flatMap { target in
-            if case .before = target { return target }
-            if case .after = target { return target }
-            return nil
+        return nil
+    }
+
+    private func slotIndex(for drag: TileDrag, at location: CGPoint) -> Int? {
+        let isFolder = drag.kind == .folder
+        guard let area = frames[isFolder ? "folders" : "notes"] else { return nil }
+        let order = shownOrder(of: drag.kind)
+        let others = order.filter { $0 != drag.id }
+        let leading = isFolder ? (notebookId == nil ? 1 : 0) : 1
+        let extent: (String) -> Extent = { id in isFolder ? .single : library.page(id)?.extent ?? .single }
+        let layout = isFolder ? folderLayout : noteLayout
+        let candidates = (0...others.count).map { index -> CGRect in
+            var cells = others.map(extent)
+            cells.insert(extent(drag.id), at: index)
+            let placed = layout.frames(width: area.width, extents: Array(repeating: Extent.single, count: leading) + cells)
+            return placed[leading + index].offsetBy(dx: area.minX, dy: area.minY)
         }
+        let isNear = area.insetBy(dx: -Self.slotReach, dy: -Self.slotReach).contains(location) || candidates.contains { $0.contains(location) }
+        guard isNear else { return nil }
+        let current = isShownInGrid(drag.id) ? order.firstIndex(of: drag.id) : nil
+        if let current, candidates.indices.contains(current), candidates[current].contains(location) {
+            return current
+        }
+        let containing = candidates.indices.filter { candidates[$0].contains(location) }
+        let pool = containing.isEmpty ? Array(candidates.indices) : containing
+        return pool.min { hypot(candidates[$0].midX - location.x, candidates[$0].midY - location.y) < hypot(candidates[$1].midX - location.x, candidates[$1].midY - location.y) }
     }
 
     private func endDrag(at location: CGPoint, isDrop: Bool) {
+        if isDrop {
+            moveDrag(to: location)
+        }
         guard let current = drag else { return }
-        let target = isDrop ? dropTarget(for: current, at: location) : nil
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             drag = nil
         }
-        switch target {
+        if isDrop {
+            commit(current)
+        }
+        arrangedFolders = nil
+        arrangedNotes = nil
+    }
+
+    private func commit(_ current: TileDrag) {
+        switch current.target {
         case .into(let folderId):
+            leaveGroup(current)
             moveItem(current, into: folderId)
         case .up(let parentId):
+            leaveGroup(current)
             if current.kind == .folder {
                 library.moveNotebook(current.id, into: parentId)
             } else if let parentId {
                 library.movePage(current.id, to: parentId)
             }
-        default:
-            if isDrop {
-                if current.kind == .folder, let arrangedFolders {
-                    library.arrangeFolders(arrangedFolders)
-                } else if current.kind == .note, let arrangedNotes {
-                    library.arrangePages(arrangedNotes)
-                }
+        case .group(let groupId):
+            if groupId != current.groupId {
+                preferences.addToGroup(current.id, groupId: groupId, in: notebookId)
+            }
+        case .slot, nil:
+            if current.groupId != nil {
+                guard current.isLoose else { return }
+                leaveGroup(current)
+            }
+            if current.kind == .folder, let arrangedFolders {
+                library.arrangeFolders(arrangedFolders)
+            } else if current.kind == .note, let arrangedNotes {
+                library.arrangePages(arrangedNotes)
             }
         }
-        arrangedFolders = nil
-        arrangedNotes = nil
+    }
+
+    private func leaveGroup(_ current: TileDrag) {
+        if current.groupId != nil {
+            preferences.removeFromGroup(current.id, in: notebookId)
+        }
     }
 
     private func moveItem(_ drag: TileDrag, into folderId: String) {
@@ -523,6 +646,7 @@ private struct TileBehaviour: ViewModifier {
     let key: String
     let isDraggable: Bool
     let isSource: Bool
+    let isHidden: Bool
     let isTarget: Bool
     let callbacks: TileCallbacks
 
@@ -535,7 +659,7 @@ private struct TileBehaviour: ViewModifier {
             .modifier(HoldPop(isPressed: isPressed))
             .scaleEffect(isTarget ? 1.04 : 1)
             .overlay(Squircle.panel.stroke(Palette.accent, lineWidth: 2).opacity(isTarget ? 1 : 0))
-            .opacity(isSource ? 0.25 : 1)
+            .opacity(isHidden ? 0 : isSource ? 0.25 : 1)
             .overlay(TileInteraction(callbacks: interaction))
             .background(GeometryReader { proxy in Color.clear.preference(key: TileFramesKey.self, value: isDraggable ? [key: proxy.frame(in: .global)] : [:]) })
             .animation(Motion.backOut(Motion.stateMilliseconds), value: isTarget)
@@ -544,7 +668,12 @@ private struct TileBehaviour: ViewModifier {
 
 private struct Appear: ViewModifier {
     let rank: Int
-    @State private var isShown = false
+    @State private var isShown: Bool
+
+    init(rank: Int, isEntering: Bool = true) {
+        self.rank = rank
+        _isShown = State(initialValue: !isEntering)
+    }
 
     func body(content: Content) -> some View {
         content
@@ -552,6 +681,7 @@ private struct Appear: ViewModifier {
             .offset(y: isShown ? 0 : 14)
             .scaleEffect(isShown ? 1 : 0.94)
             .onAppear {
+                guard !isShown else { return }
                 withAnimation(Motion.powerTwoOut(240, delay: min(rank, 16) * 12)) {
                     isShown = true
                 }
@@ -629,6 +759,7 @@ struct FolderTile: View {
     let notebook: Notebook
     let caption: String
     let rank: Int
+    var isEntering = true
 
     var body: some View {
         let look = Looks.folder(notebook)
@@ -651,7 +782,7 @@ struct FolderTile: View {
         .padding(14)
         .background(Squircle.panel.fill(Palette.panelSolid))
         .overlay(Squircle.panel.stroke(color, lineWidth: 1.5))
-        .modifier(Appear(rank: rank))
+        .modifier(Appear(rank: rank, isEntering: isEntering))
     }
 }
 
@@ -660,6 +791,7 @@ struct NoteTile: View {
     let title: String
     let caption: String
     let rank: Int
+    var isEntering = true
 
     var body: some View {
         let look = Looks.note(page)
@@ -684,7 +816,7 @@ struct NoteTile: View {
         .padding(12)
         .background(Squircle.tile.fill(Palette.panelSolid))
         .overlay(Squircle.tile.stroke(Palette.border, lineWidth: 1))
-        .modifier(Appear(rank: rank))
+        .modifier(Appear(rank: rank, isEntering: isEntering))
     }
 }
 
@@ -748,11 +880,15 @@ struct MasonryLayout: Layout {
     }
 
     private func frames(width: CGFloat, subviews: Subviews) -> [CGRect] {
+        frames(width: width, extents: subviews.map { Extent(columns: $0[MasonrySpan.self], rows: $0[MasonryRows.self]) })
+    }
+
+    func frames(width: CGFloat, extents: [Extent]) -> [CGRect] {
         let grid = columns(for: width)
         var heights = Array(repeating: CGFloat(0), count: grid.count)
-        return subviews.map { subview in
-            let span = min(grid.count, max(1, subview[MasonrySpan.self]))
-            let rows = max(1, subview[MasonryRows.self])
+        return extents.map { extent in
+            let span = min(grid.count, max(1, extent.columns))
+            let rows = max(1, extent.rows)
             let tileWidth = grid.width * CGFloat(span) + spacing * CGFloat(span - 1)
             let size = CGSize(width: tileWidth, height: unitHeight(grid.width) * CGFloat(rows) + spacing * CGFloat(rows - 1))
             var bestColumn = 0

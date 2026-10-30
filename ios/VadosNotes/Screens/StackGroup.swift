@@ -4,6 +4,7 @@ struct StackGroupView: View {
     let group: TileGroup
     let caption: String
     let isOpen: Bool
+    let isSwipeEnabled: Bool
     let cardHeight: (CGFloat) -> CGFloat
     let onToggle: (Bool) -> Void
     let onMenu: (CGPoint) -> Void
@@ -24,7 +25,7 @@ struct StackGroupView: View {
                     .onAppear { width = proxy.size.width }
                     .onChange(of: proxy.size.width) { _, next in width = next }
             })
-            .simultaneousGesture(swipe)
+            .simultaneousGesture(swipe, including: isSwipeEnabled ? .all : .subviews)
             .onAppear { time = isOpen ? 1 : 0 }
             .onChange(of: isOpen) { _, open in run(to: open ? 1 : 0) }
     }
@@ -39,7 +40,7 @@ struct StackGroupView: View {
     private var swipe: some Gesture {
         DragGesture(minimumDistance: 24)
             .onChanged { value in
-                guard abs(value.translation.width) > abs(value.translation.height), width > 0 else { return }
+                guard isSwipeEnabled, abs(value.translation.width) > abs(value.translation.height), width > 0 else { return }
                 let share = value.translation.width / (width * Self.pullReach)
                 if isOpen, share < 0 {
                     isPulled = true
