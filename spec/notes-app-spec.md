@@ -434,3 +434,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Size presets in the secondary nav show only their dot, without a px label.
 - The size slide's track is a cone, thin at the start and widening to the end; its thickness at each point is the preview dot for that size.
 - The secondary nav closes by scaling down as a capsule instead of shrinking into a circle first.
+- Pen and marker size and colour groups collapse to their first two presets with a swipe towards their start; their + turns into an expand arrow, and a swipe back or a tap on the arrow restores them. Each group remembers its state across launches.

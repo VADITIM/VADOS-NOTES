@@ -24,6 +24,7 @@ struct NavSizing {
 struct SubNavigationGroup: Identifiable {
     let id: String
     let content: (NavOrientation) -> AnyView
+    var onCollapse: ((Bool) -> Bool)?
 }
 
 private struct NavSizeKey: PreferenceKey {
@@ -174,6 +175,8 @@ struct ToolNav<PanelContent: View>: View {
     @State private var groupSettling: Settling?
     @State private var sizingDrag: SizingDrag?
     @State private var isSizingRejected = false
+    @State private var isCollapseSwiped = false
+    @State private var isCollapseSwipeRejected = false
 
     private enum Entry: Identifiable {
         case item(NavItem)
@@ -632,6 +635,7 @@ struct ToolNav<PanelContent: View>: View {
             }
         }
         .environment(\.isElementRevealed, subNavigationMotion.areElementsShown)
+        .environment(\.navigationTapsResumeAt, swallowUntil)
         .padding(NavMetrics.padding)
         .fixedSize()
         .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: shown.map(\.id))
@@ -656,6 +660,32 @@ struct ToolNav<PanelContent: View>: View {
             .zIndex(isLifted || groupSettling?.id == group.id ? 1 : 0)
             .animation(isLifted ? nil : Motion.placement, value: offset)
             .simultaneousGesture(groupReorderGesture(group.id))
+            .simultaneousGesture(group.onCollapse.map { collapseGesture($0) })
+    }
+
+    private func collapseGesture(_ onCollapse: @escaping (Bool) -> Bool) -> some Gesture {
+        DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+            .onChanged { value in
+                guard !isCollapseSwiped, !isCollapseSwipeRejected, groupReordering == nil, carryPoint == nil else { return }
+                let along = orientation == .horizontal ? value.translation.width : value.translation.height
+                let across = orientation == .horizontal ? value.translation.height : value.translation.width
+                guard abs(along) > abs(across) * NavMetrics.navSizingDominance else {
+                    isCollapseSwipeRejected = true
+                    return
+                }
+                isCollapseSwiped = true
+                guard onCollapse(along < 0) else { return }
+                swallowUntil = .distantFuture
+                Haptics.tick()
+            }
+            .onEnded { _ in
+                isCollapseSwipeRejected = false
+                guard isCollapseSwiped else { return }
+                isCollapseSwiped = false
+                if swallowUntil == .distantFuture {
+                    swallowUntil = Date().addingTimeInterval(0.6)
+                }
+            }
     }
 
     private func axisValue(_ point: CGPoint) -> CGFloat {

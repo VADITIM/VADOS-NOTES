@@ -61,6 +61,7 @@ struct PageScreen: View {
 
     private static let previewDiameterRange: (CGFloat, CGFloat) = (4 * NavMetrics.scale, 20 * NavMetrics.scale)
     private static let millimetresPerPoint = 0.35278
+    private static let collapsedGroupCount = 2
     private static let minimumTextWidth = 20.0
     private static let handleSize = CGSize(width: 8, height: 36)
     private static let editorInset = EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22)
@@ -613,8 +614,20 @@ struct PageScreen: View {
         return order.compactMap { id in groups.first { $0.id == id } } + groups.filter { !order.contains($0.id) }
     }
 
-    private func group<Content: View>(_ id: String, @ViewBuilder content: @escaping (NavOrientation) -> Content) -> SubNavigationGroup {
-        SubNavigationGroup(id: id) { orientation in AnyView(content(orientation)) }
+    private func group<Content: View>(_ id: String, onCollapse: ((Bool) -> Bool)? = nil, @ViewBuilder content: @escaping (NavOrientation) -> Content) -> SubNavigationGroup {
+        SubNavigationGroup(id: id, content: { orientation in AnyView(content(orientation)) }, onCollapse: onCollapse)
+    }
+
+    private func isCollapsed(_ id: String, count: Int) -> Bool {
+        count > Self.collapsedGroupCount && preferences.isSubNavigationGroupCollapsed(id)
+    }
+
+    private func setCollapsed(_ isCollapsing: Bool, id: String, count: Int) -> Bool {
+        guard count > Self.collapsedGroupCount, isCollapsed(id, count: count) != isCollapsing else { return false }
+        withAnimation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)) {
+            preferences.setSubNavigationGroupCollapsed(isCollapsing, for: id)
+        }
+        return true
     }
 
     private func subNavigationGroups(_ key: String) -> [SubNavigationGroup] {
@@ -645,28 +658,49 @@ struct PageScreen: View {
         let inkColor = Color(hex: displayColor(tool)).opacity(max(0.6, Preferences.inkTokens(tool).opacity))
         let presets = preferences.widthPresets(tool)
         let colors = preferences.colorPresets(tool)
+        let sizesId = "\(tool.rawValue)-sizes"
+        let coloursId = "\(tool.rawValue)-colours"
+        let areSizesCollapsed = isCollapsed(sizesId, count: presets.count)
+        let areColoursCollapsed = isCollapsed(coloursId, count: colors.count)
+        let shownPresets = areSizesCollapsed ? Array(presets.prefix(Self.collapsedGroupCount)) : presets
+        let shownColors = areColoursCollapsed ? Array(colors.prefix(Self.collapsedGroupCount)) : colors
+        let collapseColours = { (isCollapsing: Bool) -> Bool in
+            guard setCollapsed(isCollapsing, id: coloursId, count: colors.count) else { return false }
+            if isCollapsing, panelKey == Self.variationsKey(tool) {
+                closePanel()
+            }
+            return true
+        }
         return [
-            group("\(tool.rawValue)-sizes") { orientation in
+            group(sizesId, onCollapse: { isCollapsing in setCollapsed(isCollapsing, id: sizesId, count: presets.count) }) { orientation in
                 let layout = stack(orientation)
                 layout {
-                    ForEach(presets, id: \.self) { preset in
+                    ForEach(shownPresets, id: \.self) { preset in
                         SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
                             .transition(.elementLeave)
                     }
-                    NavIconButton(glyph: "plus", isEnabled: !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
-                        preferences.addWidthPreset(width, for: tool)
+                    GroupEndButton(isCollapsed: areSizesCollapsed, isEnabled: areSizesCollapsed || !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
+                        if areSizesCollapsed {
+                            _ = setCollapsed(false, id: sizesId, count: presets.count)
+                        } else {
+                            preferences.addWidthPreset(width, for: tool)
+                        }
                     }
                 }
             },
-            group("\(tool.rawValue)-colours") { orientation in
+            group(coloursId, onCollapse: collapseColours) { orientation in
                 let layout = stack(orientation)
                 layout {
-                    ForEach(Array(colors.enumerated()), id: \.offset) { _, color in
+                    ForEach(Array(shownColors.enumerated()), id: \.offset) { _, color in
                         SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: isVariationAnchor(color, for: tool), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
                             .transition(.elementLeave)
                     }
-                    NavIconButton(glyph: "plus", isEnabled: !colors.contains(current), orientation: orientation) {
-                        preferences.addColorPreset(current, for: tool)
+                    GroupEndButton(isCollapsed: areColoursCollapsed, isEnabled: areColoursCollapsed || !colors.contains(current), orientation: orientation) {
+                        if areColoursCollapsed {
+                            _ = setCollapsed(false, id: coloursId, count: colors.count)
+                        } else {
+                            preferences.addColorPreset(current, for: tool)
+                        }
                     }
                 }
             },

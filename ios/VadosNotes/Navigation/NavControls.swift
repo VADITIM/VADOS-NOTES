@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct NavigationTapsResumeKey: EnvironmentKey {
+    static let defaultValue = Date.distantPast
+}
+
+extension EnvironmentValues {
+    var navigationTapsResumeAt: Date {
+        get { self[NavigationTapsResumeKey.self] }
+        set { self[NavigationTapsResumeKey.self] = newValue }
+    }
+}
+
 struct NavSeparator: View {
     let orientation: NavOrientation
 
@@ -172,6 +183,7 @@ struct SwatchButton: View {
     private static let swatchDiameter: CGFloat = 26 * NavMetrics.scale
 
     @State private var isArmed = false
+    @Environment(\.navigationTapsResumeAt) private var tapsResumeAt
 
     var body: some View {
         VStack(spacing: 2 * NavMetrics.scale) {
@@ -213,6 +225,7 @@ struct SwatchButton: View {
         .frame(width: orientation == .horizontal ? Self.pitch : 48 * NavMetrics.scale)
         .contentShape(Rectangle())
         .onTapGesture {
+            guard Date() >= tapsResumeAt else { return }
             if isArmed {
                 isArmed = false
                 onRemove?()
@@ -274,6 +287,65 @@ struct NavIconButton: View {
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.38)
         .revealedElement()
+    }
+}
+
+struct GroupEndButton: View {
+    let isCollapsed: Bool
+    var isEnabled = true
+    let orientation: NavOrientation
+    let action: () -> Void
+
+    @Environment(\.navigationTapsResumeAt) private var tapsResumeAt
+
+    var body: some View {
+        let size = NavMetrics.itemSize(orientation)
+        Button {
+            guard Date() >= tapsResumeAt else { return }
+            withAnimation(Motion.selection) {
+                action()
+            }
+        } label: {
+            PlusArrowShape(progress: isCollapsed ? 1 : 0, isVertical: orientation == .vertical)
+                .stroke(Palette.textBody, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
+                .frame(width: NavMetrics.glyphSize, height: NavMetrics.glyphSize)
+                .frame(width: size.width, height: size.height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.38)
+        .animation(Motion.backOut(Motion.stateMilliseconds), value: isCollapsed)
+        .accessibilityLabel(isCollapsed ? "Show all" : "Add")
+        .revealedElement()
+    }
+}
+
+struct PlusArrowShape: Shape {
+    var progress: CGFloat
+    let isVertical: Bool
+
+    private static let plus: [(CGPoint, CGPoint)] = [(CGPoint(x: 12, y: 5), CGPoint(x: 12, y: 19)), (CGPoint(x: 5, y: 12), CGPoint(x: 19, y: 12))]
+    private static let arrow: [(CGPoint, CGPoint)] = [(CGPoint(x: 9, y: 5), CGPoint(x: 16, y: 12)), (CGPoint(x: 9, y: 19), CGPoint(x: 16, y: 12))]
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 24
+        let transform = CGAffineTransform(translationX: rect.midX - 12 * scale, y: rect.midY - 12 * scale).scaledBy(x: scale, y: scale)
+        func blended(_ start: CGPoint, _ end: CGPoint) -> CGPoint {
+            let point = CGPoint(x: start.x + (end.x - start.x) * progress, y: start.y + (end.y - start.y) * progress)
+            return isVertical ? CGPoint(x: point.y, y: point.x) : point
+        }
+        var path = Path()
+        for (line, target) in zip(Self.plus, Self.arrow) {
+            path.move(to: blended(line.0, target.0))
+            path.addLine(to: blended(line.1, target.1))
+        }
+        return path.applying(transform)
     }
 }
 

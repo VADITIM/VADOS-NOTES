@@ -258,6 +258,14 @@ final class Preferences: ObservableObject {
         write("subNavigationOrder.\(key)", order)
     }
 
+    func isSubNavigationGroupCollapsed(_ id: String) -> Bool {
+        read("subNavigationCollapsed.\(id)", false)
+    }
+
+    func setSubNavigationGroupCollapsed(_ isCollapsed: Bool, for id: String) {
+        write("subNavigationCollapsed.\(id)", isCollapsed)
+    }
+
     func groups(in parentId: String?) -> [TileGroup] {
         guard let data = defaults.data(forKey: "groups.\(parentId ?? "root")") else { return [] }
         return (try? JSONDecoder().decode([TileGroup].self, from: data)) ?? []
