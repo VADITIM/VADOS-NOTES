@@ -79,6 +79,7 @@ enum NavMetrics {
     static let navSizingDominance: CGFloat = 2
     static let shadowReach: CGFloat = 32
     static let edgeStripDepth: CGFloat = 28
+    static let turnHysteresis: CGFloat = 24
     static let edgeHandleSize = CGSize(width: 36, height: 4)
     static let pillPanelPrefix = "variations-"
     static let layerSpace = "navLayer"
@@ -166,6 +167,7 @@ struct ToolNav<PanelContent: View>: View {
     @State private var groupSizes: [String: CGSize] = [:]
     @State private var carryPoint: CGPoint?
     @State private var carryGrab: CGSize?
+    @State private var turningOrientation: NavOrientation?
     @State private var panelAnchor: CGRect?
     @State private var swallowUntil = Date.distantPast
     @State private var shownSubNavigationKey: String?
@@ -535,6 +537,7 @@ struct ToolNav<PanelContent: View>: View {
                 .revealedElement()
         }
         .environment(\.isElementRevealed, navigationMotion.areElementsShown)
+        .environment(\.isElementMutating, navigationMotion.isMutating)
         .opacity(isSizing ? 0 : 1)
         .scaleEffect(isSizing ? CGFloat(Motion.scales.sliderEnter) : 1)
         .animation(isSizing ? Motion.powerTwoIn(Motion.pressMilliseconds) : Motion.powerTwoOut(Motion.stateMilliseconds, delay: Motion.pressMilliseconds), value: isSizing)
@@ -554,7 +557,7 @@ struct ToolNav<PanelContent: View>: View {
         .fixedSize()
         .background(GeometryReader { navProxy in Color.clear.preference(key: NavSizeKey.self, value: navProxy.size) })
         .scaleEffect(carryPoint == nil ? 1 : CGFloat(Motion.scales.held))
-        .allowsHitTesting(navigationMotion.areElementsShown)
+        .allowsHitTesting(navigationMotion.areElementsShown || carryPoint != nil)
         .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: face)
         .animation(Motion.backOut(Motion.stateMilliseconds), value: carryPoint == nil)
     }
@@ -900,6 +903,32 @@ struct ToolNav<PanelContent: View>: View {
         avoiding(beside(anchor, size: size, side: side), size: size, layer: layer, blocked: blocked)
     }
 
+    private func zoneOrientation(of point: CGPoint, layer: CGSize, current: NavOrientation) -> NavOrientation {
+        let sideDistance = min(point.x, layer.width - point.x)
+        let endDistance = min(point.y, layer.height - point.y)
+        if sideDistance + NavMetrics.turnHysteresis < endDistance {
+            return .vertical
+        }
+        if endDistance + NavMetrics.turnHysteresis < sideDistance {
+            return .horizontal
+        }
+        return current
+    }
+
+    private func turnCarried() {
+        guard let wanted = turningOrientation else { return }
+        turningOrientation = nil
+        guard wanted != orientation else { return }
+        if let grab = carryGrab, let point = carryPoint {
+            let turned = CGSize(width: grab.height, height: grab.width)
+            carryGrab = turned
+            carryPoint = CGPoint(x: point.x + grab.width - turned.width, y: point.y + grab.height - turned.height)
+        }
+        withAnimation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)) {
+            orientation = wanted
+        }
+    }
+
     private func carryGesture(layer: CGSize, center: CGPoint) -> some Gesture {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.navigationGripHoldMilliseconds), maximumDistance: 10)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
@@ -914,13 +943,19 @@ struct ToolNav<PanelContent: View>: View {
                 guard let drag else { return }
                 let grab = carryGrab ?? CGSize(width: drag.startLocation.x - center.x, height: drag.startLocation.y - center.y)
                 carryGrab = grab
-                carryPoint = CGPoint(x: drag.location.x - grab.width, y: drag.location.y - grab.height)
+                let point = CGPoint(x: drag.location.x - grab.width, y: drag.location.y - grab.height)
+                carryPoint = point
+                let current = turningOrientation ?? orientation
+                let wanted = zoneOrientation(of: point, layer: layer, current: current)
+                if wanted != current {
+                    turningOrientation = wanted
+                    Haptics.tick()
+                    navigationMotion.mutate(turnCarried)
+                }
             }
             .onEnded { _ in
                 guard let point = carryPoint else { return }
-                let sideDistance = min(point.x, layer.width - point.x)
-                let endDistance = min(point.y, layer.height - point.y)
-                let nextOrientation: NavOrientation = sideDistance < endDistance ? .vertical : .horizontal
+                let nextOrientation = zoneOrientation(of: point, layer: layer, current: turningOrientation ?? orientation)
                 let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: nextOrientation.rawValue)
                 Preferences.shared.setNavPlacement(next)
                 withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2)) {

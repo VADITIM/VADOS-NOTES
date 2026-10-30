@@ -298,6 +298,13 @@ Every motion value below lives in `shared/tokens.json`; the reference is VADOS G
 - **Folder colours have the wheel and saved colours.** The icon and colour sheet shows the wheel button, the saved colours and a + at the end, like the toolbar colour group. The wheel opens the toolbar's `ColorPanel`; + saves the current colour; holding a saved colour arms it for removal. The saved list uses the toolbar's preset storage under its own key (`folderPresets`, starting from `folders.colors`), through the same add and remove code. The same sheet serves notes, so notes get it too.
 - **Wheel drags are written once they settle.** A notebook or page colour change is a journal entry, so the colour follows the wheel on screen and is written `0.25 s` after the last move, or when the sheet closes. No schema change: the colour was already a free hex string.
 
+#### Nav turning while carried and the folder head name (2026-10-30)
+
+- **The nav turns while it is carried.** It used to pick its orientation only on release. Now, while carried, it takes the orientation of the edge zone it is in (nearer a side edge: vertical; nearer the top or bottom: horizontal) as soon as it crosses into another zone. A 24 pt band (`NavMetrics.turnHysteresis`) around the diagonal keeps the current orientation, so it does not flicker there.
+- **The turn is a mutation.** `PillMotion.mutate` hides the elements with the nav leave pop on the new `navigation_mutate_leave` (90 ms, with the usual random spread scaled down), then turns the nav (the shell reshapes on `navigation_switch × 2`) and shows the elements again with their normal enter. Carrying continues through it: the nav keeps hit testing while carried, and the grab offset is turned with the nav so the finger stays on the same grip. A turn that is reversed before it lands just re-shows the elements.
+- **The folder head name is a pill on the nav motion.** The title and count at the top left are elements on a `PillShell` driven by a `PillMotion`, like the search field. Leaving a folder plays the nav leave (elements pop out, the pill narrows and pops) instead of the old `ChromePop` scale-down, and entering plays the nav enter.
+- **No head name at root.** It shows only inside a folder; going to the library or into a note plays its leave, coming back plays its enter, exactly as the search field does. It keeps the last folder's text while it leaves.
+
 ### Windows and Linux parity (2026-10-28)
 
 The Tauri app was rebuilt from the iPad app, so every behaviour pass above applies to Windows and Linux too. Only the platform mappings are new.

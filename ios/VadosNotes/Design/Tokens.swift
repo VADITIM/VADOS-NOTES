@@ -147,6 +147,7 @@ struct Tokens: Decodable {
         let navigationLeaveElement: Int
         let navigationLeaveSpread: Int
         let navigationLeavePop: Int
+        let navigationMutateLeave: Int
         let keyboard: Int
         let type: Int
         let undoTap: Int

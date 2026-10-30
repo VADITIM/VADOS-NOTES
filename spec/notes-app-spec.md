@@ -445,3 +445,5 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - No scroll indicators are shown anywhere in the app.
 - Settings take the whole screen; their modules sit in two columns when there is room and in one column otherwise. Closing removes the dark backdrop at once while the modules pop out.
 - The icon and colour sheet has a colour wheel and saved colours like the toolbar's colour group: + saves the current colour, holding a saved colour removes it.
+- While the nav is carried it turns to the orientation of the edge it is nearest (vertical by the sides, horizontal by the top and bottom) before it is let go; its elements pop out quickly and back in once it has turned.
+- The folder name at the top left shows only inside a folder. It enters and leaves like the search field and the nav: its elements pop in and out and the pill spreads and narrows.

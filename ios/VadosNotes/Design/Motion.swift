@@ -35,6 +35,7 @@ enum Motion {
     static let navigationLeaveElementMilliseconds = durations.navigationLeaveElement
     static let navigationLeaveSpreadMilliseconds = durations.navigationLeaveSpread
     static let navigationLeavePopMilliseconds = durations.navigationLeavePop
+    static let navigationMutateLeaveMilliseconds = durations.navigationMutateLeave
     static let keyboardMilliseconds = durations.keyboard
     static let typeMilliseconds = durations.type
     static let undoTapMilliseconds = durations.undoTap
@@ -181,15 +182,25 @@ private struct ElementRevealKey: EnvironmentKey {
     static let defaultValue: Bool? = nil
 }
 
+private struct ElementMutationKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     var isElementRevealed: Bool? {
         get { self[ElementRevealKey.self] }
         set { self[ElementRevealKey.self] = newValue }
     }
+
+    var isElementMutating: Bool {
+        get { self[ElementMutationKey.self] }
+        set { self[ElementMutationKey.self] = newValue }
+    }
 }
 
 struct ElementReveal: ViewModifier {
     @Environment(\.isElementRevealed) private var isRevealed
+    @Environment(\.isElementMutating) private var isMutating
     @State private var hasAppeared = false
     @State private var isSwitchedIn = false
     @State private var enterDelay = Int.random(in: 0...Motion.navigationElementMilliseconds / 2)
@@ -205,6 +216,14 @@ struct ElementReveal: ViewModifier {
         return Motion.powerTwoOut(Motion.navigationSwitchMilliseconds, delay: Motion.navigationSwitchMilliseconds / 2 + spread)
     }
 
+    private var leaveAnimation: Animation {
+        guard isMutating else {
+            return Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds, delay: leaveDelay)
+        }
+        let spread = leaveDelay * Motion.navigationMutateLeaveMilliseconds / max(1, Motion.navigationLeaveElementMilliseconds)
+        return Motion.powerTwoIn(Motion.navigationMutateLeaveMilliseconds, delay: spread)
+    }
+
     @ViewBuilder
     func body(content: Content) -> some View {
         if isRevealed == nil {
@@ -218,7 +237,7 @@ struct ElementReveal: ViewModifier {
         content
             .modifier(RotatePop(isShown: isShown))
             .animation(
-                isShown ? enterAnimation : Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds, delay: leaveDelay),
+                isShown ? enterAnimation : leaveAnimation,
                 value: isShown
             )
             .onAppear {
@@ -295,6 +314,7 @@ final class PillMotion: ObservableObject {
     @Published private(set) var shellSpread: CGFloat = 0
     @Published private(set) var areElementsShown = false
     @Published private(set) var isPresent = false
+    @Published private(set) var isMutating = false
     private var step = 0
 
     private static var enterMilliseconds: Int {
@@ -331,6 +351,21 @@ final class PillMotion: ObservableObject {
             }
         }
         after(isMidLeave ? Motion.navigationSpreadMilliseconds / 2 : Self.enterMilliseconds) { [weak self] in
+            self?.areElementsShown = true
+        }
+    }
+
+    func mutate(_ change: @escaping () -> Void) {
+        guard isPresent, areElementsShown || isMutating else {
+            change()
+            return
+        }
+        step += 1
+        isMutating = true
+        areElementsShown = false
+        after(Motion.navigationMutateLeaveMilliseconds * 3 / 2) { [weak self] in
+            change()
+            self?.isMutating = false
             self?.areElementsShown = true
         }
     }

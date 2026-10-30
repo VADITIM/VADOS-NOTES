@@ -315,6 +315,7 @@ struct TopBar: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
     @Environment(\.screenInsets) private var insets
+    @State private var headFolderId: String?
 
     static let controlHeight: CGFloat = 48
 
@@ -335,13 +336,15 @@ struct TopBar: View {
         navigator.route.folderId
     }
 
+    private var isHeadShown: Bool {
+        !isPage && folderId != nil
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             ZStack(alignment: .topLeading) {
                 folderTitles
-                    .modifier(ChromePop(isShown: !isPage, order: 0))
-                    .allowsHitTesting(!isPage)
-                    .reportsChrome("title", isActive: !isPage)
+                    .reportsChrome("title", isActive: isHeadShown)
                 pageTitles
                     .allowsHitTesting(isPage)
                     .reportsChrome("title", isActive: isPage)
@@ -374,6 +377,12 @@ struct TopBar: View {
         }
         .padding(.horizontal, 24)
         .padding(.top, Self.topGap + insets.top)
+        .onAppear { headFolderId = folderId }
+        .onChange(of: folderId) { _, next in
+            if let next {
+                headFolderId = next
+            }
+        }
     }
 
     private func goBack() {
@@ -387,35 +396,19 @@ struct TopBar: View {
         }
     }
 
-    private var folderTitle: String {
-        folderId.flatMap { library.notebook($0)?.title } ?? "Folders"
-    }
-
-    private var folderLabel: String {
-        guard let folderId else {
-            let count = library.folders(in: nil).count
-            return "\(count) folder\(count == 1 ? "" : "s")"
-        }
-        return library.folderSummary(folderId)
-    }
-
     private var folderTitles: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            if let folderId {
-                InlineTitle(title: folderTitle, size: Self.folderTitleSize) { title in
+        HeadName(isShown: isHeadShown) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                InlineTitle(title: headFolderId.flatMap { library.notebook($0)?.title } ?? "", size: Self.folderTitleSize) { title in
                     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    library.updateNotebook(folderId) { $0.title = title }
+                    guard !trimmed.isEmpty, let headFolderId else { return }
+                    library.updateNotebook(headFolderId) { $0.title = title }
                 }
-            } else {
-                SweepTitle(text: folderTitle, size: Self.folderTitleSize)
+                .revealedElement()
+                MicroLabel(text: headFolderId.map { library.folderSummary($0) } ?? "")
+                    .revealedElement()
             }
-            MicroLabel(text: folderLabel)
         }
-        .padding(.horizontal, 20)
-        .frame(height: Self.controlHeight)
-        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.panel))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.border, lineWidth: 1))
     }
 
     private var pageTitles: some View {
@@ -439,6 +432,34 @@ struct TopBar: View {
                     .labelReveal(isShown, delay: stagger * 2)
             }
         }
+    }
+}
+
+struct HeadName<Content: View>: View {
+    let isShown: Bool
+    @ViewBuilder let content: () -> Content
+
+    @StateObject private var motion = PillMotion()
+
+    var body: some View {
+        content()
+            .environment(\.isElementRevealed, motion.areElementsShown)
+            .padding(.horizontal, 20)
+            .frame(height: TopBar.controlHeight)
+            .background(PillShell(scale: motion.shellScale, spread: motion.shellSpread, isWide: true))
+            .allowsHitTesting(motion.areElementsShown)
+            .onAppear {
+                if isShown {
+                    motion.enter()
+                }
+            }
+            .onChange(of: isShown) { _, shown in
+                if shown {
+                    motion.enter()
+                } else {
+                    motion.leave()
+                }
+            }
     }
 }
 
