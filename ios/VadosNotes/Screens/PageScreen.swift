@@ -51,7 +51,6 @@ struct PageScreen: View {
     @State private var variationSlot: String?
     @State private var eraserReturn: ActiveTool?
     @State private var previousTool: ActiveTool?
-    @State private var textFocusRequest = 0
     @State private var textStyleState = TextStyleState()
     @State private var textStyleRequest: TextStyleRequest?
     @State private var textDragOrigin: TextBox?
@@ -165,23 +164,23 @@ struct PageScreen: View {
     @ViewBuilder
     private func canvas(for page: Page, topInset: CGFloat) -> some View {
         let inkTool = canvasTool.inkTool
-        ZStack(alignment: .topLeading) {
-            CanvasView(
-                page: page,
-                tool: canvasTool,
-                inkColor: inkTool.map { preferences.color($0) } ?? "#1A1A1A",
-                inkWidth: inkTool.map { preferences.width($0) } ?? 0.5,
-                eraserRadius: preferences.eraserRadius,
-                paperStyle: preferences.paperStyle,
-                showsGuides: preferences.showsGuides,
-                showsDividers: preferences.showsDividers,
-                showsBackdrop: preferences.showsAsciiBackground,
-                inkSmoothing: preferences.inkSmoothing,
-                hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
-                isReadOnly: library.isReadOnly(pageId),
-                topInset: topInset,
-                callbacks: callbacks()
-            )
+        CanvasView(
+            page: page,
+            tool: canvasTool,
+            inkColor: inkTool.map { preferences.color($0) } ?? "#1A1A1A",
+            inkWidth: inkTool.map { preferences.width($0) } ?? 0.5,
+            eraserRadius: preferences.eraserRadius,
+            paperStyle: preferences.paperStyle,
+            showsGuides: preferences.showsGuides,
+            showsDividers: preferences.showsDividers,
+            showsBackdrop: preferences.showsAsciiBackground,
+            inkSmoothing: preferences.inkSmoothing,
+            hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
+            isReadOnly: library.isReadOnly(pageId),
+            topInset: topInset,
+            callbacks: callbacks()
+        )
+        .overlay(alignment: .topLeading) {
             if let session, let camera = overlayCamera, let box = session.element.box {
                 textEditor(session, box: box, camera: camera, extent: page.extent)
             }
@@ -195,7 +194,6 @@ struct PageScreen: View {
             zoom: camera.scale,
             color: UIColor(hex: Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)),
             paperStyle: preferences.paperStyle,
-            focusRequest: textFocusRequest,
             styleRequest: textStyleRequest,
             onChange: { library.updateText($0) },
             onStyleState: { textStyleState = $0 }
@@ -471,10 +469,9 @@ struct PageScreen: View {
         if let session {
             let color = Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)
             return [[
-                NavItem(id: "text-style", caption: ".md", label: "Text styles", tint: Palette.edit, isTinted: subNavKey == "text-style", action: { _ in toggleSubNav("text-style") }),
-                NavItem(id: "text-code", glyph: "code", label: "Code", tint: Palette.edit, isTinted: subNavKey == "text-code", action: { _ in toggleSubNav("text-code") }),
+                NavItem(id: "text-style", caption: ".md", label: "Text styles", tint: Palette.markdownTint, isTinted: true, action: { _ in toggleSubNav("text-style") }),
+                NavItem(id: "text-code", glyph: "code", label: "Code", tint: Palette.codeTint, isTinted: true, action: { _ in toggleSubNav("text-code") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
-                NavItem(id: "edit-text", glyph: "keyboard", label: "Edit", tint: Palette.edit, isTinted: true, action: { _ in textFocusRequest += 1 }),
             ], [
                 NavItem(id: "finish-text", glyph: "check", label: "Done", tint: Palette.create, isTinted: true, action: { _ in library.finishText() }),
             ]]
@@ -485,13 +482,13 @@ struct PageScreen: View {
             case .pen, .marker:
                 guard let tool = active.inkTool else { return nil }
                 let color = displayColor(tool)
-                return NavItem(id: active.rawValue, glyph: active.rawValue, label: active.rawValue.capitalized, tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, swatch: Color(hex: color), sizing: inkSizing(tool), action: { _ in press(active) })
+                return NavItem(id: active.rawValue, glyph: active.rawValue, label: active.rawValue.capitalized, tint: active == .marker ? Palette.markerTint : Palette.textBright, isTinted: true, swatch: Color(hex: color), sizing: inkSizing(tool), action: { _ in press(active) })
             case .eraser:
-                return NavItem(id: "eraser", glyph: "eraser", label: "Eraser", tint: Palette.destructive, sizing: eraserSizing(), action: { _ in press(.eraser) })
+                return NavItem(id: "eraser", glyph: "eraser_ring", label: "Eraser", tint: Palette.destructive, isTinted: true, sizing: eraserSizing(), action: { _ in press(.eraser) })
             case .text:
-                return NavItem(id: "text", glyph: "text", label: "Text", tint: Palette.accent, action: { _ in press(.text) })
+                return NavItem(id: "text", glyph: "text", label: "Text", tint: Palette.navigation, isTinted: true, action: { _ in press(.text) })
             case .lasso:
-                return NavItem(id: "lasso", glyph: "lasso", label: "Lasso", tint: Palette.accent, action: { _ in press(.lasso) })
+                return NavItem(id: "lasso", glyph: "lasso", label: "Lasso", tint: Palette.accent, isTinted: true, action: { _ in press(.lasso) })
             }
         }
         return [tools]
@@ -504,7 +501,11 @@ struct PageScreen: View {
             color: Color(hex: displayColor(tool)).opacity(max(0.6, Preferences.inkTokens(tool).opacity)),
             previewDiameter: Self.previewDiameter,
             caption: { share in Self.pixelCaption(Self.value(share, range)) },
-            onChange: { share in preferences.setWidth(Self.value(share, range), for: tool) }
+            onChange: { share in preferences.setWidth(Self.value(share, range), for: tool) },
+            canvasPreview: SizePreview(
+                diameter: { share in CGFloat(Self.value(share, range)) * cameraHolder.camera.scale },
+                color: Color(hex: displayColor(tool)).opacity(Preferences.inkTokens(tool).opacity)
+            )
         )
     }
 
@@ -515,7 +516,12 @@ struct PageScreen: View {
             color: Palette.destructive.opacity(0.85),
             previewDiameter: Self.previewDiameter,
             caption: { share in Self.pixelCaption(Self.value(share, range) * 2) },
-            onChange: { share in preferences.setEraserRadius(Self.value(share, range)) }
+            onChange: { share in preferences.setEraserRadius(Self.value(share, range)) },
+            canvasPreview: SizePreview(
+                diameter: { share in CGFloat(Self.value(share, range) * 2) * cameraHolder.camera.scale },
+                color: Palette.destructive,
+                isRing: true
+            )
         )
     }
 
@@ -546,7 +552,7 @@ struct PageScreen: View {
             subNavKey: subNavKey,
             subNavigationGroups: orderedSubNavigationGroups,
             panelKey: panelKey,
-            obstacles: Array(chrome.frames.values),
+            obstacles: chrome.frames.filter { $0.key != "title" }.map(\.value),
             keyboardHeight: keyboard.height,
             isShown: isChromeShown,
             onReorderTools: { order in preferences.setToolOrder(order) },

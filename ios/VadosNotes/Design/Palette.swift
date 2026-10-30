@@ -43,6 +43,9 @@ enum Palette {
     static let importAsset = Color(hex: tokens.semantic.import)
     static let undo = Color(hex: tokens.semantic.undo)
     static let redo = Color(hex: tokens.semantic.redo)
+    static let markerTint = Color(hex: tokens.toolTints.marker)
+    static let codeTint = Color(hex: tokens.toolTints.code)
+    static let markdownTint = Color(hex: tokens.toolTints.markdown)
 
     static let outside = UIColor(hex: tokens.page.outside)
 

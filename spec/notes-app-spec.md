@@ -447,3 +447,9 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The icon and colour sheet has a colour wheel and saved colours like the toolbar's colour group: + saves the current colour, holding a saved colour removes it.
 - While the nav is carried it turns to the orientation of the edge it is nearest (vertical by the sides, horizontal by the top and bottom) before it is let go; its elements pop out quickly and back in once it has turned.
 - The folder name at the top left shows only inside a folder. It enters and leaves like the search field and the nav: its elements pop in and out and the pill spreads and narrows.
+- Each tool in the nav has its own colour: pen white, eraser red (with a ring-and-stroke icon), marker light purple, lasso yellow, text blue. In the text nav, `.md` is red-pink, code is indigo, and the T shows the selected text colour with its dot. There is no keyboard button.
+- While the size slider is held for the pen, marker or eraser, a dot in the centre of the screen shows the true size at the current zoom.
+- The nav can lie over the note's name; the name never pushes it aside.
+- The nav turns only when it is carried against an edge: vertical at the left and right edges, horizontal at the top and bottom.
+- Zooming while text is being edited moves smoothly through the whole range.
+- Text is larger on its rows and stands a little above the ruled line instead of touching it.

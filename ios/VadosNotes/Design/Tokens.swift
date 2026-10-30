@@ -60,6 +60,12 @@ struct Tokens: Decodable {
         let redo: String
     }
 
+    struct ToolTintTokens: Decodable {
+        let marker: String
+        let code: String
+        let markdown: String
+    }
+
     struct InkToolTokens: Decodable {
         let layer: String
         let width: Double
@@ -100,6 +106,8 @@ struct Tokens: Decodable {
         let fontSizeRange: [Double]
         let fontSizePresets: [Double]
         let colors: [String]
+        let rowFontScale: Double
+        let baselineLift: Double
     }
 
     struct CurveTokens: Decodable {
@@ -253,6 +261,7 @@ struct Tokens: Decodable {
     let page: PageTokens
     let palette: PaletteTokens
     let semantic: SemanticTokens
+    let toolTints: ToolTintTokens
     let tools: ToolTokens
     let ink: InkTokens
     let text: TextTokens
@@ -269,6 +278,7 @@ struct Tokens: Decodable {
         case page
         case palette
         case semantic
+        case toolTints
         case tools
         case ink
         case text

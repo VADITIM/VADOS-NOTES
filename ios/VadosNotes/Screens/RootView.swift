@@ -154,7 +154,13 @@ struct RootView: View {
     @StateObject private var menu = MenuController()
     @StateObject private var preferences = Preferences.shared
     @State private var chromeLayout = ChromeLayout()
+    @State private var navCovers: [CGRect] = []
     @Environment(\.scenePhase) private var scenePhase
+
+    private var titleCutouts: [CGRect] {
+        guard navigator.route.isPage, let title = chromeLayout.frames["title"] else { return [] }
+        return navCovers.filter { $0.intersects(title) }.map { $0.offsetBy(dx: -title.minX, dy: -title.minY) }
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -170,8 +176,9 @@ struct RootView: View {
                     .id(screenIdentity)
                     .transition(isFlight ? .flight : navigator.isReturningFromPage ? .returning : .section)
                     .environment(\.chromeLayout, chromeLayout)
+                    .onPreferenceChange(NavCoverKey.self) { navCovers = $0 }
                 VStack {
-                    TopBar()
+                    TopBar(titleCutouts: titleCutouts)
                         .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 }
                         .onPreferenceChange(BackButtonFrameKey.self) { chromeLayout.back = $0 }
                         .onPreferenceChange(ChromeFramesKey.self) { chromeLayout.frames = $0 }
@@ -316,6 +323,7 @@ struct TopBar: View {
     @EnvironmentObject private var navigator: Navigator
     @Environment(\.screenInsets) private var insets
     @State private var headFolderId: String?
+    var titleCutouts: [CGRect] = []
 
     static let controlHeight: CGFloat = 48
 
@@ -432,6 +440,21 @@ struct TopBar: View {
                     .labelReveal(isShown, delay: stagger * 2)
             }
         }
+        .mask(CutoutShape(holes: titleCutouts).fill(style: FillStyle(eoFill: true)))
+        .contentShape(CutoutShape(holes: titleCutouts), eoFill: true)
+    }
+}
+
+struct CutoutShape: Shape {
+    let holes: [CGRect]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(rect)
+        for hole in holes {
+            let radius = min(hole.width, hole.height) / 2
+            path.addRoundedRect(in: hole, cornerSize: CGSize(width: radius, height: radius), style: .continuous)
+        }
+        return path
     }
 }
 

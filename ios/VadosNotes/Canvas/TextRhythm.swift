@@ -10,7 +10,11 @@ enum TextRhythm {
 
     static var fontSize: CGFloat {
         let unit = MarkdownText.font(1, isBold: false)
-        return rowGap / (unit.ascender - unit.descender + unit.leading)
+        return rowGap / (unit.ascender - unit.descender + unit.leading) * CGFloat(Tokens.shared.text.rowFontScale)
+    }
+
+    static var baselineLift: CGFloat {
+        CGFloat(Tokens.shared.text.baselineLift)
     }
 
     static var baseline: CGFloat {
@@ -42,7 +46,7 @@ enum TextRhythm {
         manager.addTextContainer(container)
         storage.addLayoutManager(manager)
         let placed = manager.location(forGlyphAt: 0).y
-        let target = (baseline + rowGap * CGFloat(rows - 1)) * zoom
+        let target = (baseline - baselineLift + rowGap * CGFloat(rows - 1)) * zoom
         if offsets.count > 500 {
             offsets.removeAll()
         }

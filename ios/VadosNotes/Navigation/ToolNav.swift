@@ -19,6 +19,33 @@ struct NavSizing {
     let previewDiameter: (Double) -> CGFloat
     let caption: (Double) -> String
     let onChange: (Double) -> Void
+    var canvasPreview: SizePreview?
+}
+
+struct SizePreview {
+    let diameter: (Double) -> CGFloat
+    let color: Color
+    var isRing = false
+}
+
+private struct SizePreviewDot: View {
+    let preview: SizePreview
+    let share: Double
+
+    var body: some View {
+        let diameter = max(1, preview.diameter(share))
+        ZStack {
+            if preview.isRing {
+                Circle()
+                    .fill(preview.color.opacity(0.12))
+                    .overlay(Circle().stroke(preview.color.opacity(0.9), lineWidth: 1.5))
+            } else {
+                Circle()
+                    .fill(preview.color)
+            }
+        }
+        .frame(width: diameter, height: diameter)
+    }
 }
 
 struct SubNavigationGroup: Identifiable {
@@ -57,6 +84,13 @@ private struct PanelSizeKey: PreferenceKey {
     }
 }
 
+struct NavCoverKey: PreferenceKey {
+    static var defaultValue: [CGRect] = []
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
 private struct GroupExtentKey: PreferenceKey {
     static var defaultValue: [String: CGSize] = [:]
     static func reduce(value: inout [String: CGSize], nextValue: () -> [String: CGSize]) {
@@ -79,7 +113,7 @@ enum NavMetrics {
     static let navSizingDominance: CGFloat = 2
     static let shadowReach: CGFloat = 32
     static let edgeStripDepth: CGFloat = 28
-    static let turnHysteresis: CGFloat = 24
+    static let edgeTouchReach: CGFloat = 4
     static let edgeHandleSize = CGSize(width: 36, height: 4)
     static let pillPanelPrefix = "variations-"
     static let layerSpace = "navLayer"
@@ -288,6 +322,14 @@ struct ToolNav<PanelContent: View>: View {
                 .position(panelCenter)
                 .animation(shownPillPanelKey != nil && panelMotion.areElementsShown ? Motion.placement : nil, value: panelCenter)
                 .offset(stackFollow(from: panelCenter, to: subNavCenter, share: edgeShare))
+                ZStack {
+                    if let sizing = sizingItem?.sizing, let preview = sizing.canvasPreview {
+                        SizePreviewDot(preview: preview, share: sizing.share)
+                            .transition(.sliderEnter)
+                    }
+                }
+                .position(x: layer.width / 2, y: layer.height / 2)
+                .allowsHitTesting(false)
                 navBody(layer: layer, center: center)
                     .simultaneousGesture(edgeHideGesture(edge: edge, limit: hiddenReach))
                     .position(center)
@@ -303,6 +345,7 @@ struct ToolNav<PanelContent: View>: View {
             .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: center)
             .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: subNavCenter)
             .coordinateSpace(name: NavMetrics.layerSpace)
+            .preference(key: NavCoverKey.self, value: covers(navigation: navigationRect.offsetBy(dx: edgeVector(edge, edgeOffset).width, dy: edgeVector(edge, edgeOffset).height), subNavigation: subNavRect, panel: rect(center: panelCenter, size: panelSize)).map { $0.offsetBy(dx: layerOrigin.x, dy: layerOrigin.y) })
             .onPreferenceChange(NavSizeKey.self) { navSize = $0 }
             .onPreferenceChange(SubNavSizeKey.self) { subNavSize = $0 }
             .onPreferenceChange(PanelSizeKey.self) { panelSize = $0 }
@@ -368,6 +411,21 @@ struct ToolNav<PanelContent: View>: View {
             .background(GeometryReader { panelProxy in Color.clear.preference(key: PanelSizeKey.self, value: panelProxy.size) })
             .background(PillShell(scale: panelMotion.shellScale, spread: panelMotion.shellSpread, isWide: orientation == .horizontal))
             .allowsHitTesting(panelMotion.areElementsShown)
+    }
+
+    private func covers(navigation: CGRect, subNavigation: CGRect, panel: CGRect) -> [CGRect] {
+        var covers: [CGRect] = []
+        if navigationMotion.isPresent {
+            let lift = carryPoint == nil ? 1 : CGFloat(Motion.scales.held)
+            covers.append(navigation.insetBy(dx: navigation.width * (1 - lift) / 2, dy: navigation.height * (1 - lift) / 2))
+        }
+        if shownSubNavigationKey != nil {
+            covers.append(subNavigation)
+        }
+        if wheelPanelKey != nil || shownPillPanelKey != nil {
+            covers.append(panel)
+        }
+        return covers
     }
 
     private func edgeSide(of outward: NavSide) -> NavSide {
@@ -903,13 +961,16 @@ struct ToolNav<PanelContent: View>: View {
         avoiding(beside(anchor, size: size, side: side), size: size, layer: layer, blocked: blocked)
     }
 
-    private func zoneOrientation(of point: CGPoint, layer: CGSize, current: NavOrientation) -> NavOrientation {
-        let sideDistance = min(point.x, layer.width - point.x)
-        let endDistance = min(point.y, layer.height - point.y)
-        if sideDistance + NavMetrics.turnHysteresis < endDistance {
+    private func edgeOrientation(of point: CGPoint, layer: CGSize, current: NavOrientation) -> NavOrientation {
+        let size = current == orientation ? navSize : CGSize(width: navSize.height, height: navSize.width)
+        let frame = rect(center: clamped(point, size: size, layer: layer), size: size)
+        let reach = NavMetrics.edgeMargin + NavMetrics.edgeTouchReach
+        let isAtSide = frame.minX <= reach || frame.maxX >= layer.width - reach
+        let isAtEnd = frame.minY <= reach || frame.maxY >= layer.height - reach
+        if isAtSide && !isAtEnd {
             return .vertical
         }
-        if endDistance + NavMetrics.turnHysteresis < sideDistance {
+        if isAtEnd && !isAtSide {
             return .horizontal
         }
         return current
@@ -946,7 +1007,7 @@ struct ToolNav<PanelContent: View>: View {
                 let point = CGPoint(x: drag.location.x - grab.width, y: drag.location.y - grab.height)
                 carryPoint = point
                 let current = turningOrientation ?? orientation
-                let wanted = zoneOrientation(of: point, layer: layer, current: current)
+                let wanted = edgeOrientation(of: point, layer: layer, current: current)
                 if wanted != current {
                     turningOrientation = wanted
                     Haptics.tick()
@@ -955,7 +1016,7 @@ struct ToolNav<PanelContent: View>: View {
             }
             .onEnded { _ in
                 guard let point = carryPoint else { return }
-                let nextOrientation = zoneOrientation(of: point, layer: layer, current: turningOrientation ?? orientation)
+                let nextOrientation = edgeOrientation(of: point, layer: layer, current: turningOrientation ?? orientation)
                 let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: nextOrientation.rawValue)
                 Preferences.shared.setNavPlacement(next)
                 withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2)) {

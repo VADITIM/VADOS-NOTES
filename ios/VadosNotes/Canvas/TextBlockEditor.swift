@@ -48,7 +48,6 @@ struct TextBlockEditor: UIViewRepresentable {
     let zoom: CGFloat
     let color: UIColor
     let paperStyle: PaperStyle
-    let focusRequest: Int
     let styleRequest: TextStyleRequest?
     let onChange: (String) -> Void
     let onStyleState: (TextStyleState) -> Void
@@ -59,7 +58,6 @@ struct TextBlockEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var onChange: (String) -> Void
         var onStyleState: (TextStyleState) -> Void
-        var focusRequest = 0
         var styleSerial = 0
         var markdown = ""
         var zoom: CGFloat = 1
@@ -476,7 +474,6 @@ struct TextBlockEditor: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onChange: onChange, onStyleState: onStyleState)
-        coordinator.focusRequest = focusRequest
         coordinator.styleSerial = styleRequest?.serial ?? 0
         coordinator.zoom = zoom
         coordinator.color = color
@@ -490,6 +487,7 @@ struct TextBlockEditor: UIViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
         view.isScrollEnabled = false
+        view.clipsToBounds = false
         view.showsVerticalScrollIndicator = false
         view.showsHorizontalScrollIndicator = false
         view.autocorrectionType = .default
@@ -512,10 +510,6 @@ struct TextBlockEditor: UIViewRepresentable {
         let coordinator = context.coordinator
         coordinator.onChange = onChange
         coordinator.onStyleState = onStyleState
-        if coordinator.focusRequest != focusRequest {
-            coordinator.focusRequest = focusRequest
-            view.becomeFirstResponder()
-        }
         if text != coordinator.markdown {
             coordinator.zoom = zoom
             coordinator.color = color
