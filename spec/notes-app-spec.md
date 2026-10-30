@@ -430,3 +430,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - One top bar spans every screen: back and settings stay, titles and search change in place, and screens change without waiting for the chrome. Entering a subfolder keeps the screen. Colour variations recolour in place when another swatch is tapped.
 - The Windows app was rebuilt to match the iPad app behaviour for behaviour and also builds for Linux. It syncs with GitHub like the iPad, keeping its token in Credential Manager. Pen and mouse act as the Pencil and touch as the finger.
 - The folder header is a single-row pill as tall as search and settings: the title first, its count small at the right end.
+- Swiping the nav off its edge moves the whole stack: the secondary nav takes the main nav's place and the colour panel takes the secondary nav's; revealing reverses it.

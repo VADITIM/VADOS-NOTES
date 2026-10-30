@@ -259,6 +259,7 @@ struct ToolNav<PanelContent: View>: View {
             let subNavCenter = placeBeside(navigationRect, size: subNavSize, side: side, layer: layer, blocked: blocked + [navigationRect])
             let subNavRect = rect(center: subNavCenter, size: subNavSize)
             let panelCenter = placeBeside(panelAnchor ?? subNavRect, size: panelSize, side: side, layer: layer, blocked: blocked + [navigationRect, subNavRect])
+            let edgeShare = hiddenReach > 0 ? edgeOffset / hiddenReach : 0
             ZStack(alignment: .topLeading) {
                 ZStack {
                     if shownSubNavigationKey != nil {
@@ -266,6 +267,7 @@ struct ToolNav<PanelContent: View>: View {
                     }
                 }
                 .position(subNavCenter)
+                .offset(stackFollow(from: subNavCenter, to: center, share: edgeShare))
                 ZStack {
                     if let key = wheelPanelKey {
                         panel(key, orientation)
@@ -280,6 +282,7 @@ struct ToolNav<PanelContent: View>: View {
                 }
                 .position(panelCenter)
                 .animation(shownPillPanelKey != nil && panelMotion.areElementsShown ? Motion.placement : nil, value: panelCenter)
+                .offset(stackFollow(from: panelCenter, to: subNavCenter, share: edgeShare))
                 navBody(layer: layer, center: center)
                     .simultaneousGesture(edgeHideGesture(edge: edge, limit: hiddenReach))
                     .position(center)
@@ -369,6 +372,10 @@ struct ToolNav<PanelContent: View>: View {
         case .left: return .right
         case .right: return .left
         }
+    }
+
+    private func stackFollow(from start: CGPoint, to end: CGPoint, share: CGFloat) -> CGSize {
+        CGSize(width: (end.x - start.x) * share, height: (end.y - start.y) * share)
     }
 
     private func edgeVector(_ edge: NavSide, _ distance: CGFloat) -> CGSize {
