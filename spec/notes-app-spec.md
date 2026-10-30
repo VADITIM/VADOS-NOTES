@@ -435,3 +435,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The size slide's track is a cone, thin at the start and widening to the end; its thickness at each point is the preview dot for that size.
 - The secondary nav closes by scaling down as a capsule instead of shrinking into a circle first.
 - Pen and marker size and colour groups collapse to their first two presets with a swipe towards their start; their + turns into an expand arrow, and a swipe back or a tap on the arrow restores them. Each group remembers its state across launches.
+- Normal text has one size, fitted to the guide rows: its line height is the row gap (297 / 59 mm) and every baseline sits on a guide line, wrapped lines included. Text boxes snap to the rows; older blocks are drawn fitted and take the fitted size when they are next edited or moved. The font-size control is gone.

@@ -5,6 +5,10 @@ public enum PaperGeometry {
     public static let cellHeight = 297.0
     public static let gridSpacing = 5.0
 
+    public static var rowSpacing: Double {
+        cellHeight / max(1, (cellHeight / gridSpacing).rounded())
+    }
+
     public static func width(of extent: Extent) -> Double {
         Double(extent.columns) * cellWidth
     }

@@ -89,7 +89,7 @@ struct CanvasView: UIViewRepresentable {
 
 struct TextBlockEditor: UIViewRepresentable {
     let text: String
-    let fontSize: CGFloat
+    let zoom: CGFloat
     let color: UIColor
     let focusRequest: Int
     let onChange: (String) -> Void
@@ -97,12 +97,19 @@ struct TextBlockEditor: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var onChange: (String) -> Void
         var focusRequest = 0
+        var attributes: [NSAttributedString.Key: Any] = [:]
 
         init(onChange: @escaping (String) -> Void) {
             self.onChange = onChange
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            if textView.markedTextRange == nil, !attributes.isEmpty {
+                let selection = textView.selectedRange
+                textView.textStorage.setAttributes(attributes, range: NSRange(location: 0, length: textView.textStorage.length))
+                textView.typingAttributes = attributes
+                textView.selectedRange = selection
+            }
             onChange(textView.text)
         }
     }
@@ -114,7 +121,7 @@ struct TextBlockEditor: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
+        let view = UITextView(usingTextLayoutManager: false)
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
@@ -123,7 +130,7 @@ struct TextBlockEditor: UIViewRepresentable {
         view.delegate = context.coordinator
         view.tintColor = UIColor(Palette.accent)
         view.text = text
-        apply(to: view)
+        apply(to: view, coordinator: context.coordinator)
         DispatchQueue.main.async {
             view.becomeFirstResponder()
         }
@@ -133,7 +140,7 @@ struct TextBlockEditor: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? 200
         let fitted = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: max(fitted.height, fontSize * 1.4))
+        return CGSize(width: width, height: max(fitted.height, TextRhythm.rowGap * zoom))
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
@@ -142,17 +149,19 @@ struct TextBlockEditor: UIViewRepresentable {
             context.coordinator.focusRequest = focusRequest
             view.becomeFirstResponder()
         }
-        if view.text != text {
+        let isReplaced = view.text != text
+        if isReplaced {
             view.text = text
         }
-        apply(to: view)
+        apply(to: view, coordinator: context.coordinator, isForced: isReplaced)
     }
 
-    private func apply(to view: UITextView) {
-        let attributes = PageRenderer.textAttributes(fontSize: fontSize, color: color)
+    private func apply(to view: UITextView, coordinator: Coordinator, isForced: Bool = false) {
+        let attributes = TextRhythm.attributes(zoom: zoom, color: color)
+        coordinator.attributes = attributes
         let currentFont = view.typingAttributes[.font] as? UIFont
         let currentColor = view.typingAttributes[.foregroundColor] as? UIColor
-        if currentFont != attributes[.font] as? UIFont || currentColor != color {
+        if isForced || currentFont != attributes[.font] as? UIFont || currentColor != color {
             view.typingAttributes = attributes
             let selection = view.selectedRange
             view.attributedText = NSAttributedString(string: view.text, attributes: attributes)

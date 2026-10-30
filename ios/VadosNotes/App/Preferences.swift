@@ -232,14 +232,6 @@ final class Preferences: ObservableObject {
         write("eraserMode", mode.rawValue)
     }
 
-    var textFontSize: Double {
-        clamp(read("textFontSize", tokens.text.fontSize), tokens.text.fontSizeRange)
-    }
-
-    func setTextFontSize(_ size: Double) {
-        write("textFontSize", clamp(size, tokens.text.fontSizeRange))
-    }
-
     var toolOrder: [String] {
         let stored = read("toolOrder", [String]())
         let all = ActiveTool.allCases.map(\.rawValue)

@@ -187,10 +187,9 @@ struct PageScreen: View {
     }
 
     private func textEditor(_ session: TextEditingSession, box: TextBox, camera: CanvasCamera, extent: Extent) -> some View {
-        let fontSize = CGFloat(session.element.fontSize ?? Tokens.shared.text.fontSize) * camera.scale
-        return TextBlockEditor(
+        TextBlockEditor(
             text: session.element.content ?? "",
-            fontSize: fontSize,
+            zoom: camera.scale,
             color: UIColor(hex: Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)),
             focusRequest: textFocusRequest,
             onChange: { library.updateText($0) }
@@ -237,7 +236,7 @@ struct PageScreen: View {
                 }
                 let translation = Point(x: Double(value.translation.width / camera.scale), y: Double(value.translation.height / camera.scale))
                 let height = Double(session.flatMap { PageRenderer.textRect(for: $0.element)?.height } ?? 0)
-                library.placeText(Ink.clampBox(change(origin, translation), extent: extent, height: height))
+                library.placeText(TextRhythm.placed(change(origin, translation), extent: extent, height: height))
             }
             .onEnded { _ in
                 textDragOrigin = nil
@@ -266,10 +265,8 @@ struct PageScreen: View {
                 if let elementId {
                     library.editText(elementId, on: pageId)
                 } else if let page = library.page(pageId) {
-                    let fontSize = preferences.textFontSize
-                    let height = Double(MarkdownText.lineHeight(CGFloat(fontSize)))
-                    let box = Ink.clampBox(TextBox(x: point.x, y: point.y, width: Tokens.shared.text.boxWidth), extent: page.extent, height: height)
-                    library.beginText(on: pageId, at: Point(x: box.x, y: box.y), fontSize: fontSize)
+                    let box = TextRhythm.placed(TextBox(x: point.x, y: point.y, width: Tokens.shared.text.boxWidth), extent: page.extent, height: Double(TextRhythm.rowGap))
+                    library.beginText(on: pageId, at: Point(x: box.x, y: box.y))
                 }
             },
             onTextMove: { elementId, box in library.moveText(elementId, on: pageId, to: box) },
@@ -338,8 +335,7 @@ struct PageScreen: View {
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             panelKey = nil
             switch tool {
-            case .lasso: subNavKey = nil
-            case .text: subNavKey = "text-size"
+            case .lasso, .text: subNavKey = nil
             default: subNavKey = tool.rawValue
             }
         }
@@ -456,10 +452,6 @@ struct PageScreen: View {
         Palette.inkOnPaper(preferences.color(tool), style: preferences.paperStyle)
     }
 
-    private static func pointSize(_ millimetres: Double) -> String {
-        String(Int((millimetres / millimetresPerPoint).rounded()))
-    }
-
     private static func pixelCaption(_ millimetres: Double) -> String {
         let pixels = millimetres / millimetresPerPoint
         return pixels < 10 ? String(format: "%.1fpx", pixels) : "\(Int(pixels.rounded()))px"
@@ -473,7 +465,6 @@ struct PageScreen: View {
         if let session {
             let color = Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)
             return [[
-                NavItem(id: "text-size", caption: Self.pointSize(session.element.fontSize ?? preferences.textFontSize), label: "Font size", sizing: textSizing(), action: { _ in toggleSubNav("text-size") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
                 NavItem(id: "edit-text", glyph: "keyboard", label: "Edit", tint: Palette.edit, isTinted: true, action: { _ in textFocusRequest += 1 }),
             ], [
@@ -520,30 +511,19 @@ struct PageScreen: View {
         )
     }
 
-    private func textSizing() -> NavSizing {
-        let range = Tokens.shared.text.fontSizeRange
-        return NavSizing(
-            share: Self.share(session?.element.fontSize ?? preferences.textFontSize, range),
-            color: Palette.textBright,
-            previewDiameter: Self.previewDiameter,
-            caption: { share in Self.pointSize(Self.value(share, range)) + "pt" },
-            onChange: { share in chooseTextSize(Self.value(share, range)) }
-        )
-    }
-
     private func press(_ tool: ActiveTool) {
         if activeTool == tool {
-            guard tool != .lasso else { return }
-            toggleSubNav(tool == .text ? "text-size" : tool.rawValue)
+            guard tool != .lasso, tool != .text else { return }
+            toggleSubNav(tool.rawValue)
             return
         }
         previousTool = activeTool
         eraserReturn = nil
         preferences.setActiveTool(tool)
-        if subNavKey != nil, tool != .lasso {
+        if subNavKey != nil, tool != .lasso, tool != .text {
             withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                 panelKey = nil
-                subNavKey = tool == .text ? "text-size" : tool.rawValue
+                subNavKey = tool.rawValue
             }
         } else {
             closeSubNav()
@@ -638,8 +618,6 @@ struct PageScreen: View {
             return inkGroups(.marker)
         case "eraser":
             return eraserGroups()
-        case "text-size":
-            return [textSizeGroup()]
         case "text-color":
             return textColorGroups()
         default:
@@ -724,25 +702,6 @@ struct PageScreen: View {
                 }
             },
         ]
-    }
-
-    private func chooseTextSize(_ size: Double) {
-        preferences.setTextFontSize(size)
-        library.styleText(fontSize: preferences.textFontSize)
-    }
-
-    private func textSizeGroup() -> SubNavigationGroup {
-        let size = session?.element.fontSize ?? preferences.textFontSize
-        return group("text-sizes") { orientation in
-            let layout = stack(orientation)
-            layout {
-                ForEach(Tokens.shared.text.fontSizePresets, id: \.self) { preset in
-                    CaptionButton(caption: Self.pointSize(preset), isSelected: Self.pointSize(preset) == Self.pointSize(size), ring: ("text-size-ring", ringSpace)) {
-                        chooseTextSize(preset)
-                    }
-                }
-            }
-        }
     }
 
     private func textColorGroups() -> [SubNavigationGroup] {

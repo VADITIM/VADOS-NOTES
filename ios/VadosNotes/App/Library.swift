@@ -358,6 +358,7 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId), var element = page.element(withId: elementId), !element.deleted else { return }
         let before = element
         element.box = box
+        element = TextRhythm.fitted(element, extent: page.extent)
         element.updated = store.timestamp()
         element.device = device
         apply(.element(pageId: pageId, element: element), page: pageId)
@@ -370,7 +371,7 @@ final class Library: ObservableObject {
         var step = UndoStep(before: [], after: [])
         for id in elementIds {
             guard let element = page.element(withId: id), !element.deleted else { continue }
-            var moved = Lasso.translated(element, by: offset)
+            var moved = TextRhythm.fitted(Lasso.translated(element, by: offset), extent: page.extent)
             moved.updated = now
             moved.device = device
             apply(.element(pageId: pageId, element: moved), page: pageId)
@@ -388,7 +389,7 @@ final class Library: ObservableObject {
         var step = UndoStep(before: [], after: [])
         for id in elementIds {
             guard let element = page.element(withId: id), !element.deleted else { continue }
-            var scaled = Lasso.scaled(element, about: anchor, by: factor)
+            var scaled = TextRhythm.fitted(Lasso.scaled(element, about: anchor, by: factor), extent: page.extent)
             scaled.updated = now
             scaled.device = device
             apply(.element(pageId: pageId, element: scaled), page: pageId)
@@ -430,7 +431,7 @@ final class Library: ObservableObject {
         textEditing = session
     }
 
-    func beginText(on pageId: String, at point: Point, fontSize: Double) {
+    func beginText(on pageId: String, at point: Point) {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         finishText()
         let tokens = Tokens.shared.text
@@ -439,7 +440,7 @@ final class Library: ObservableObject {
             id: Identifier.make(prefix: Identifier.elementPrefix, date: now),
             content: "",
             box: TextBox(x: point.x, y: point.y, width: tokens.boxWidth),
-            fontSize: fontSize,
+            fontSize: Double(TextRhythm.fontSize),
             color: tokens.color,
             order: page.nextOrder(in: .text),
             updated: now,
@@ -449,9 +450,15 @@ final class Library: ObservableObject {
     }
 
     func editText(_ elementId: String, on pageId: String) {
-        guard let element = page(pageId)?.element(withId: elementId), !element.deleted, !isReadOnly(pageId) else { return }
+        guard let page = page(pageId), let element = page.element(withId: elementId), !element.deleted, !isReadOnly(pageId) else { return }
         finishText()
-        textEditing = TextEditingSession(pageId: pageId, element: element, original: element, isApplied: true)
+        var fitted = TextRhythm.fitted(element, extent: page.extent)
+        if fitted != element {
+            fitted.updated = store.timestamp()
+            fitted.device = device
+            apply(.element(pageId: pageId, element: fitted), page: pageId)
+        }
+        textEditing = TextEditingSession(pageId: pageId, element: fitted, original: element, isApplied: true)
     }
 
     func updateText(_ content: String) {
@@ -466,11 +473,8 @@ final class Library: ObservableObject {
         textEditing = session
     }
 
-    func styleText(fontSize: Double? = nil, color: String? = nil) {
+    func styleText(color: String? = nil) {
         guard var session = textEditing else { return }
-        if let fontSize {
-            session.element.fontSize = fontSize
-        }
         if let color {
             session.element.color = color
         }

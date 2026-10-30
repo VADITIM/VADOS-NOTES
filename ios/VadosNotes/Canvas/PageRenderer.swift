@@ -187,24 +187,20 @@ enum MarkdownText {
         UIFont(name: isBold ? Typography.monoBoldName : Typography.monoName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: isBold ? .bold : .regular)
     }
 
-    static func lineHeight(_ size: CGFloat) -> CGFloat {
-        font(size, isBold: false).lineHeight * CGFloat(Tokens.shared.text.lineHeight)
-    }
-
-    private static func attributed(_ block: MarkdownBlock, size: CGFloat, indent: CGFloat, color: UIColor) -> NSAttributedString {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = CGFloat(Tokens.shared.text.lineHeight)
-        paragraph.lineBreakMode = .byWordWrapping
+    private static func attributed(_ block: MarkdownBlock, size: CGFloat, rows: Int, indent: CGFloat, color: UIColor) -> NSAttributedString {
+        let paragraph = TextRhythm.paragraph(rows: rows, zoom: 1)
         paragraph.firstLineHeadIndent = indent
         paragraph.headIndent = indent
         let result = NSMutableAttributedString()
         let ink = block.isChecked ? color.withAlphaComponent(0.55) : color
         let runs = block.runs.isEmpty ? [MarkdownRun(text: " ", style: MarkdownStyle())] : block.runs
         for run in runs {
+            let runFont = font(size, isBold: run.style.isBold)
             var attributes: [NSAttributedString.Key: Any] = [
-                .font: font(size, isBold: run.style.isBold),
+                .font: runFont,
                 .foregroundColor: ink,
                 .paragraphStyle: paragraph,
+                .baselineOffset: TextRhythm.baselineOffset(font: runFont, rows: rows, zoom: 1),
             ]
             if run.style.isItalic {
                 attributes[.obliqueness] = 0.2
@@ -224,7 +220,7 @@ enum MarkdownText {
     }
 
     static func layout(_ element: Element, color: UIColor) -> Layout {
-        let fontSize = CGFloat(element.fontSize ?? Tokens.shared.text.fontSize)
+        let fontSize = TextRhythm.fontSize
         let width = CGFloat(element.box?.width ?? Tokens.shared.text.boxWidth)
         let content = element.content ?? ""
         let key = "\(fontSize)|\(width)|\(color.description)|\(content)"
@@ -235,10 +231,13 @@ enum MarkdownText {
         var blocks: [LaidBlock] = []
         for block in content.isEmpty ? [] : Markdown.blocks(content) {
             let size = fontSize * CGFloat(block.scale)
+            let rows = TextRhythm.rows(for: block.scale)
+            let lineHeight = TextRhythm.rowGap * CGFloat(rows)
             let characterWidth = ("0" as NSString).size(withAttributes: [.font: font(size, isBold: false)]).width
             let indent = CGFloat(block.indent) * indentCharacters * characterWidth
-            let text = attributed(block, size: size, indent: indent, color: color)
-            let measured = block.kind == .rule ? lineHeight(size) : ceil(text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height)
+            let text = attributed(block, size: size, rows: rows, indent: indent, color: color)
+            let lines = block.kind == .rule ? 1 : max(1, (text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height / lineHeight).rounded())
+            let measured = lines * lineHeight
             blocks.append(LaidBlock(block: block, text: text, top: top, height: measured, fontSize: size, indent: indent, characterWidth: characterWidth))
             top += measured
         }
@@ -338,14 +337,7 @@ enum PageRenderer {
     static func textRect(for element: Element) -> CGRect? {
         guard element.type == .text, let box = element.box else { return nil }
         let height = MarkdownText.layout(element, color: .black).height
-        return CGRect(x: box.x, y: box.y, width: box.width, height: max(height, CGFloat(element.fontSize ?? Tokens.shared.text.fontSize) * 1.4))
-    }
-
-    static func textAttributes(fontSize: CGFloat, color: UIColor) -> [NSAttributedString.Key: Any] {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = CGFloat(Tokens.shared.text.lineHeight)
-        paragraph.lineBreakMode = .byWordWrapping
-        return [.font: Typography.monoFont(fontSize), .foregroundColor: color, .paragraphStyle: paragraph]
+        return CGRect(x: box.x, y: TextRhythm.snappedTop(box.y), width: box.width, height: max(height, TextRhythm.rowGap))
     }
 
     private static func drawImport(_ element: Element, in context: CGContext, camera: CanvasCamera, visiblePage: CGRect, options: RenderOptions, guide: UIColor) {
@@ -381,7 +373,7 @@ enum PageRenderer {
     private static func drawText(_ element: Element, in context: CGContext, style: PaperStyle) {
         guard let box = element.box, let content = element.content, !content.isEmpty else { return }
         let color = UIColor(hex: Palette.inkOnPaper(element.color ?? Tokens.shared.text.color, style: style))
-        MarkdownText.draw(element, at: CGPoint(x: CGFloat(box.x), y: CGFloat(box.y)), color: color, in: context)
+        MarkdownText.draw(element, at: CGPoint(x: CGFloat(box.x), y: CGFloat(TextRhythm.snappedTop(box.y))), color: color, in: context)
     }
 
     private static func drawGuides(in context: CGContext, visiblePage: CGRect, camera: CanvasCamera, color: UIColor) {
@@ -396,8 +388,7 @@ enum PageRenderer {
             context.addLine(to: CGPoint(x: x, y: visiblePage.maxY))
             x += spacing
         }
-        let cellHeight = CGFloat(PaperGeometry.cellHeight)
-        let rowSpacing = cellHeight / max(1, (cellHeight / spacing).rounded())
+        let rowSpacing = CGFloat(PaperGeometry.rowSpacing)
         var row = (visiblePage.minY / rowSpacing).rounded(.down)
         while row * rowSpacing <= visiblePage.maxY {
             context.move(to: CGPoint(x: visiblePage.minX, y: row * rowSpacing))
