@@ -505,7 +505,7 @@ struct ToolNav<PanelContent: View>: View {
 
     private func closeSubNavigation() {
         guard shownSubNavigationKey != nil else { return }
-        subNavigationMotion.leave {
+        subNavigationMotion.leave(keepsShape: true) {
             shownSubNavigationKey = nil
         }
     }

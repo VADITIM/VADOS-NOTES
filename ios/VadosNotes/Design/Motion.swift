@@ -338,12 +338,25 @@ final class PillMotion: ObservableObject {
         }
     }
 
-    func leave(then finish: @escaping () -> Void = {}) {
+    func leave(keepsShape: Bool = false, then finish: @escaping () -> Void = {}) {
         guard isPresent else { return }
         step += 1
         areElementsShown = false
         let elementsGone = Motion.navigationLeaveElementMilliseconds
         let narrowed = elementsGone + Motion.navigationLeaveSpreadMilliseconds * 3 / 4
+        let gone = narrowed + Motion.navigationLeavePopMilliseconds
+        if keepsShape {
+            after(elementsGone) { [weak self] in
+                withAnimation(Motion.powerTwoIn(gone - elementsGone)) {
+                    self?.shellScale = 0
+                }
+            }
+            after(gone) { [weak self] in
+                self?.isPresent = false
+                finish()
+            }
+            return
+        }
         after(elementsGone) { [weak self] in
             withAnimation(Motion.powerThreeInOut(Motion.navigationLeaveSpreadMilliseconds)) {
                 self?.shellSpread = 0
@@ -354,7 +367,7 @@ final class PillMotion: ObservableObject {
                 self?.shellScale = 0
             }
         }
-        after(narrowed + Motion.navigationLeavePopMilliseconds) { [weak self] in
+        after(gone) { [weak self] in
             self?.isPresent = false
             finish()
         }

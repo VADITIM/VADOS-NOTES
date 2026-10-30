@@ -433,3 +433,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Swiping the nav off its edge moves the whole stack: the secondary nav takes the main nav's place and the colour panel takes the secondary nav's; revealing reverses it.
 - Size presets in the secondary nav show only their dot, without a px label.
 - The size slide's track is a cone, thin at the start and widening to the end; its thickness at each point is the preview dot for that size.
+- The secondary nav closes by scaling down as a capsule instead of shrinking into a circle first.
