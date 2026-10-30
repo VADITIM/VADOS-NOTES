@@ -39,10 +39,12 @@ enum Motion {
     static let typeMilliseconds = durations.type
     static let undoTapMilliseconds = durations.undoTap
     static let navigationEdgeHideMilliseconds = durations.navEdgeHide
+    static let settingsStaggerMilliseconds = durations.settingsStagger
 
     static var placement: Animation { spring(springs.placement) }
     static var wash: Animation { spring(springs.wash) }
     static var selection: Animation { spring(springs.selection) }
+    static var settingsPop: Animation { spring(springs.settingsPop) }
 
     static func backOut(_ milliseconds: Int, delay: Int = 0) -> Animation {
         animation(curves.backOut, milliseconds, delay)

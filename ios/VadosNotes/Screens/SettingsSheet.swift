@@ -79,7 +79,34 @@ struct SettingsSlider: View {
     }
 }
 
+struct ModulePop: ViewModifier, Animatable {
+    var scale: CGFloat
+    let isScaling: Bool
+
+    private static let smallestScale: CGFloat = 0.001
+
+    var animatableData: CGFloat {
+        get { scale }
+        set { scale = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(isScaling ? max(Self.smallestScale, scale) : 1)
+            .opacity(min(1, max(0, scale)))
+    }
+}
+
 struct SettingsSheet: View {
+    private enum Module: CaseIterable {
+        case ascii
+        case transfer
+        case paper
+        case pen
+        case sync
+        case delete
+    }
+
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
@@ -92,6 +119,8 @@ struct SettingsSheet: View {
     @State private var isImporting = false
     @State private var isDeleteArmed = false
     @State private var importFailure: String?
+    @State private var moduleScales: [Module: CGFloat] = [:]
+    @Environment(\.accessibilityReduceMotion) private var isMotionReduced
 
     private static let asciiOpacityRange = Tokens.shared.background.opacityRange
     private static let smoothingRange = Tokens.shared.ink.smoothingRange
@@ -148,6 +177,31 @@ struct SettingsSheet: View {
             repository = library.sync.settings.repository
             branch = library.sync.settings.branch
             hasStoredToken = Keychain.readToken() != nil
+            popModules(isShown: true)
+        }
+        .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
+            popModules(isShown: !isLeaving)
+        }
+    }
+
+    private func popped(_ module: Module) -> ModulePop {
+        ModulePop(scale: moduleScales[module] ?? 0, isScaling: !isMotionReduced)
+    }
+
+    private func popModules(isShown: Bool) {
+        let target: CGFloat = isShown ? 1 : 0
+        guard !isMotionReduced else {
+            withAnimation(isShown ? Motion.powerTwoOut(Motion.stateMilliseconds) : Motion.powerTwoIn(Motion.stateMilliseconds)) {
+                for module in Module.allCases {
+                    moduleScales[module] = target
+                }
+            }
+            return
+        }
+        for (position, module) in Module.allCases.shuffled().enumerated() {
+            withAnimation(Motion.settingsPop.delay(Motion.seconds(position * Motion.settingsStaggerMilliseconds))) {
+                moduleScales[module] = target
+            }
         }
     }
 
@@ -156,24 +210,31 @@ struct SettingsSheet: View {
             HStack(alignment: .top, spacing: 18) {
                 VStack(spacing: 18) {
                     asciiModule
+                        .modifier(popped(.ascii))
                     HStack(spacing: 12) {
                         LinkButton(glyph: "import", title: "Import", tint: Palette.importAsset, isEnabled: isPageEditable) {
                             isImporting = true
                         }
                         LinkButton(glyph: "export", title: "Export", tint: Palette.importAsset, isEnabled: page != nil, action: export)
                     }
+                    .modifier(popped(.transfer))
                     if let importFailure {
                         MicroLabel(text: importFailure, color: Palette.destructive)
+                            .modifier(popped(.transfer))
                     }
                 }
                 VStack(spacing: 18) {
                     paperModule
+                        .modifier(popped(.paper))
                     penModule
+                        .modifier(popped(.pen))
                 }
             }
             syncModule
+                .modifier(popped(.sync))
             LinkButton(glyph: "trash", title: isDeleteArmed ? "Tap again to delete" : "Delete note", tint: Palette.destructive, isOn: isDeleteArmed, isEnabled: page != nil, action: deletePressed)
                 .frame(maxWidth: 280)
+                .modifier(popped(.delete))
         }
     }
 

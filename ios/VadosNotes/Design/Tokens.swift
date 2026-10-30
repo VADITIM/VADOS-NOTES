@@ -151,6 +151,7 @@ struct Tokens: Decodable {
         let type: Int
         let undoTap: Int
         let navEdgeHide: Int
+        let settingsStagger: Int
     }
 
     struct SpringToken: Decodable {
@@ -162,6 +163,7 @@ struct Tokens: Decodable {
         let placement: SpringToken
         let wash: SpringToken
         let selection: SpringToken
+        let settingsPop: SpringToken
     }
 
     struct ScaleTokens: Decodable {
