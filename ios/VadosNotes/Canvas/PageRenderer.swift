@@ -195,28 +195,36 @@ enum MarkdownText {
         let ink = block.isChecked ? color.withAlphaComponent(0.55) : color
         let runs = block.runs.isEmpty ? [MarkdownRun(text: " ", style: MarkdownStyle())] : block.runs
         for run in runs {
-            let runFont = font(size, isBold: run.style.isBold)
-            var attributes: [NSAttributedString.Key: Any] = [
-                .font: runFont,
-                .foregroundColor: ink,
-                .paragraphStyle: paragraph,
-                .baselineOffset: TextRhythm.baselineOffset(font: runFont, rows: rows, zoom: 1),
-            ]
-            if run.style.isItalic {
-                attributes[.obliqueness] = 0.2
-            }
-            if run.style.isCode && block.kind != .code {
-                attributes[.backgroundColor] = color.withAlphaComponent(0.14)
-            }
-            if run.style.isStruck {
-                attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-            }
-            if run.style.isLink {
-                attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            }
+            var attributes = runAttributes(run.style, size: size, rows: rows, zoom: 1, color: ink, isInCodeBlock: block.kind == .code)
+            attributes[.paragraphStyle] = paragraph
             result.append(NSAttributedString(string: run.text.isEmpty ? " " : run.text, attributes: attributes))
         }
         return result
+    }
+
+    static func runAttributes(_ style: MarkdownStyle, size: CGFloat, rows: Int, zoom: CGFloat, color: UIColor, isInCodeBlock: Bool) -> [NSAttributedString.Key: Any] {
+        let runFont = font(size * zoom, isBold: style.isBold)
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: runFont,
+            .foregroundColor: color,
+            .paragraphStyle: TextRhythm.paragraph(rows: rows, zoom: zoom),
+            .baselineOffset: TextRhythm.baselineOffset(font: runFont, rows: rows, zoom: zoom),
+        ]
+        if style.isItalic {
+            attributes[.obliqueness] = 0.2
+        }
+        if style.isCode && !isInCodeBlock {
+            attributes[.backgroundColor] = color.withAlphaComponent(0.14)
+        }
+        if style.isStruck {
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if style.isDashedUnderlined {
+            attributes[.underlineStyle] = NSUnderlineStyle([.single, .patternDash]).rawValue
+        } else if style.isUnderlined || style.isLink {
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        return attributes
     }
 
     static func layout(_ element: Element, color: UIColor) -> Layout {

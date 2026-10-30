@@ -6,13 +6,19 @@ public struct MarkdownStyle: Equatable, Hashable, Sendable {
     public var isCode = false
     public var isStruck = false
     public var isLink = false
+    public var isUnderlined = false
+    public var isDashedUnderlined = false
+    public var linkTarget: String?
 
-    public init(isBold: Bool = false, isItalic: Bool = false, isCode: Bool = false, isStruck: Bool = false, isLink: Bool = false) {
+    public init(isBold: Bool = false, isItalic: Bool = false, isCode: Bool = false, isStruck: Bool = false, isLink: Bool = false, isUnderlined: Bool = false, isDashedUnderlined: Bool = false, linkTarget: String? = nil) {
         self.isBold = isBold
         self.isItalic = isItalic
         self.isCode = isCode
         self.isStruck = isStruck
         self.isLink = isLink
+        self.isUnderlined = isUnderlined
+        self.isDashedUnderlined = isDashedUnderlined
+        self.linkTarget = linkTarget
     }
 }
 
@@ -47,7 +53,10 @@ public struct MarkdownBlock: Equatable, Sendable {
 }
 
 public enum Markdown {
-    public static let headingScales = [1.6, 1.35, 1.15]
+    public static let headingScales = [2.0, 1.5, 1.0]
+    public static let underlineTag = "<u>"
+    public static let dashedUnderlineTag = "<u class=\"dashed\">"
+    public static let underlineCloseTag = "</u>"
     private static let indentPerLevel = 2
 
     private enum Emphasis: CaseIterable {
@@ -76,7 +85,7 @@ public enum Markdown {
         }
     }
 
-    private static let escapable: Set<Character> = ["\\", "`", "*", "_", "~", "[", "]", "(", ")", "#", "+", "-", ".", "!", ">"]
+    public static let escapable: Set<Character> = ["\\", "`", "*", "_", "~", "[", "]", "(", ")", "#", "+", "-", ".", "!", ">", "<"]
 
     private static func isWordCharacter(_ character: Character?) -> Bool {
         guard let character else { return false }
@@ -114,13 +123,13 @@ public enum Markdown {
         return false
     }
 
-    private static func link(in characters: [Character], at index: Int) -> (label: String, length: Int)? {
+    private static func link(in characters: [Character], at index: Int) -> (label: String, target: String, length: Int)? {
         guard characters[index] == "[", let close = characters[(index + 1)...].firstIndex(of: "]"), close > index + 1 else { return nil }
         let open = close + 1
         guard open < characters.count, characters[open] == "(", let end = characters[(open + 1)...].firstIndex(of: ")"), end > open + 1 else { return nil }
         let target = characters[(open + 1)..<end]
         guard !target.contains(where: { $0.isWhitespace }) else { return nil }
-        return (String(characters[(index + 1)..<close]), end - index + 1)
+        return (String(characters[(index + 1)..<close]), String(target), end - index + 1)
     }
 
     public static func runs(_ text: String, base: MarkdownStyle = MarkdownStyle()) -> [MarkdownRun] {
@@ -128,6 +137,9 @@ public enum Markdown {
         var runs: [MarkdownRun] = []
         var style = base
         var closers: [WritableKeyPath<MarkdownStyle, Bool>: [Character]] = [:]
+        var underlines: [WritableKeyPath<MarkdownStyle, Bool>] = []
+        let underlineOpeners: [(tag: [Character], flag: WritableKeyPath<MarkdownStyle, Bool>)] = [(Array(dashedUnderlineTag), \.isDashedUnderlined), (Array(underlineTag), \.isUnderlined)]
+        let underlineCloser = Array(underlineCloseTag)
         var buffer = ""
         var index = 0
         func flush() {
@@ -153,25 +165,47 @@ public enum Markdown {
                 flush()
                 var linked = style
                 linked.isLink = true
+                linked.linkTarget = found.target
                 for run in self.runs(found.label, base: linked) {
                     append(run.text, run.style, to: &runs)
                 }
                 index += found.length
                 continue
             }
-            if let emphasis = Emphasis.allCases.first(where: { starts(characters, at: index, with: $0.marker) }) {
-                let marker = emphasis.marker
-                let flag = emphasis.flag
-                let before: Character? = index > 0 ? characters[index - 1] : nil
-                let after: Character? = index + marker.count < characters.count ? characters[index + marker.count] : nil
-                let isUnderscore = marker[0] == "_"
-                if style[keyPath: flag], closers[flag] == marker, !isSpace(before), !(isUnderscore && isWordCharacter(after)) {
+            if character == "<" {
+                if let flag = underlines.last, starts(characters, at: index, with: underlineCloser) {
                     flush()
                     style[keyPath: flag] = false
-                    closers[flag] = nil
-                    index += marker.count
+                    underlines.removeLast()
+                    index += underlineCloser.count
                     continue
                 }
+                if let opener = underlineOpeners.first(where: { !style[keyPath: $0.flag] && starts(characters, at: index, with: $0.tag) && contains(characters, underlineCloser, from: index + $0.tag.count) }) {
+                    flush()
+                    style[keyPath: opener.flag] = true
+                    underlines.append(opener.flag)
+                    index += opener.tag.count
+                    continue
+                }
+            }
+            let matches = Emphasis.allCases.filter { starts(characters, at: index, with: $0.marker) }
+            let before: Character? = index > 0 ? characters[index - 1] : nil
+            let position = index
+            func following(_ marker: [Character]) -> Character? {
+                position + marker.count < characters.count ? characters[position + marker.count] : nil
+            }
+            if let closing = matches.first(where: { style[keyPath: $0.flag] && closers[$0.flag] == $0.marker && !isSpace(before) && !($0.marker[0] == "_" && isWordCharacter(following($0.marker))) }) {
+                flush()
+                style[keyPath: closing.flag] = false
+                closers[closing.flag] = nil
+                index += closing.marker.count
+                continue
+            }
+            if let emphasis = matches.first {
+                let marker = emphasis.marker
+                let flag = emphasis.flag
+                let after = following(marker)
+                let isUnderscore = marker[0] == "_"
                 if !style[keyPath: flag], contains(characters, marker, from: index + marker.count), !isSpace(after), !(isUnderscore && isWordCharacter(before)) {
                     flush()
                     style[keyPath: flag] = true
@@ -187,23 +221,23 @@ public enum Markdown {
         return runs
     }
 
-    private static func leadingSpaces(_ line: [Character]) -> Int {
+    static func leadingSpaces(_ line: [Character]) -> Int {
         line.prefix { $0 == " " || $0 == "\t" }.count
     }
 
-    private static func headingLevel(_ line: [Character]) -> Int? {
+    static func headingLevel(_ line: [Character]) -> Int? {
         let hashes = line.prefix { $0 == "#" }.count
         guard (1...6).contains(hashes), hashes < line.count, line[hashes].isWhitespace else { return nil }
         return hashes
     }
 
-    private static func isRule(_ line: [Character]) -> Bool {
+    static func isRule(_ line: [Character]) -> Bool {
         let marks = line.filter { !$0.isWhitespace }
         guard marks.count >= 3, let first = marks.first, "-*_".contains(first) else { return false }
         return marks.allSatisfy { $0 == first }
     }
 
-    private static func listMarker(_ line: [Character], from start: Int) -> Int? {
+    static func listMarker(_ line: [Character], from start: Int) -> Int? {
         guard start + 1 < line.count, "-*+".contains(line[start]), line[start + 1].isWhitespace else { return nil }
         return start + 1
     }

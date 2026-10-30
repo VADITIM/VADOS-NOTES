@@ -61,7 +61,7 @@ final class InkTests: XCTestCase {
         XCTAssertTrue(runs.contains(MarkdownRun(text: "it", style: MarkdownStyle(isBold: true, isItalic: true))))
         XCTAssertTrue(runs.contains(MarkdownRun(text: "code", style: MarkdownStyle(isCode: true))))
         XCTAssertTrue(runs.contains(MarkdownRun(text: "gone", style: MarkdownStyle(isStruck: true))))
-        XCTAssertTrue(runs.contains(MarkdownRun(text: "link", style: MarkdownStyle(isLink: true))))
+        XCTAssertTrue(runs.contains(MarkdownRun(text: "link", style: MarkdownStyle(isLink: true, linkTarget: "http://a.b"))))
         XCTAssertEqual(runs.last?.text, " snake_case")
         XCTAssertEqual(Markdown.runs("a * b * c"), [MarkdownRun(text: "a * b * c", style: MarkdownStyle())])
     }

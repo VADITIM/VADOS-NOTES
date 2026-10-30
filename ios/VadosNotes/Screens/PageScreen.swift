@@ -52,6 +52,8 @@ struct PageScreen: View {
     @State private var eraserReturn: ActiveTool?
     @State private var previousTool: ActiveTool?
     @State private var textFocusRequest = 0
+    @State private var textStyleState = TextStyleState()
+    @State private var textStyleRequest: TextStyleRequest?
     @State private var textDragOrigin: TextBox?
     @State private var flightTile: CGRect?
     @State private var flightProgress: CGFloat = 1
@@ -121,6 +123,7 @@ struct PageScreen: View {
         .onChange(of: session?.element.id) { _, _ in
             subNavKey = nil
             panelKey = nil
+            textStyleState = TextStyleState()
         }
         .onChange(of: subNavKey) { _, key in
             if let key {
@@ -192,7 +195,9 @@ struct PageScreen: View {
             zoom: camera.scale,
             color: UIColor(hex: Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)),
             focusRequest: textFocusRequest,
-            onChange: { library.updateText($0) }
+            styleRequest: textStyleRequest,
+            onChange: { library.updateText($0) },
+            onStyleState: { textStyleState = $0 }
         )
         .frame(width: CGFloat(box.width) * camera.scale)
         .fixedSize(horizontal: false, vertical: true)
@@ -465,6 +470,7 @@ struct PageScreen: View {
         if let session {
             let color = Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)
             return [[
+                NavItem(id: "text-style", caption: ".md", label: "Text styles", tint: Palette.edit, isTinted: subNavKey == "text-style", action: { _ in toggleSubNav("text-style") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
                 NavItem(id: "edit-text", glyph: "keyboard", label: "Edit", tint: Palette.edit, isTinted: true, action: { _ in textFocusRequest += 1 }),
             ], [
@@ -620,6 +626,8 @@ struct PageScreen: View {
             return eraserGroups()
         case "text-color":
             return textColorGroups()
+        case "text-style":
+            return textStyleGroups()
         default:
             return []
         }
@@ -698,6 +706,53 @@ struct PageScreen: View {
                     }
                     NavIconButton(glyph: "erase_area", tint: Palette.destructive, isSelected: preferences.eraserMode == .area, orientation: orientation, ring: ("eraser-mode-ring", ringSpace)) {
                         preferences.setEraserMode(.area)
+                    }
+                }
+            },
+        ]
+    }
+
+    private static let inlineStyleButtons: [(glyph: String, flag: WritableKeyPath<MarkdownStyle, Bool>)] = [
+        ("bold", \.isBold),
+        ("italic", \.isItalic),
+        ("underline", \.isUnderlined),
+        ("strikethrough", \.isStruck),
+        ("underline_dashed", \.isDashedUnderlined),
+        ("code", \.isCode),
+    ]
+
+    private static let lineStyleButtons: [(glyph: String, kind: MarkdownBlockKind)] = [
+        ("heading", .heading),
+        ("list_bullet", .bullet),
+        ("list_numbered", .numbered),
+    ]
+
+    private func requestTextStyle(_ command: TextStyleCommand) {
+        textStyleRequest = TextStyleRequest(serial: (textStyleRequest?.serial ?? 0) + 1, command: command)
+    }
+
+    private func textStyleGroups() -> [SubNavigationGroup] {
+        let state = textStyleState
+        return [
+            group("text-inline-styles") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    ForEach(Self.inlineStyleButtons.indices, id: \.self) { index in
+                        let button = Self.inlineStyleButtons[index]
+                        NavIconButton(glyph: button.glyph, tint: Palette.edit, isSelected: state.style[keyPath: button.flag], orientation: orientation) {
+                            requestTextStyle(.inline(button.flag))
+                        }
+                    }
+                }
+            },
+            group("text-line-styles") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    ForEach(Self.lineStyleButtons.indices, id: \.self) { index in
+                        let button = Self.lineStyleButtons[index]
+                        NavIconButton(glyph: button.glyph, tint: Palette.edit, isSelected: state.lineKind == button.kind, orientation: orientation) {
+                            requestTextStyle(.line(button.kind))
+                        }
                     }
                 }
             },
