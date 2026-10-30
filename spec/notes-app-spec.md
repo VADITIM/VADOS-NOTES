@@ -431,3 +431,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The Windows app was rebuilt to match the iPad app behaviour for behaviour and also builds for Linux. It syncs with GitHub like the iPad, keeping its token in Credential Manager. Pen and mouse act as the Pencil and touch as the finger.
 - The folder header is a single-row pill as tall as search and settings: the title first, its count small at the right end.
 - Swiping the nav off its edge moves the whole stack: the secondary nav takes the main nav's place and the colour panel takes the secondary nav's; revealing reverses it.
+- Size presets in the secondary nav show only their dot, without a px label.

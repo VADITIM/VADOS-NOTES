@@ -237,6 +237,7 @@ Every motion value below lives in `shared/tokens.json`; the reference is VADOS G
 
 - **The folder header is one row as tall as the top-right controls.** `TopBar.controlHeight` (48 pt) is the one height for search, settings, back and the folder header; it names the 48 the buttons already used rather than adding a value. The title sits first at `controlHeight / 2` (24 pt), the micro label ("4 folders") follows it on the same baseline at the right end, and the header no longer drops 10 pt below the buttons, so their tops line up.
 - **The nav stack hides as one group.** The main nav's edge offset, as a share of its hidden distance, drives the other two: the secondary nav moves that share of the way from its own centre to the main nav's centre, and the colour panel (variations pill or wheel) that share of the way to the secondary nav's centre. Fully hidden, each sits where the one before it was. The drag, the release, the rubber band and the handle all set the same offset, so revealing plays the same path backwards on the same curve, and nothing new is animated.
+- **Size presets are swatches only.** The pen and marker size presets dropped their "px" captions; the dot's diameter already shows the size, and the exact value still shows beside the knob while sliding along the main nav.
 
 
 ### Windows and Linux parity (2026-10-28)

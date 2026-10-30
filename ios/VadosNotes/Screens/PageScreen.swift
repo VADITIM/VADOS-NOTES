@@ -650,7 +650,7 @@ struct PageScreen: View {
                 let layout = stack(orientation)
                 layout {
                     ForEach(presets, id: \.self) { preset in
-                        SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, caption: Self.pixelCaption(preset), orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
+                        SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
                             .transition(.elementLeave)
                     }
                     NavIconButton(glyph: "plus", isEnabled: !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
