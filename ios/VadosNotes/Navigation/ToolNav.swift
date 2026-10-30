@@ -538,7 +538,7 @@ struct ToolNav<PanelContent: View>: View {
         .overlay {
             ZStack {
                 if let item = sizingItem, let sizing = item.sizing {
-                    NavSizeSlider(orientation: orientation, share: sizing.share, color: sizing.color, previewDiameter: sizing.previewDiameter(sizing.share), caption: sizing.caption(sizing.share))
+                    NavSizeSlider(orientation: orientation, share: sizing.share, color: sizing.color, previewDiameter: sizing.previewDiameter(sizing.share), startThickness: sizing.previewDiameter(0), endThickness: sizing.previewDiameter(1), caption: sizing.caption(sizing.share))
                         .transition(.sliderEnter)
                 }
             }

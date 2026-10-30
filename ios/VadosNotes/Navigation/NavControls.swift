@@ -74,6 +74,8 @@ struct NavSizeSlider: View {
     let share: Double
     let color: Color
     let previewDiameter: CGFloat
+    let startThickness: CGFloat
+    let endThickness: CGFloat
     let caption: String
 
     static let knob: CGFloat = 34
@@ -85,14 +87,17 @@ struct NavSizeSlider: View {
             let length = isVertical ? proxy.size.height : proxy.size.width
             let travel = max(1, length - Self.knob)
             ZStack(alignment: isVertical ? .bottom : .leading) {
-                Capsule()
+                ConeTrack(startThickness: startThickness, endThickness: endThickness, isVertical: isVertical)
                     .fill(Palette.borderStrong)
-                    .frame(width: isVertical ? 6 : travel, height: isVertical ? travel : 6)
-                    .overlay(alignment: isVertical ? .bottom : .leading) {
-                        Capsule()
+                    .overlay {
+                        ConeTrack(startThickness: startThickness, endThickness: endThickness, isVertical: isVertical)
                             .fill(Palette.accent)
-                            .frame(width: isVertical ? nil : travel * share, height: isVertical ? travel * share : nil)
+                            .mask(alignment: isVertical ? .bottom : .leading) {
+                                Rectangle()
+                                    .frame(width: isVertical ? nil : travel * share, height: isVertical ? travel * share : nil)
+                            }
                     }
+                    .frame(width: isVertical ? endThickness : travel, height: isVertical ? travel : endThickness)
                     .padding(isVertical ? .vertical : .horizontal, Self.knob / 2)
                 Circle()
                     .fill(Palette.raised)
@@ -111,6 +116,29 @@ struct NavSizeSlider: View {
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: isVertical ? .bottom : .leading)
         }
         .allowsHitTesting(false)
+    }
+}
+
+struct ConeTrack: Shape {
+    let startThickness: CGFloat
+    let endThickness: CGFloat
+    let isVertical: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let length = isVertical ? rect.height : rect.width
+        let middle = (isVertical ? rect.width : rect.height) / 2
+        let startRadius = startThickness / 2
+        let endRadius = endThickness / 2
+        var path = Path()
+        path.move(to: CGPoint(x: startRadius, y: middle - startRadius))
+        path.addLine(to: CGPoint(x: length - endRadius, y: middle - endRadius))
+        path.addArc(center: CGPoint(x: length - endRadius, y: middle), radius: endRadius, startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+        path.addLine(to: CGPoint(x: startRadius, y: middle + startRadius))
+        path.addArc(center: CGPoint(x: startRadius, y: middle), radius: startRadius, startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+        path.closeSubpath()
+        guard isVertical else { return path.offsetBy(dx: rect.minX, dy: rect.minY) }
+        let standing = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: rect.minX, ty: rect.minY + rect.height)
+        return path.applying(standing)
     }
 }
 
