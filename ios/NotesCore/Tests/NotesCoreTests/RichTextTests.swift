@@ -101,6 +101,56 @@ final class RichTextTests: XCTestCase {
         XCTAssertEqual(shapes[0].scale, Markdown.headingScales[0])
     }
 
+    func testCodeSpansKeepTheirLanguageBesideProse() {
+        let markdown = "Given text example `let x = 1`{.javascript} Is the given code"
+        let runs = Markdown.runs(markdown)
+
+        XCTAssertEqual(runs.map(\.text), ["Given text example ", "let x = 1", " Is the given code"])
+        XCTAssertEqual(runs[1].style, MarkdownStyle(isCode: true, codeLanguage: .javascript))
+        XCTAssertEqual(roundTrip(markdown), markdown)
+        XCTAssertEqual(Markdown.runs("`x`{.py}").first?.style.codeLanguage, .python)
+        XCTAssertEqual(Markdown.runs("`x`{.rust}").map(\.text), ["x", "{.rust}"])
+    }
+
+    func testAdjacentCodeSpansOfDifferentLanguagesStayApart() {
+        let runs = [
+            MarkdownRun(text: "a", style: MarkdownStyle(isCode: true, codeLanguage: .csharp)),
+            MarkdownRun(text: "b", style: MarkdownStyle(isCode: true, codeLanguage: .java)),
+            MarkdownRun(text: "{.python} literal", style: MarkdownStyle()),
+        ]
+
+        XCTAssertEqual(Markdown.runs(RichText.inline(runs)), runs)
+    }
+
+    func testCodeBlocksCarryTheirFenceLanguage() {
+        let markdown = "intro\n```python\ndef f():\n    return 1\n```\nafter"
+        let blocks = Markdown.blocks(markdown)
+        let shapes = RichText.shapes(markdown.components(separatedBy: "\n"))
+
+        XCTAssertEqual(blocks.filter { $0.kind == .code }.map(\.language), [.python, .python])
+        XCTAssertEqual(shapes.map(\.language), [nil, .python, .python, .python, .python, nil])
+        XCTAssertEqual(roundTrip(markdown), markdown)
+    }
+
+    func testRemovingCodeLeavesPlainText() {
+        let runs = RichText.lines("say `x * y`{.java} now")[0].map { MarkdownRun(text: $0.text, style: MarkdownStyle()) }
+
+        XCTAssertEqual(Markdown.runs(RichText.inline(runs)), [MarkdownRun(text: "say x * y now", style: MarkdownStyle())])
+    }
+
+    func testCodeEditsMergeAndSurviveTheCodec() throws {
+        let older = Fixtures.text("e_C", "run `go()`{.javascript}", at: 1, device: "pc-01")
+        let newer = Fixtures.text("e_C", "run `go()`{.python}\n```csharp\nvar a = 1;\n```", at: 2, device: "ipad-01")
+        let merged = Merge.page(Fixtures.page(elements: [older]), Fixtures.page(elements: [newer]))
+
+        let decoded = try PageCodec.decodePage(PageCodec.encodePage(merged))
+        let content = decoded.element(withId: "e_C")?.content ?? ""
+
+        XCTAssertEqual(content, newer.content)
+        XCTAssertEqual(Markdown.runs("run `go()`{.python}").last?.style.codeLanguage, .python)
+        XCTAssertEqual(Markdown.blocks(content).last?.language, .csharp)
+    }
+
     func testStyledContentSurvivesTheCodec() throws {
         let content = "# *Plan*\n- ~~buy~~ <u>milk</u>\n<u class=\"dashed\">later</u> `now`"
         let page = Fixtures.page(elements: [Fixtures.text("e_T", content, at: 1, device: "ipad-01")])

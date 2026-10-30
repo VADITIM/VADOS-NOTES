@@ -267,6 +267,20 @@ Every motion value below lives in `shared/tokens.json`; the reference is VADOS G
 - **Headings take whole rows.** Heading scales are now 2, 1.5 and 1 (were 1.6, 1.35, 1.15), so level 1 and 2 take two rows and level 3 one bold row. The font is scaled and its baseline still lands on a guide (phase 1's offset), so the rows below keep the rhythm. Levels 4 to 6 render as level 3.
 - **Known limits.** A line that only looked like a heading because its `#` was escaped becomes a heading once it is edited, because the editor shows that `#` as text. Windows still renders `<u>` tags as literal text until its Markdown module is ported.
 
+#### Code spans and blocks (2026-10-30)
+
+- **Stored in the same Markdown.** A code block is a fenced block with the language as its info string (```` ```javascript ````), the standard form. Inline code with a language is `` `code`{.javascript} ``, Pandoc's attribute syntax: Markdown has no other way to tag an inline span, and the code text stays literal (no HTML escaping). Plain `` `code` `` (no language) still works, and the `.md` nav's code toggle makes it. Identifiers are `javascript`, `csharp`, `java`, `python`; reading also accepts `js`, `cs`, `c#` and `py`. An unknown `{.x}` stays literal text, and `{` is now escapable, so prose that starts with `{.` after a code span is written as `\{`. No schema change.
+- **The code button.** While text is edited the typing nav has a `code` item beside `.md`. It opens the `text-code` secondary nav with JS, C#, JAVA, PY and "Aa" (normal text) in one selection ring, through the same switch as the other secondary navs. The ring shows the language of the selection, the caret's code span or the caret's code block, or "Aa" when none is code.
+- **What a language does.**
+  - **Selection within one line:** it becomes a code span in that language.
+  - **Caret only:** it becomes the typing style; inside an existing span it changes the whole span.
+  - **Selection across lines:** the lines are wrapped in a fence of that language.
+  - **Inside a block:** a language rewrites the block's fence.
+  - **"Aa":** removes the code style from the selection or the caret's whole span. Inside a block it removes both fences, so the lines become ordinary text, and their markup characters are escaped when saved.
+- **Boundaries are ordinary text.** In the editor a span is only a style on its characters, so the caret, selection and delete move across prose and code like any style change. Typing at a span's end continues the span (the character before the caret sets the typing style, as with bold).
+- **On the rows.** A span is the body font at the body size with a background, so prose and code share a row. Block lines and their fences are one row each in the editor. On the canvas the fences are hidden, so the code lines move up two rows but stay on the guides.
+- **Highlighting.** `SyntaxHighlighter` (NotesCore, `SyntaxHighlighter.swift`) is a small scanner per language: keywords, strings, numbers and comments. It covers line and block comments, template and triple-quoted strings across lines, escapes, and digits inside identifiers not being numbers. A block is scanned as one text, so a comment or string can span its lines. A span is scanned on its own. Plain code keeps the block's ink colour. The highlight colours and the code background are tokens per paper style (`syntax.dark`, `syntax.light`), VS Code-like hues, and the background replaces the old 14 % ink tint.
+
 ### Windows and Linux parity (2026-10-28)
 
 The Tauri app was rebuilt from the iPad app, so every behaviour pass above applies to Windows and Linux too. Only the platform mappings are new.

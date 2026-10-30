@@ -9,8 +9,9 @@ public struct MarkdownStyle: Equatable, Hashable, Sendable {
     public var isUnderlined = false
     public var isDashedUnderlined = false
     public var linkTarget: String?
+    public var codeLanguage: CodeLanguage?
 
-    public init(isBold: Bool = false, isItalic: Bool = false, isCode: Bool = false, isStruck: Bool = false, isLink: Bool = false, isUnderlined: Bool = false, isDashedUnderlined: Bool = false, linkTarget: String? = nil) {
+    public init(isBold: Bool = false, isItalic: Bool = false, isCode: Bool = false, isStruck: Bool = false, isLink: Bool = false, isUnderlined: Bool = false, isDashedUnderlined: Bool = false, linkTarget: String? = nil, codeLanguage: CodeLanguage? = nil) {
         self.isBold = isBold
         self.isItalic = isItalic
         self.isCode = isCode
@@ -19,6 +20,7 @@ public struct MarkdownStyle: Equatable, Hashable, Sendable {
         self.isUnderlined = isUnderlined
         self.isDashedUnderlined = isDashedUnderlined
         self.linkTarget = linkTarget
+        self.codeLanguage = codeLanguage
     }
 }
 
@@ -50,6 +52,7 @@ public struct MarkdownBlock: Equatable, Sendable {
     public var marker: String?
     public var isChecked: Bool
     public var runs: [MarkdownRun]
+    public var language: CodeLanguage? = nil
 }
 
 public enum Markdown {
@@ -85,7 +88,7 @@ public enum Markdown {
         }
     }
 
-    public static let escapable: Set<Character> = ["\\", "`", "*", "_", "~", "[", "]", "(", ")", "#", "+", "-", ".", "!", ">", "<"]
+    public static let escapable: Set<Character> = ["\\", "`", "*", "_", "~", "[", "]", "(", ")", "#", "+", "-", ".", "!", ">", "<", "{"]
 
     private static func isWordCharacter(_ character: Character?) -> Bool {
         guard let character else { return false }
@@ -132,6 +135,16 @@ public enum Markdown {
         return (String(characters[(index + 1)..<close]), String(target), end - index + 1)
     }
 
+    static func languageAttribute(in characters: [Character], at index: Int) -> (language: CodeLanguage, length: Int)? {
+        guard index + 1 < characters.count, characters[index] == "{", characters[index + 1] == ".", let close = characters[(index + 2)...].firstIndex(of: "}") else { return nil }
+        guard let language = CodeLanguage(identifier: String(characters[(index + 2)..<close])) else { return nil }
+        return (language, close - index + 1)
+    }
+
+    static func fenceLanguage(_ line: [Character]) -> CodeLanguage? {
+        CodeLanguage(identifier: String(line.drop { $0 == " " || $0 == "\t" }.dropFirst(3)))
+    }
+
     public static func runs(_ text: String, base: MarkdownStyle = MarkdownStyle()) -> [MarkdownRun] {
         let characters = Array(text)
         var runs: [MarkdownRun] = []
@@ -157,8 +170,13 @@ public enum Markdown {
                 flush()
                 var code = style
                 code.isCode = true
-                append(String(characters[(index + 1)..<closing]), code, to: &runs)
+                let text = String(characters[(index + 1)..<closing])
                 index = closing + 1
+                if let attribute = languageAttribute(in: characters, at: index) {
+                    code.codeLanguage = attribute.language
+                    index += attribute.length
+                }
+                append(text, code, to: &runs)
                 continue
             }
             if character == "[", let found = link(in: characters, at: index) {
@@ -253,16 +271,18 @@ public enum Markdown {
     public static func blocks(_ content: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
         var isInFence = false
+        var fence: CodeLanguage?
         for text in content.components(separatedBy: "\n") {
             let line = Array(text)
             let indent = leadingSpaces(line)
             let level = indent / indentPerLevel + 1
             if String(line[indent...]).hasPrefix("```") {
                 isInFence.toggle()
+                fence = isInFence ? fenceLanguage(line) : nil
                 continue
             }
             if isInFence {
-                blocks.append(MarkdownBlock(kind: .code, scale: 1, indent: 0, marker: nil, isChecked: false, runs: [MarkdownRun(text: text, style: MarkdownStyle(isCode: true))]))
+                blocks.append(MarkdownBlock(kind: .code, scale: 1, indent: 0, marker: nil, isChecked: false, runs: [MarkdownRun(text: text, style: MarkdownStyle(isCode: true, codeLanguage: fence))], language: fence))
                 continue
             }
             if let hashes = headingLevel(line) {

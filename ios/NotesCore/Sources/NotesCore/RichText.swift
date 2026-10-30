@@ -4,11 +4,13 @@ public struct RichLineShape: Equatable, Sendable {
     public var kind: MarkdownBlockKind
     public var prefixLength: Int
     public var headingLevel: Int
+    public var language: CodeLanguage?
 
-    public init(kind: MarkdownBlockKind, prefixLength: Int, headingLevel: Int) {
+    public init(kind: MarkdownBlockKind, prefixLength: Int, headingLevel: Int, language: CodeLanguage? = nil) {
         self.kind = kind
         self.prefixLength = prefixLength
         self.headingLevel = headingLevel
+        self.language = language
     }
 
     public var isVerbatim: Bool {
@@ -53,19 +55,22 @@ public enum RichText {
     }
 
     private static let trimmedMarks: [(flag: WritableKeyPath<MarkdownStyle, Bool>, mark: Mark)] = [(\.isStruck, .strike), (\.isBold, .bold), (\.isItalic, .italic)]
-    private static let fullEscapes: Set<Character> = ["\\", "`", "*", "_", "~", "[", "<"]
+    private static let fullEscapes: Set<Character> = ["\\", "`", "*", "_", "~", "[", "<", "{"]
 
     public static func shapes(_ lines: [String]) -> [RichLineShape] {
         var isInFence = false
+        var fence: CodeLanguage?
         return lines.map { text in
             let line = Array(text)
             let indent = Markdown.leadingSpaces(line)
             if String(line[indent...]).hasPrefix("```") {
                 isInFence.toggle()
-                return RichLineShape(kind: .code, prefixLength: line.count, headingLevel: 0)
+                let language = isInFence ? Markdown.fenceLanguage(line) : fence
+                fence = isInFence ? language : nil
+                return RichLineShape(kind: .code, prefixLength: line.count, headingLevel: 0, language: language)
             }
             if isInFence {
-                return RichLineShape(kind: .code, prefixLength: line.count, headingLevel: 0)
+                return RichLineShape(kind: .code, prefixLength: line.count, headingLevel: 0, language: fence)
             }
             if let hashes = Markdown.headingLevel(line) {
                 return RichLineShape(kind: .heading, prefixLength: skippingSpaces(line, from: hashes), headingLevel: hashes)
@@ -137,6 +142,9 @@ public enum RichText {
             if !characters[index].style.isLink || characters[index].style.linkTarget == nil {
                 characters[index].style.isLink = false
                 characters[index].style.linkTarget = nil
+            }
+            if !characters[index].style.isCode {
+                characters[index].style.codeLanguage = nil
             }
             if characters[index].style.isDashedUnderlined {
                 characters[index].style.isUnderlined = false
@@ -212,7 +220,7 @@ public enum RichText {
                 output += mark.opening
             }
             open = wanted
-            output += run.style.isCode ? code(run.text) : escaped(run.text, escapes)
+            output += run.style.isCode ? code(run.text, language: run.style.codeLanguage) : escaped(run.text, escapes)
         }
         for mark in open.reversed() {
             output += mark.closing
@@ -220,8 +228,9 @@ public enum RichText {
         return output
     }
 
-    private static func code(_ text: String) -> String {
-        text.components(separatedBy: "`").map { $0.isEmpty ? "" : "`\($0)`" }.joined(separator: "\\`")
+    private static func code(_ text: String, language: CodeLanguage?) -> String {
+        let attribute = language.map { "{.\($0.rawValue)}" } ?? ""
+        return text.components(separatedBy: "`").map { $0.isEmpty ? "" : "`\($0)`" + attribute }.joined(separator: "\\`")
     }
 
     private static func escaped(_ text: String, _ escapes: Set<Character>) -> String {

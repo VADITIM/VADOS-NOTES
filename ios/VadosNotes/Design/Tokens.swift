@@ -231,6 +231,19 @@ struct Tokens: Decodable {
         let icons: [String]
     }
 
+    struct SyntaxColorTokens: Decodable {
+        let background: String
+        let keyword: String
+        let string: String
+        let number: String
+        let comment: String
+    }
+
+    struct SyntaxTokens: Decodable {
+        let dark: SyntaxColorTokens
+        let light: SyntaxColorTokens
+    }
+
     private struct GlyphFile: Decodable {
         let glyphs: [String: String]
     }
@@ -247,6 +260,7 @@ struct Tokens: Decodable {
     let sync: SyncTokens
     let menus: MenuTokens
     let folders: FolderTokens
+    let syntax: SyntaxTokens
     private(set) var glyphs: [String: String] = [:]
 
     enum CodingKeys: String, CodingKey {
@@ -262,6 +276,7 @@ struct Tokens: Decodable {
         case sync
         case menus
         case folders
+        case syntax
     }
 
     static let shared: Tokens = {

@@ -187,7 +187,7 @@ enum MarkdownText {
         UIFont(name: isBold ? Typography.monoBoldName : Typography.monoName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: isBold ? .bold : .regular)
     }
 
-    private static func attributed(_ block: MarkdownBlock, size: CGFloat, rows: Int, indent: CGFloat, color: UIColor) -> NSAttributedString {
+    private static func attributed(_ block: MarkdownBlock, size: CGFloat, rows: Int, indent: CGFloat, color: UIColor, paperStyle: PaperStyle, codeTokens: [CodeHighlighting.LineToken]) -> NSAttributedString {
         let paragraph = TextRhythm.paragraph(rows: rows, zoom: 1)
         paragraph.firstLineHeadIndent = indent
         paragraph.headIndent = indent
@@ -195,14 +195,19 @@ enum MarkdownText {
         let ink = block.isChecked ? color.withAlphaComponent(0.55) : color
         let runs = block.runs.isEmpty ? [MarkdownRun(text: " ", style: MarkdownStyle())] : block.runs
         for run in runs {
-            var attributes = runAttributes(run.style, size: size, rows: rows, zoom: 1, color: ink, isInCodeBlock: block.kind == .code)
+            var attributes = runAttributes(run.style, size: size, rows: rows, zoom: 1, color: ink, paperStyle: paperStyle, isInCodeBlock: block.kind == .code)
             attributes[.paragraphStyle] = paragraph
+            let offset = result.length
             result.append(NSAttributedString(string: run.text.isEmpty ? " " : run.text, attributes: attributes))
+            if block.kind != .code, run.style.isCode, let language = run.style.codeLanguage {
+                CodeHighlighting.colorize(result, with: CodeHighlighting.tokens(run.text, language: language), at: offset, style: paperStyle)
+            }
         }
+        CodeHighlighting.colorize(result, with: codeTokens, at: 0, style: paperStyle)
         return result
     }
 
-    static func runAttributes(_ style: MarkdownStyle, size: CGFloat, rows: Int, zoom: CGFloat, color: UIColor, isInCodeBlock: Bool) -> [NSAttributedString.Key: Any] {
+    static func runAttributes(_ style: MarkdownStyle, size: CGFloat, rows: Int, zoom: CGFloat, color: UIColor, paperStyle: PaperStyle, isInCodeBlock: Bool) -> [NSAttributedString.Key: Any] {
         let runFont = font(size * zoom, isBold: style.isBold)
         var attributes: [NSAttributedString.Key: Any] = [
             .font: runFont,
@@ -214,7 +219,7 @@ enum MarkdownText {
             attributes[.obliqueness] = 0.2
         }
         if style.isCode && !isInCodeBlock {
-            attributes[.backgroundColor] = color.withAlphaComponent(0.14)
+            attributes[.backgroundColor] = CodeHighlighting.background(paperStyle)
         }
         if style.isStruck {
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
@@ -227,23 +232,46 @@ enum MarkdownText {
         return attributes
     }
 
-    static func layout(_ element: Element, color: UIColor) -> Layout {
+    private static func codeTokens(_ blocks: [MarkdownBlock]) -> [[CodeHighlighting.LineToken]] {
+        var result: [[CodeHighlighting.LineToken]] = Array(repeating: [], count: blocks.count)
+        var start = 0
+        while start < blocks.count {
+            guard blocks[start].kind == .code, let language = blocks[start].language else {
+                start += 1
+                continue
+            }
+            var end = start
+            while end < blocks.count, blocks[end].kind == .code, blocks[end].language == language {
+                end += 1
+            }
+            let lines = blocks[start..<end].map { $0.runs.map(\.text).joined() }
+            for (index, tokens) in CodeHighlighting.lineTokens(lines, language: language).enumerated() {
+                result[start + index] = tokens
+            }
+            start = end
+        }
+        return result
+    }
+
+    static func layout(_ element: Element, color: UIColor, paperStyle: PaperStyle) -> Layout {
         let fontSize = TextRhythm.fontSize
         let width = CGFloat(element.box?.width ?? Tokens.shared.text.boxWidth)
         let content = element.content ?? ""
-        let key = "\(fontSize)|\(width)|\(color.description)|\(content)"
+        let key = "\(fontSize)|\(width)|\(color.description)|\(paperStyle.rawValue)|\(content)"
         if let cached = cache[key] {
             return cached
         }
         var top: CGFloat = 0
         var blocks: [LaidBlock] = []
-        for block in content.isEmpty ? [] : Markdown.blocks(content) {
+        let parsed = content.isEmpty ? [] : Markdown.blocks(content)
+        let tokens = codeTokens(parsed)
+        for (index, block) in parsed.enumerated() {
             let size = fontSize * CGFloat(block.scale)
             let rows = TextRhythm.rows(for: block.scale)
             let lineHeight = TextRhythm.rowGap * CGFloat(rows)
             let characterWidth = ("0" as NSString).size(withAttributes: [.font: font(size, isBold: false)]).width
             let indent = CGFloat(block.indent) * indentCharacters * characterWidth
-            let text = attributed(block, size: size, rows: rows, indent: indent, color: color)
+            let text = attributed(block, size: size, rows: rows, indent: indent, color: color, paperStyle: paperStyle, codeTokens: tokens[index])
             let lines = block.kind == .rule ? 1 : max(1, (text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height / lineHeight).rounded())
             let measured = lines * lineHeight
             blocks.append(LaidBlock(block: block, text: text, top: top, height: measured, fontSize: size, indent: indent, characterWidth: characterWidth))
@@ -257,16 +285,16 @@ enum MarkdownText {
         return layout
     }
 
-    static func draw(_ element: Element, at origin: CGPoint, color: UIColor, in context: CGContext) {
+    static func draw(_ element: Element, at origin: CGPoint, color: UIColor, paperStyle: PaperStyle, in context: CGContext) {
         guard let box = element.box else { return }
         let width = CGFloat(box.width)
-        let layout = layout(element, color: color)
+        let layout = layout(element, color: color, paperStyle: paperStyle)
         UIGraphicsPushContext(context)
         for laid in layout.blocks {
             let rect = CGRect(x: origin.x, y: origin.y + laid.top, width: width, height: laid.height)
             switch laid.block.kind {
             case .code:
-                context.setFillColor(color.withAlphaComponent(0.14).cgColor)
+                context.setFillColor(CodeHighlighting.background(paperStyle).cgColor)
                 context.fill(rect)
             case .rule:
                 let thickness = max(0.15, laid.fontSize * 0.04)
@@ -344,7 +372,7 @@ enum PageRenderer {
 
     static func textRect(for element: Element) -> CGRect? {
         guard element.type == .text, let box = element.box else { return nil }
-        let height = MarkdownText.layout(element, color: .black).height
+        let height = MarkdownText.layout(element, color: .black, paperStyle: .dark).height
         return CGRect(x: box.x, y: TextRhythm.snappedTop(box.y), width: box.width, height: max(height, TextRhythm.rowGap))
     }
 
@@ -381,7 +409,7 @@ enum PageRenderer {
     private static func drawText(_ element: Element, in context: CGContext, style: PaperStyle) {
         guard let box = element.box, let content = element.content, !content.isEmpty else { return }
         let color = UIColor(hex: Palette.inkOnPaper(element.color ?? Tokens.shared.text.color, style: style))
-        MarkdownText.draw(element, at: CGPoint(x: CGFloat(box.x), y: CGFloat(TextRhythm.snappedTop(box.y))), color: color, in: context)
+        MarkdownText.draw(element, at: CGPoint(x: CGFloat(box.x), y: CGFloat(TextRhythm.snappedTop(box.y))), color: color, paperStyle: style, in: context)
     }
 
     private static func drawGuides(in context: CGContext, visiblePage: CGRect, camera: CanvasCamera, color: UIColor) {

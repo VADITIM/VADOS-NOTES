@@ -194,6 +194,7 @@ struct PageScreen: View {
             text: session.element.content ?? "",
             zoom: camera.scale,
             color: UIColor(hex: Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)),
+            paperStyle: preferences.paperStyle,
             focusRequest: textFocusRequest,
             styleRequest: textStyleRequest,
             onChange: { library.updateText($0) },
@@ -471,6 +472,7 @@ struct PageScreen: View {
             let color = Palette.inkOnPaper(session.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)
             return [[
                 NavItem(id: "text-style", caption: ".md", label: "Text styles", tint: Palette.edit, isTinted: subNavKey == "text-style", action: { _ in toggleSubNav("text-style") }),
+                NavItem(id: "text-code", glyph: "code", label: "Code", tint: Palette.edit, isTinted: subNavKey == "text-code", action: { _ in toggleSubNav("text-code") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
                 NavItem(id: "edit-text", glyph: "keyboard", label: "Edit", tint: Palette.edit, isTinted: true, action: { _ in textFocusRequest += 1 }),
             ], [
@@ -628,6 +630,8 @@ struct PageScreen: View {
             return textColorGroups()
         case "text-style":
             return textStyleGroups()
+        case "text-code":
+            return textCodeGroups()
         default:
             return []
         }
@@ -729,6 +733,38 @@ struct PageScreen: View {
 
     private func requestTextStyle(_ command: TextStyleCommand) {
         textStyleRequest = TextStyleRequest(serial: (textStyleRequest?.serial ?? 0) + 1, command: command)
+    }
+
+    private static func languageCaption(_ language: CodeLanguage) -> String {
+        switch language {
+        case .javascript: return "JS"
+        case .csharp: return "C#"
+        case .java: return "JAVA"
+        case .python: return "PY"
+        }
+    }
+
+    private func textCodeGroups() -> [SubNavigationGroup] {
+        let state = textStyleState
+        return [
+            group("code-languages") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    ForEach(CodeLanguage.allCases, id: \.self) { language in
+                        CaptionButton(caption: Self.languageCaption(language), isSelected: state.codeLanguage == language, ring: ("code-language-ring", ringSpace)) {
+                            requestTextStyle(.code(language))
+                        }
+                        .accessibilityLabel(language.title)
+                    }
+                }
+            },
+            group("code-plain") { orientation in
+                CaptionButton(caption: "Aa", isSelected: state.isPlainText, ring: ("code-language-ring", ringSpace)) {
+                    requestTextStyle(.code(nil))
+                }
+                .accessibilityLabel("Normal text")
+            },
+        ]
     }
 
     private func textStyleGroups() -> [SubNavigationGroup] {

@@ -5,11 +5,17 @@ import UIKit
 struct TextStyleState: Equatable {
     var style = MarkdownStyle()
     var lineKind: MarkdownBlockKind = .paragraph
+    var codeLanguage: CodeLanguage?
+
+    var isPlainText: Bool {
+        !style.isCode && lineKind != .code
+    }
 }
 
 enum TextStyleCommand: Equatable {
     case inline(WritableKeyPath<MarkdownStyle, Bool>)
     case line(MarkdownBlockKind)
+    case code(CodeLanguage?)
 }
 
 struct TextStyleRequest: Equatable {
@@ -41,6 +47,7 @@ struct TextBlockEditor: UIViewRepresentable {
     let text: String
     let zoom: CGFloat
     let color: UIColor
+    let paperStyle: PaperStyle
     let focusRequest: Int
     let styleRequest: TextStyleRequest?
     let onChange: (String) -> Void
@@ -57,6 +64,7 @@ struct TextBlockEditor: UIViewRepresentable {
         var markdown = ""
         var zoom: CGFloat = 1
         var color: UIColor = .white
+        var paperStyle: PaperStyle = .dark
         private var reported: TextStyleState?
 
         init(onChange: @escaping (String) -> Void, onStyleState: @escaping (TextStyleState) -> Void) {
@@ -99,10 +107,15 @@ struct TextBlockEditor: UIViewRepresentable {
             let shapes = RichText.shapes(texts)
             storage.beginEditing()
             var location = 0
-            for (text, shape) in zip(texts, shapes) {
+            var codeLines: [(index: Int, location: Int, text: String, language: CodeLanguage)] = []
+            for (index, (text, shape)) in zip(texts, shapes).enumerated() {
                 let length = text.utf16.count
                 let paragraph = NSRange(location: location, length: min(length + 1, storage.length - location))
-                let prefixEnd = location + String(text.prefix(shape.prefixLength)).utf16.count
+                let isFence = shape.kind == .code && Self.isFence(text)
+                if shape.kind == .code, !isFence, let language = shape.language {
+                    codeLines.append((index, location, text, language))
+                }
+                let prefixEnd = shape.isVerbatim ? (isFence ? location + length : location) : location + String(text.prefix(shape.prefixLength)).utf16.count
                 var pieces: [(range: NSRange, style: MarkdownStyle)] = []
                 storage.enumerateAttribute(.markdownStyle, in: paragraph) { value, range, _ in
                     let style = (value as? MarkdownStyleValue)?.style ?? MarkdownStyle()
@@ -117,19 +130,40 @@ struct TextBlockEditor: UIViewRepresentable {
                     }
                 }
                 for piece in pieces {
-                    storage.setAttributes(attributes(piece.style, shape: shape, isPrefix: piece.range.location < prefixEnd), range: piece.range)
+                    let isPrefix = piece.range.location < prefixEnd
+                    storage.setAttributes(attributes(piece.style, shape: shape, isPrefix: isPrefix), range: piece.range)
+                    if !isPrefix, !shape.isVerbatim, piece.style.isCode, let language = piece.style.codeLanguage {
+                        let text = (storage.string as NSString).substring(with: piece.range)
+                        CodeHighlighting.colorize(storage, with: CodeHighlighting.tokens(text, language: language), at: piece.range.location, style: paperStyle)
+                    }
                 }
                 location += length + 1
+            }
+            var start = 0
+            while start < codeLines.count {
+                var end = start + 1
+                while end < codeLines.count, codeLines[end].index == codeLines[end - 1].index + 1, codeLines[end].language == codeLines[start].language {
+                    end += 1
+                }
+                let group = codeLines[start..<end]
+                for (line, tokens) in zip(group, CodeHighlighting.lineTokens(group.map(\.text), language: codeLines[start].language)) {
+                    CodeHighlighting.colorize(storage, with: tokens, at: line.location, style: paperStyle)
+                }
+                start = end
             }
             storage.endEditing()
         }
 
+        static func isFence(_ text: String) -> Bool {
+            text.trimmingCharacters(in: .whitespaces).hasPrefix("```")
+        }
+
         func attributes(_ style: MarkdownStyle, shape: RichLineShape, isPrefix: Bool) -> [NSAttributedString.Key: Any] {
             var look = style
-            if shape.isVerbatim {
-                look = MarkdownStyle(isCode: shape.kind == .code)
-            } else if isPrefix {
+            if isPrefix {
                 look = MarkdownStyle(isBold: shape.kind == .heading)
+            } else if shape.isVerbatim {
+                look = MarkdownStyle(isCode: shape.kind == .code)
             } else {
                 look.isBold = look.isBold || shape.kind == .heading
                 look.isItalic = look.isItalic || shape.kind == .quote
@@ -141,6 +175,7 @@ struct TextBlockEditor: UIViewRepresentable {
                 rows: TextRhythm.rows(for: shape.scale),
                 zoom: zoom,
                 color: isDimmed ? color.withAlphaComponent(TextBlockEditor.prefixShade) : color,
+                paperStyle: paperStyle,
                 isInCodeBlock: false
             )
             attributes[.markdownStyle] = MarkdownStyleValue(isPrefix || shape.isVerbatim ? MarkdownStyle() : style)
@@ -202,13 +237,16 @@ struct TextBlockEditor: UIViewRepresentable {
         private func report(_ view: UITextView) {
             let range = view.selectedRange
             var state = TextStyleState()
-            state.lineKind = lineShape(at: range.location, in: view).kind
+            let shape = lineShape(at: range.location, in: view)
+            state.lineKind = shape.kind
             if range.length > 0 {
                 let string = view.textStorage.string as NSString
                 var flags = Dictionary(uniqueKeysWithValues: TextBlockEditor.inlineFlags.map { ($0, true) })
+                var languages: Set<CodeLanguage?> = []
                 view.textStorage.enumerateAttribute(.markdownStyle, in: range) { value, piece, _ in
                     guard string.substring(with: piece).contains(where: { $0 != "\n" }) else { return }
                     let style = (value as? MarkdownStyleValue)?.style ?? MarkdownStyle()
+                    languages.insert(style.codeLanguage)
                     for flag in TextBlockEditor.inlineFlags where !style[keyPath: flag] {
                         flags[flag] = false
                     }
@@ -216,8 +254,15 @@ struct TextBlockEditor: UIViewRepresentable {
                 for flag in TextBlockEditor.inlineFlags {
                     state.style[keyPath: flag] = flags[flag] ?? false
                 }
+                if state.style.isCode, languages.count == 1 {
+                    state.codeLanguage = languages.first ?? nil
+                }
             } else {
                 state.style = (view.typingAttributes[.markdownStyle] as? MarkdownStyleValue)?.style ?? MarkdownStyle()
+                state.codeLanguage = state.style.isCode ? state.style.codeLanguage : nil
+            }
+            if shape.kind == .code {
+                state.codeLanguage = shape.language
             }
             guard state != reported else { return }
             reported = state
@@ -233,7 +278,135 @@ struct TextBlockEditor: UIViewRepresentable {
                 toggle(flag, in: view)
             case .line(let kind):
                 setLines(kind, in: view)
+            case .code(let language):
+                setCode(language, in: view)
             }
+        }
+
+        private func lineStarts(_ texts: [String]) -> [Int] {
+            var starts: [Int] = []
+            var location = 0
+            for text in texts {
+                starts.append(location)
+                location += text.utf16.count + 1
+            }
+            return starts
+        }
+
+        private func fencedBlocks(_ texts: [String]) -> [(open: Int, close: Int?)] {
+            var blocks: [(open: Int, close: Int?)] = []
+            var open: Int?
+            for (index, text) in texts.enumerated() where Self.isFence(text) {
+                if let start = open {
+                    blocks.append((start, index))
+                    open = nil
+                } else {
+                    open = index
+                }
+            }
+            if let open {
+                blocks.append((open, nil))
+            }
+            return blocks
+        }
+
+        private func coded(_ style: MarkdownStyle, _ language: CodeLanguage?) -> MarkdownStyle {
+            var result = style
+            result.isCode = language != nil
+            result.codeLanguage = language
+            return result
+        }
+
+        private func setCode(_ language: CodeLanguage?, in view: UITextView) {
+            let storage = view.textStorage
+            let string = storage.string as NSString
+            let texts = storage.string.components(separatedBy: "\n")
+            let starts = lineStarts(texts)
+            let selection = view.selectedRange
+            let touched = texts.indices.filter { index in
+                starts[index] + texts[index].utf16.count >= selection.location && starts[index] <= selection.upperBound
+            }
+            let blocks = fencedBlocks(texts).filter { block in
+                touched.contains { $0 >= block.open && $0 <= (block.close ?? texts.count - 1) }
+            }
+            if !blocks.isEmpty {
+                var edits: [(range: NSRange, replacement: String)] = []
+                for block in blocks {
+                    if let language {
+                        edits.append((NSRange(location: starts[block.open], length: texts[block.open].utf16.count), "```" + language.rawValue))
+                        continue
+                    }
+                    for index in [block.open, block.close].compactMap({ $0 }) {
+                        let isLast = index == texts.count - 1
+                        let location = isLast && index > 0 ? starts[index] - 1 : starts[index]
+                        edits.append((NSRange(location: location, length: min(texts[index].utf16.count + 1, storage.length - location)), ""))
+                    }
+                }
+                replace(edits, in: view, keeping: selection)
+                return
+            }
+            if selection.length > 0, string.substring(with: selection).contains("\n"), let language, let first = touched.first, let last = touched.last {
+                let opening = "```" + language.rawValue + "\n"
+                let lastEnd = starts[last] + texts[last].utf16.count
+                replace([(NSRange(location: starts[first], length: 0), opening), (NSRange(location: lastEnd, length: 0), "\n```")], in: view, keeping: NSRange(location: starts[first], length: lastEnd - starts[first]))
+                return
+            }
+            var target = selection
+            if selection.length == 0 {
+                let isInSpan = selection.location > 0 && style(at: selection.location - 1, in: storage).isCode
+                guard isInSpan, let line = touched.first else {
+                    let current = (view.typingAttributes[.markdownStyle] as? MarkdownStyleValue)?.style ?? MarkdownStyle()
+                    view.typingAttributes = attributes(coded(current, language), shape: lineShape(at: selection.location, in: view), isPrefix: false)
+                    report(view)
+                    return
+                }
+                var span = NSRange()
+                _ = storage.attribute(.markdownStyle, at: selection.location - 1, longestEffectiveRange: &span, in: NSRange(location: starts[line], length: texts[line].utf16.count))
+                target = span
+            }
+            var pieces: [(range: NSRange, style: MarkdownStyle)] = []
+            storage.enumerateAttribute(.markdownStyle, in: target) { value, piece, _ in
+                guard string.substring(with: piece).contains(where: { $0 != "\n" }) else { return }
+                pieces.append((piece, (value as? MarkdownStyleValue)?.style ?? MarkdownStyle()))
+            }
+            storage.beginEditing()
+            for piece in pieces {
+                storage.addAttribute(.markdownStyle, value: MarkdownStyleValue(coded(piece.style, language)), range: piece.range)
+            }
+            storage.endEditing()
+            view.selectedRange = selection
+            commit(view)
+        }
+
+        private func replace(_ edits: [(range: NSRange, replacement: String)], in view: UITextView, keeping selection: NSRange) {
+            let storage = view.textStorage
+            var start = selection.location
+            var end = selection.upperBound
+            for edit in edits.sorted(by: { $0.range.location < $1.range.location }) {
+                let delta = edit.replacement.utf16.count - edit.range.length
+                if edit.range.upperBound <= start {
+                    start += delta
+                } else if edit.range.location < start {
+                    start = edit.range.location + edit.replacement.utf16.count
+                }
+                if edit.range.length == 0, edit.range.location == end, end > start {
+                    continue
+                }
+                if edit.range.upperBound <= end {
+                    end += delta
+                } else if edit.range.location < end {
+                    end = edit.range.location + edit.replacement.utf16.count
+                }
+            }
+            storage.beginEditing()
+            for edit in edits.sorted(by: { $0.range.location > $1.range.location }) {
+                storage.replaceCharacters(in: edit.range, with: NSAttributedString(string: edit.replacement, attributes: [.markdownStyle: MarkdownStyleValue(MarkdownStyle())]))
+            }
+            storage.endEditing()
+            let length = storage.length
+            let location = min(max(0, start), length)
+            view.selectedRange = NSRange(location: location, length: max(0, min(end, length) - location))
+            commit(view)
         }
 
         private func toggled(_ style: MarkdownStyle, _ flag: WritableKeyPath<MarkdownStyle, Bool>, to isOn: Bool) -> MarkdownStyle {
@@ -279,12 +452,7 @@ struct TextBlockEditor: UIViewRepresentable {
             let texts = storage.string.components(separatedBy: "\n")
             let shapes = RichText.shapes(texts)
             let selection = view.selectedRange
-            var starts: [Int] = []
-            var location = 0
-            for text in texts {
-                starts.append(location)
-                location += text.utf16.count + 1
-            }
+            let starts = lineStarts(texts)
             let touched = texts.indices.filter { index in
                 let end = starts[index] + texts[index].utf16.count
                 return !shapes[index].isVerbatim && end >= selection.location && starts[index] <= selection.upperBound
@@ -302,28 +470,7 @@ struct TextBlockEditor: UIViewRepresentable {
                 }
                 edits.append((NSRange(location: starts[index], length: String(texts[index].prefix(shapes[index].prefixLength)).utf16.count), replacement))
             }
-            var start = selection.location
-            var end = selection.upperBound
-            for edit in edits {
-                let delta = edit.replacement.utf16.count - edit.range.length
-                if edit.range.upperBound <= start {
-                    start += delta
-                } else if edit.range.location < start {
-                    start = edit.range.location + edit.replacement.utf16.count
-                }
-                if edit.range.upperBound <= end {
-                    end += delta
-                } else if edit.range.location < end {
-                    end = edit.range.location + edit.replacement.utf16.count
-                }
-            }
-            storage.beginEditing()
-            for edit in edits.reversed() {
-                storage.replaceCharacters(in: edit.range, with: NSAttributedString(string: edit.replacement, attributes: [.markdownStyle: MarkdownStyleValue(MarkdownStyle())]))
-            }
-            storage.endEditing()
-            view.selectedRange = NSRange(location: start, length: max(0, end - start))
-            commit(view)
+            replace(edits, in: view, keeping: selection)
         }
     }
 
@@ -333,6 +480,7 @@ struct TextBlockEditor: UIViewRepresentable {
         coordinator.styleSerial = styleRequest?.serial ?? 0
         coordinator.zoom = zoom
         coordinator.color = color
+        coordinator.paperStyle = paperStyle
         return coordinator
     }
 
@@ -369,10 +517,12 @@ struct TextBlockEditor: UIViewRepresentable {
         if text != coordinator.markdown {
             coordinator.zoom = zoom
             coordinator.color = color
+            coordinator.paperStyle = paperStyle
             coordinator.load(text, into: view)
-        } else if coordinator.zoom != zoom || coordinator.color != color {
+        } else if coordinator.zoom != zoom || coordinator.color != color || coordinator.paperStyle != paperStyle {
             coordinator.zoom = zoom
             coordinator.color = color
+            coordinator.paperStyle = paperStyle
             let selection = view.selectedRange
             coordinator.restyle(view)
             view.selectedRange = selection
