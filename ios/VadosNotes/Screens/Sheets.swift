@@ -27,7 +27,12 @@ struct SheetHost: View {
             Color.black.opacity(isBackdropShown ? 0.45 : 0)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
-            if isShown {
+            if request == .settings {
+                content
+                    .frame(maxWidth: 820)
+                    .padding(.horizontal, 24)
+                    .padding(.top, insets.top + 24)
+            } else if isShown {
                 if request.isNaming {
                     content
                         .frame(maxWidth: 560)
@@ -42,10 +47,10 @@ struct SheetHost: View {
                         .opacity(panelHeight > 0 ? 1 : 0)
                 } else {
                     content
-                        .frame(maxWidth: request == .settings ? 820 : 560)
+                        .frame(maxWidth: 560)
                         .padding(.horizontal, 24)
                         .padding(.top, insets.top + 24)
-                        .transition(request == .settings ? .fromTopEdge : .overlay)
+                        .transition(.overlay)
                 }
             }
         }

@@ -127,11 +127,6 @@ extension AnyTransition {
         removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.sectionLeaveMilliseconds))
     )
 
-    static let fromTopEdge: AnyTransition = .asymmetric(
-        insertion: AnyTransition.move(edge: .top).animation(Motion.powerTwoOut(Motion.sheetDropMilliseconds)),
-        removal: AnyTransition.move(edge: .top).animation(Motion.powerTwoIn(Motion.sheetDropMilliseconds))
-    )
-
     static let elementLeave: AnyTransition = .asymmetric(
         insertion: .identity,
         removal: AnyTransition.modifier(active: RotatePop(isShown: false), identity: RotatePop(isShown: true)).animation(Motion.powerTwoIn(Motion.navigationSwitchMilliseconds))
