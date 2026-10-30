@@ -191,14 +191,31 @@ final class Preferences: ObservableObject {
     }
 
     func addColorPreset(_ color: String, for tool: Tool) {
-        let normalized = color.uppercased()
-        let presets = colorPresets(tool)
-        guard !presets.contains(normalized) else { return }
-        write("\(tool.rawValue)Presets", presets + [normalized])
+        addColorPreset(color, to: colorPresets(tool), key: "\(tool.rawValue)Presets")
     }
 
     func removeColorPreset(_ color: String, for tool: Tool) {
         write("\(tool.rawValue)Presets", colorPresets(tool).filter { $0 != color })
+    }
+
+    var folderColorPresets: [String] {
+        read(Self.folderColorPresetsKey, Tokens.shared.folders.colors)
+    }
+
+    func addFolderColorPreset(_ color: String) {
+        addColorPreset(color, to: folderColorPresets, key: Self.folderColorPresetsKey)
+    }
+
+    func removeFolderColorPreset(_ color: String) {
+        write(Self.folderColorPresetsKey, folderColorPresets.filter { $0 != color })
+    }
+
+    private static let folderColorPresetsKey = "folderPresets"
+
+    private func addColorPreset(_ color: String, to presets: [String], key: String) {
+        let normalized = color.uppercased()
+        guard !presets.contains(normalized) else { return }
+        write(key, presets + [normalized])
     }
 
     func replaceColorPreset(_ color: String, with replacement: String, for tool: Tool) {

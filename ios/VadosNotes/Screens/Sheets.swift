@@ -29,9 +29,9 @@ struct SheetHost: View {
                 .onTapGesture { navigator.show(nil) }
             if request == .settings {
                 content
-                    .frame(maxWidth: 820)
                     .padding(.horizontal, 24)
                     .padding(.top, insets.top + 24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if isShown {
                 if request.isNaming {
                     content
@@ -88,7 +88,15 @@ struct SheetHost: View {
                 }
                 return
             }
-            withAnimation(Motion.powerTwoIn(request == .settings ? Motion.sheetDropMilliseconds : Motion.overlayLeaveMilliseconds)) {
+            guard request != .settings else {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    isShown = false
+                }
+                return
+            }
+            withAnimation(Motion.powerTwoIn(Motion.overlayLeaveMilliseconds)) {
                 isShown = false
             }
         }
@@ -356,6 +364,12 @@ struct AppearanceSheet: View {
 
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
+    @EnvironmentObject private var preferences: Preferences
+    @State private var isWheelOpen = false
+    @State private var wheelColor: String?
+    @State private var wheelWrite: DispatchWorkItem?
+
+    private static let wheelWriteDelay = 0.25
 
     private var details: (title: String, color: String, icon: String)? {
         switch target {
@@ -385,12 +399,31 @@ struct AppearanceSheet: View {
         }
     }
 
+    private func pickFromWheel(_ hex: String) {
+        wheelColor = hex
+        wheelWrite?.cancel()
+        let work = DispatchWorkItem { writeWheelColor() }
+        wheelWrite = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.wheelWriteDelay, execute: work)
+    }
+
+    private func writeWheelColor() {
+        wheelWrite?.cancel()
+        wheelWrite = nil
+        guard let wheelColor else { return }
+        self.wheelColor = nil
+        apply(color: wheelColor)
+    }
+
     var body: some View {
         let _ = library.revision
+        let _ = preferences.revision
         SheetPanel(heading: "Icon & colour") {
             if let details {
+                let shownColor = (wheelColor ?? details.color).uppercased()
+                let presets = preferences.folderColorPresets
                 HStack(spacing: 14) {
-                    GlyphView(name: details.icon, color: Color(hex: details.color), size: 28)
+                    GlyphView(name: details.icon, color: Color(hex: shownColor), size: 28)
                         .frame(width: 52, height: 52)
                         .background(RoundedRectangle(cornerRadius: 16).fill(Palette.sunkenDeep))
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Palette.borderControl, lineWidth: 1))
@@ -399,21 +432,37 @@ struct AppearanceSheet: View {
                         .foregroundColor(Palette.textBright)
                         .lineLimit(1)
                 }
-                HStack(spacing: 4) {
-                    ForEach(Tokens.shared.folders.colors, id: \.self) { color in
-                        SwatchButton(color: Color(hex: color), isSelected: color.uppercased() == details.color.uppercased(), orientation: .horizontal, onSelect: { apply(color: color) })
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: SwatchButton.pitch), spacing: 4)], alignment: .leading, spacing: 4) {
+                    WheelButton(isOpen: isWheelOpen, orientation: .horizontal) {
+                        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                            isWheelOpen.toggle()
+                        }
                     }
+                    ForEach(presets, id: \.self) { color in
+                        SwatchButton(color: Color(hex: color), isSelected: color.uppercased() == shownColor, orientation: .horizontal, onSelect: {
+                            wheelColor = nil
+                            wheelWrite?.cancel()
+                            apply(color: color)
+                        }, onRemove: { preferences.removeFolderColorPreset(color) })
+                    }
+                    GroupEndButton(isCollapsed: false, isEnabled: !presets.map { $0.uppercased() }.contains(shownColor), orientation: .horizontal) {
+                        preferences.addFolderColorPreset(shownColor)
+                    }
+                }
+                if isWheelOpen {
+                    ColorPanel(color: shownColor, onChange: pickFromWheel)
+                        .transition(.popTogether)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 48), spacing: 6)], spacing: 6) {
                     ForEach(Tokens.shared.folders.icons, id: \.self) { icon in
                         Button {
                             apply(icon: icon)
                         } label: {
-                            GlyphView(name: icon, color: icon == details.icon ? Color(hex: details.color) : Palette.textMuted)
+                            GlyphView(name: icon, color: icon == details.icon ? Color(hex: shownColor) : Palette.textMuted)
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
                                 .background(RoundedRectangle(cornerRadius: 14).fill(Palette.sunkenDeep))
-                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(icon == details.icon ? Color(hex: details.color) : .clear, lineWidth: 2))
+                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(icon == details.icon ? Color(hex: shownColor) : .clear, lineWidth: 2))
                         }
                         .buttonStyle(PressableStyle())
                     }
@@ -421,6 +470,8 @@ struct AppearanceSheet: View {
             }
             SlabButton(title: "Done", color: Palette.create) { navigator.show(nil) }
         }
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isWheelOpen)
+        .onDisappear(perform: writeWheelColor)
     }
 }
 
@@ -457,6 +508,7 @@ struct MoveSheet: View {
                     }
                 }
             }
+            .scrollIndicators(.hidden)
             .frame(maxHeight: 440)
         }
     }

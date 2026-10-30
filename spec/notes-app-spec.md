@@ -442,3 +442,6 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Dragging a tile keeps it under the finger at the point it was grabbed. The other tiles make room for the slot under the finger, and releasing puts the tile in that slot.
 - Folder and note tiles can be dragged into a group of their kind, and cards of an open group can be dragged out into the grid, onto a folder or onto the back button.
 - An open group closes on a tap on empty space and on a sideways swipe that starts outside it.
+- No scroll indicators are shown anywhere in the app.
+- Settings take the whole screen; their modules sit in two columns when there is room and in one column otherwise. Closing removes the dark backdrop at once while the modules pop out.
+- The icon and colour sheet has a colour wheel and saved colours like the toolbar's colour group: + saves the current colour, holding a saved colour removes it.

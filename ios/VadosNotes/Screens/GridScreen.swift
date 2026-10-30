@@ -145,6 +145,7 @@ struct GridScreen: View {
                     .simultaneousGesture(groupSwipe)
                 }
                 .scrollDisabled(drag != nil)
+                .scrollIndicators(.hidden)
                 if let drag {
                     ghost(drag)
                         .position(x: drag.location.x - origin.x - drag.grab.width + drag.size.width / 2, y: drag.location.y - origin.y - drag.grab.height + drag.size.height / 2)

@@ -490,6 +490,8 @@ struct TextBlockEditor: UIViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
         view.isScrollEnabled = false
+        view.showsVerticalScrollIndicator = false
+        view.showsHorizontalScrollIndicator = false
         view.autocorrectionType = .default
         view.delegate = context.coordinator
         view.tintColor = UIColor(Palette.accent)

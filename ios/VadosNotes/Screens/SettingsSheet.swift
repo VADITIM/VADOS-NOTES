@@ -153,12 +153,14 @@ struct SettingsSheet: View {
     var body: some View {
         let _ = library.revision
         let _ = preferences.revision
-        ViewThatFits(in: .vertical) {
-            panels
+        GeometryReader { proxy in
             ScrollView {
                 panels
                     .padding(.bottom, 24)
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
+                    .background(Color.clear.contentShape(Rectangle()).onTapGesture { navigator.show(nil) })
             }
+            .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.pdf]) { result in
@@ -207,27 +209,14 @@ struct SettingsSheet: View {
 
     private var panels: some View {
         VStack(spacing: 18) {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(spacing: 18) {
-                    asciiModule
-                        .modifier(popped(.ascii))
-                    HStack(spacing: 12) {
-                        LinkButton(glyph: "import", title: "Import", tint: Palette.importAsset, isEnabled: isPageEditable) {
-                            isImporting = true
-                        }
-                        LinkButton(glyph: "export", title: "Export", tint: Palette.importAsset, isEnabled: page != nil, action: export)
-                    }
-                    .modifier(popped(.transfer))
-                    if let importFailure {
-                        MicroLabel(text: importFailure, color: Palette.destructive)
-                            .modifier(popped(.transfer))
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 18) {
+                    firstColumn
+                    secondColumn
                 }
                 VStack(spacing: 18) {
-                    paperModule
-                        .modifier(popped(.paper))
-                    penModule
-                        .modifier(popped(.pen))
+                    firstColumn
+                    secondColumn
                 }
             }
             syncModule
@@ -235,6 +224,33 @@ struct SettingsSheet: View {
             LinkButton(glyph: "trash", title: isDeleteArmed ? "Tap again to delete" : "Delete note", tint: Palette.destructive, isOn: isDeleteArmed, isEnabled: page != nil, action: deletePressed)
                 .frame(maxWidth: 280)
                 .modifier(popped(.delete))
+        }
+    }
+
+    private var firstColumn: some View {
+        VStack(spacing: 18) {
+            asciiModule
+                .modifier(popped(.ascii))
+            HStack(spacing: 12) {
+                LinkButton(glyph: "import", title: "Import", tint: Palette.importAsset, isEnabled: isPageEditable) {
+                    isImporting = true
+                }
+                LinkButton(glyph: "export", title: "Export", tint: Palette.importAsset, isEnabled: page != nil, action: export)
+            }
+            .modifier(popped(.transfer))
+            if let importFailure {
+                MicroLabel(text: importFailure, color: Palette.destructive)
+                    .modifier(popped(.transfer))
+            }
+        }
+    }
+
+    private var secondColumn: some View {
+        VStack(spacing: 18) {
+            paperModule
+                .modifier(popped(.paper))
+            penModule
+                .modifier(popped(.pen))
         }
     }
 
