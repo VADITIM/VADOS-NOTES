@@ -294,7 +294,7 @@ struct RoundIconButton: View {
     var body: some View {
         HoldableButton(action: action) {
             GlyphView(name: glyph, color: color)
-                .frame(width: 48, height: 48)
+                .frame(width: TopBar.controlHeight, height: TopBar.controlHeight)
                 .background(Circle().fill(isTinted ? color.opacity(0.14) : Palette.panel).background(Circle().fill(Palette.panelSolid)))
                 .overlay(Circle().stroke(isTinted ? color.opacity(0.55) : Palette.border, lineWidth: isTinted ? 1.5 : 1))
         }
@@ -316,9 +316,11 @@ struct TopBar: View {
     @EnvironmentObject private var navigator: Navigator
     @Environment(\.screenInsets) private var insets
 
+    static let controlHeight: CGFloat = 48
+
     private static var bareTitleSize: CGFloat { 15 }
+    private static var folderTitleSize: CGFloat { controlHeight / 2 }
     private static var topGap: CGFloat { 6 }
-    private static var titlesDrop: CGFloat { 10 }
     private static let createdFormat: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd/MM/yy"
@@ -338,7 +340,6 @@ struct TopBar: View {
             ZStack(alignment: .topLeading) {
                 folderTitles
                     .modifier(ChromePop(isShown: !isPage, order: 0))
-                    .padding(.top, Self.titlesDrop)
                     .allowsHitTesting(!isPage)
                     .reportsChrome("title", isActive: !isPage)
                 pageTitles
@@ -359,7 +360,7 @@ struct TopBar: View {
                     if folderId != nil {
                         HoldableButton(action: goBack) {
                             GlyphView(name: "back", color: Palette.navigation)
-                                .frame(width: 48, height: 48)
+                                .frame(width: TopBar.controlHeight, height: TopBar.controlHeight)
                                 .background(Circle().fill(Palette.panel))
                                 .overlay(Circle().stroke(Palette.border, lineWidth: 1))
                         }
@@ -399,21 +400,20 @@ struct TopBar: View {
     }
 
     private var folderTitles: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            MicroLabel(text: folderLabel)
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             if let folderId {
-                InlineTitle(title: folderTitle) { title in
+                InlineTitle(title: folderTitle, size: Self.folderTitleSize) { title in
                     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { return }
                     library.updateNotebook(folderId) { $0.title = title }
                 }
             } else {
-                SweepTitle(text: folderTitle)
+                SweepTitle(text: folderTitle, size: Self.folderTitleSize)
             }
+            MicroLabel(text: folderLabel)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 9)
-        .padding(.bottom, 11)
+        .frame(height: Self.controlHeight)
         .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Palette.panel))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.border, lineWidth: 1))
     }
@@ -518,7 +518,7 @@ struct SearchField: View {
         .environment(\.isElementRevealed, motion.areElementsShown)
         .padding(.leading, 16)
         .padding(.trailing, 8)
-        .frame(width: 260, height: 48)
+        .frame(width: 260, height: TopBar.controlHeight)
         .background(PillShell(scale: motion.shellScale, spread: motion.shellSpread, isWide: true, stroke: isFocused ? Palette.accent : Palette.borderControl))
         .allowsHitTesting(motion.areElementsShown)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: text.isEmpty)

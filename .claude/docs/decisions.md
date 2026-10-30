@@ -233,6 +233,11 @@ Every motion value below lives in `shared/tokens.json`; the reference is VADOS G
 - **Variations morph.** Variation swatches are keyed by position, not colour. Tapping another swatch while the pill is open recolours the same swatches on the placement spring, the main-colour line slides to its new slot (matched geometry), and the pill moves to its new anchor on the placement spring instead of being replaced.
 
 
+#### Ninth behaviour pass (2026-10-30)
+
+- **The folder header is one row as tall as the top-right controls.** `TopBar.controlHeight` (48 pt) is the one height for search, settings, back and the folder header; it names the 48 the buttons already used rather than adding a value. The title sits first at `controlHeight / 2` (24 pt), the micro label ("4 folders") follows it on the same baseline at the right end, and the header no longer drops 10 pt below the buttons, so their tops line up.
+
+
 ### Windows and Linux parity (2026-10-28)
 
 The Tauri app was rebuilt from the iPad app, so every behaviour pass above applies to Windows and Linux too. Only the platform mappings are new.
