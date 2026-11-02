@@ -84,8 +84,7 @@ struct TextBlockEditor: UIViewRepresentable {
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             guard !isIndenting, textView.markedTextRange == nil else { return true }
-            if text == "
-", let language = inlineCodeLanguage(at: range, in: textView) {
+            if text == "\n", let language = inlineCodeLanguage(at: range, in: textView) {
                 openBlock(language, at: range.location, isBreakingLine: true, in: textView)
                 return false
             }
@@ -171,10 +170,8 @@ struct TextBlockEditor: UIViewRepresentable {
                 middle = edit.replacement
                 caretInLine += edit.caret
             }
-            let opening = "```" + language.rawValue + "
-"
-            let block = opening + before + middle + after + "
-```"
+            let opening = "```" + language.rawValue + "\n"
+            let block = opening + before + middle + after + "\n```"
             storage.beginEditing()
             storage.replaceCharacters(in: line, with: NSAttributedString(string: block, attributes: [.markdownStyle: MarkdownStyleValue(MarkdownStyle())]))
             storage.endEditing()
