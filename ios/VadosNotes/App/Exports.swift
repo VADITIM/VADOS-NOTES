@@ -26,6 +26,32 @@ enum NoteExport {
     }
 
     @MainActor
+    static func pdf(of page: Page, title: String, cells: [CellPosition], options: RenderOptions) -> URL? {
+        guard !cells.isEmpty else { return nil }
+        let size = CGSize(width: CGFloat(PaperGeometry.cellWidth) * pointsPerMillimetre, height: CGFloat(PaperGeometry.cellHeight) * pointsPerMillimetre)
+        let bounds = CGRect(origin: .zero, size: size)
+        let renderer = UIGraphicsPDFRenderer(bounds: bounds)
+        let name = title.components(separatedBy: CharacterSet(charactersIn: "/\\:?%*|\"<>")).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(name.isEmpty ? "Note" : name).pdf")
+        var exportOptions = options
+        exportOptions.pixelScale = 4
+        let cache = StrokePathCache()
+        do {
+            try renderer.writePDF(to: url) { rendererContext in
+                for cell in cells {
+                    rendererContext.beginPage()
+                    let offset = CGPoint(x: -CGFloat(cell.column) * size.width, y: -CGFloat(cell.row) * size.height)
+                    let camera = CanvasCamera(scale: pointsPerMillimetre, offset: offset)
+                    PageRenderer.draw(page, in: rendererContext.cgContext, camera: camera, visibleRect: bounds, options: exportOptions, cache: cache)
+                }
+            }
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    @MainActor
     static func share(_ url: URL) {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         guard var presenter = scene?.windows.first(where: \.isKeyWindow)?.rootViewController else { return }

@@ -1,6 +1,5 @@
 import { create, field, linkButton, microLabel, pressable, segmented, setEnabled, slabButton } from "./components.js"
 import { colorPanel, sizeSlider, swatchButton, wheelButton } from "./controls.js"
-import { exportNote } from "./exports.js"
 import { folderLook, noteLook } from "./grid.js"
 import { importFailureMessage, readPdf } from "./imports.js"
 import { animate, curve, duration } from "./motion.js"
@@ -11,6 +10,7 @@ import { fontFamily } from "./renderer.js"
 import { installedFontFamilies } from "./storage.js"
 import { syncSettings } from "./sync.js"
 import { tokens } from "./tokens.js"
+import { transferSheet } from "./transfer.js"
 
 const armedMilliseconds = 2400
 
@@ -33,6 +33,10 @@ function pickFile(accept) {
 
 function selectAllOnFocus(input) {
     input.addEventListener("focus", () => requestAnimationFrame(() => input.select()))
+}
+
+export function isFullScreen(request) {
+    return request.kind === "settings" || request.kind === "transfer"
 }
 
 export function isNaming(request) {
@@ -293,6 +297,88 @@ function rangeValue(share, range) {
     return range[0] + (range[1] - range[0]) * share
 }
 
+function fontDropdown() {
+    const current = create("span", "font-dropdown-name")
+    const caret = glyph("back", { color: tokens.palette.text_muted, size: 18 })
+    caret.classList.add("font-dropdown-caret")
+    const trigger = create("button", "font-dropdown-trigger", current, caret)
+    squircle(trigger, { radius: squircleRadius.slot, fill: tokens.palette.sunken_deep, border: tokens.palette.border_control })
+    pressable(trigger)
+    const search = field({ placeholder: "Search fonts" })
+    const list = create("div", "font-dropdown-list")
+    const popover = create("div", "font-dropdown-popover", search, list)
+    squircle(popover, { radius: squircleRadius.panel, fill: tokens.palette.panel_solid, border: tokens.palette.border_strong })
+    popover.hidden = true
+    const dropdown = create("div", "font-dropdown", trigger, popover)
+    let installedFonts = []
+    let isOpen = false
+    const showCurrent = () => {
+        current.textContent = preferences.writingFont()
+        current.style.fontFamily = fontFamily(preferences.writingFont())
+    }
+    const renderList = () => {
+        const query = search.input.value.trim().toLowerCase()
+        const selected = preferences.writingFont()
+        const names = [...tokens.text.fonts, ...installedFonts.filter((name) => !tokens.text.fonts.includes(name))]
+        const shown = names.filter((name) => name.toLowerCase().includes(query))
+        list.replaceChildren(...shown.map((name) => {
+            const option = create("button", `settings-font${name === selected ? " is-selected" : ""}`, name)
+            option.style.fontFamily = fontFamily(name)
+            option.addEventListener("click", () => {
+                preferences.setWritingFont(name)
+                showCurrent()
+                setOpen(false)
+            })
+            return option
+        }), ...(shown.length ? [] : [microLabel("No font matches", tokens.palette.text_faint)]))
+    }
+    const closeOutside = (event) => {
+        if (!dropdown.contains(event.target)) {
+            setOpen(false)
+        }
+    }
+    const setOpen = (shown) => {
+        if (shown === isOpen) {
+            return
+        }
+        isOpen = shown
+        caret.classList.toggle("is-open", shown)
+        if (shown) {
+            search.input.value = ""
+            renderList()
+            popover.hidden = false
+            popTogether(popover, true)
+            search.input.focus({ preventScroll: true })
+            const selected = list.querySelector(".is-selected")
+            list.scrollTop = selected ? selected.offsetTop - list.clientHeight / 2 : 0
+            document.addEventListener("pointerdown", closeOutside, true)
+        } else {
+            document.removeEventListener("pointerdown", closeOutside, true)
+            popTogether(popover, false).finished.then(() => {
+                popover.hidden = !isOpen
+            })
+        }
+    }
+    trigger.addEventListener("click", () => setOpen(!isOpen))
+    search.input.addEventListener("input", renderList)
+    search.input.addEventListener("keydown", (event) => {
+        event.stopPropagation()
+        if (event.key === "Escape") {
+            setOpen(false)
+        } else if (event.key === "Enter") {
+            list.querySelector(".settings-font")?.click()
+        }
+    })
+    installedFontFamilies().then((families) => {
+        installedFonts = families
+        if (isOpen) {
+            renderList()
+        }
+    }).catch(() => {})
+    showCurrent()
+    return dropdown
+}
+
 function settingsSheet(app) {
     const library = app.library
     const route = app.navigator.route
@@ -367,30 +453,7 @@ function settingsSheet(app) {
     renderAscii(false)
     const asciiModule = settingsModule("ASCII", null, asciiToggle, asciiSwatchRow, asciiPanelHost, opacity, motionToggle, canvasToggle)
 
-    const importFailure = microLabel("", tokens.semantic.destructive)
-    importFailure.hidden = true
-    const importButton = linkButton({ glyphName: "import", title: "Import", tint: tokens.semantic.import, isEnabled: isPageEditable(), action: async () => {
-        const file = await pickFile("application/pdf,.pdf")
-        if (!file || !pageContext) {
-            return
-        }
-        try {
-            const imported = await readPdf(file)
-            library.appendDocument(imported, pageContext.pageId)
-            importFailure.hidden = true
-            app.navigator.show(null)
-        } catch (error) {
-            importFailure.textContent = importFailureMessage(error)
-            importFailure.hidden = false
-        }
-    } })
-    const exportButton = linkButton({ glyphName: "export", title: "Export", tint: tokens.semantic.import, isEnabled: Boolean(page()), action: () => {
-        const current = page()
-        if (current) {
-            exportNote(current, library.noteTitle(current), { showsGuides: preferences.showsGuides(), showsDividers: preferences.showsDividers(), paperStyle: preferences.paperStyle() })
-        }
-    } })
-    const leftColumn = create("div", "settings-column", asciiModule, create("div", "settings-links", importButton, exportButton), importFailure)
+    const leftColumn = create("div", "settings-column", asciiModule)
 
     const paperToggle = segmented([{ value: "dark", title: "Dark" }, { value: "light", title: "White" }], preferences.paperStyle(), (style) => preferences.setPaperStyle(style))
     const rule = create("span", "settings-rule")
@@ -410,32 +473,7 @@ function settingsSheet(app) {
         preferences.setInkSmoothing(rangeValue(share, smoothingRange))
         return preferences.inkSmoothing().toFixed(1)
     }))
-    const fontSearch = field({ placeholder: "Search fonts" })
-    const fontList = create("div", "settings-font-list")
-    let installedFonts = []
-    const renderFonts = () => {
-        const query = fontSearch.input.value.trim().toLowerCase()
-        const current = preferences.writingFont()
-        const names = [...tokens.text.fonts, ...installedFonts.filter((name) => !tokens.text.fonts.includes(name))]
-        fontList.replaceChildren(...names.filter((name) => name.toLowerCase().includes(query)).map((name) => {
-            const option = create("button", `settings-font${name === current ? " is-selected" : ""}`, name)
-            option.style.fontFamily = fontFamily(name)
-            pressable(option)
-            option.addEventListener("click", () => {
-                preferences.setWritingFont(name)
-                renderFonts()
-            })
-            return option
-        }))
-    }
-    fontSearch.input.addEventListener("input", renderFonts)
-    fontSearch.input.addEventListener("keydown", (event) => event.stopPropagation())
-    installedFontFamilies().then((families) => {
-        installedFonts = families
-        renderFonts()
-    }).catch(() => {})
-    renderFonts()
-    const textModule = settingsModule("Text", "Code stays Mono", fontSearch, fontList)
+    const textModule = settingsModule("Text", null, fontDropdown())
     const rightColumn = create("div", "settings-column", paperModule, penModule, textModule)
 
     const settings = syncSettings()
@@ -464,6 +502,14 @@ function settingsSheet(app) {
     }
     renderSync()
 
+    const openTransfer = (mode) => {
+        if (pageContext) {
+            app.navigator.show({ kind: "transfer", mode, pageId: pageContext.pageId })
+        }
+    }
+    const importButton = linkButton({ glyphName: "import", title: "Import", tint: tokens.semantic.import, isEnabled: isPageEditable(), action: () => openTransfer("import") })
+    const exportButton = linkButton({ glyphName: "export", title: "Export", tint: tokens.semantic.import, isEnabled: Boolean(page()), action: () => openTransfer("export") })
+    const renameButton = linkButton({ glyphName: "pencil", title: "Rename", tint: tokens.semantic.edit, isEnabled: isPageEditable(), action: () => pageContext && app.navigator.show({ kind: "renameNote", pageId: pageContext.pageId }) })
     let isDeleteArmed = false
     let armTimer = null
     const deleteButton = linkButton({ glyphName: "trash", title: "Delete note", tint: tokens.semantic.destructive, isEnabled: Boolean(page()), action: () => {
@@ -472,7 +518,7 @@ function settingsSheet(app) {
         }
         if (!isDeleteArmed) {
             isDeleteArmed = true
-            deleteButton.update({ title: "Tap again to delete", isOn: true })
+            deleteButton.update({ title: "Tap again", isOn: true })
             clearTimeout(armTimer)
             armTimer = setTimeout(() => {
                 isDeleteArmed = false
@@ -484,9 +530,9 @@ function settingsSheet(app) {
         app.navigator.show(null)
         app.navigator.go({ kind: "notebook", notebookId: pageContext.notebookId })
     } })
-    deleteButton.classList.add("settings-delete")
+    const noteModule = settingsModule("Note", page() ? library.noteTitle(page()) : "Open a note", create("div", "settings-grid", importButton, exportButton, renameButton, deleteButton))
 
-    const panels = create("div", "settings-panels", create("div", "settings-columns", leftColumn, rightColumn), syncModule, deleteButton)
+    const panels = create("div", "settings-panels", create("div", "settings-columns", leftColumn, rightColumn), create("div", "settings-columns", create("div", "settings-column", syncModule), create("div", "settings-column", noteModule)))
     const sheet = create("div", "settings-sheet", panels)
     sheet.addEventListener("pointerdown", (event) => {
         if (event.target === sheet || event.target === panels) {
@@ -539,18 +585,22 @@ function buildContent(app, request) {
         return newNoteSheet(app, request)
     case "settings":
         return settingsSheet(app)
+    case "transfer":
+        return transferSheet(app, request)
     default:
         return null
     }
 }
 
 export class SheetHost {
-    constructor(app, request) {
+    constructor(app, request, isReplacing = false) {
         this.app = app
         this.request = request
         this.isNaming = isNaming(request)
+        this.isFullScreen = isFullScreen(request)
+        this.isReplacing = isReplacing
         this.isRaised = false
-        this.element = create("div", `sheet-host ${this.isNaming ? "is-naming" : request.kind === "settings" ? "is-settings" : "is-overlay"}`)
+        this.element = create("div", `sheet-host ${this.isNaming ? "is-naming" : this.isFullScreen ? "is-settings" : "is-overlay"}`)
         this.backdrop = create("div", "sheet-backdrop")
         this.backdrop.addEventListener("pointerdown", () => app.navigator.show(null))
         this.content = buildContent(app, request)
@@ -583,8 +633,12 @@ export class SheetHost {
             return
         }
         this.backdrop.style.opacity = "1"
+        if (this.isReplacing && this.isFullScreen) {
+            animate(this.content, [{ opacity: 0, transform: "translateY(24px)" }, { opacity: 1, transform: "translateY(0)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
+            return
+        }
         animate(this.backdrop, [{ opacity: 0 }, { opacity: 1 }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
-        if (this.request.kind === "settings") {
+        if (this.isFullScreen) {
             animate(this.content, [{ transform: `translateY(${-this.frame.offsetHeight}px)` }, { transform: "translateY(0)" }], { milliseconds: duration("sheet_drop"), curveName: "power_two_out" })
         } else {
             animate(this.content, [{ opacity: 0, transform: "translateY(24px) scale(0.94)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
@@ -627,7 +681,7 @@ export class SheetHost {
             this.backdrop.style.transition = `opacity ${milliseconds}ms ${curve("keyboard")}`
             this.frame.style.transform = `translateY(${this.frame.offsetHeight}px)`
             this.backdrop.style.opacity = "0"
-        } else if (this.request.kind === "settings") {
+        } else if (this.isFullScreen) {
             milliseconds = duration("sheet_drop")
             animate(this.content, [{ transform: "translateY(0)" }, { transform: `translateY(${-this.frame.offsetHeight}px)` }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
             animate(this.backdrop, [{ opacity: 1 }, { opacity: 0 }], { milliseconds, curveName: "power_two_in", fill: "forwards" })

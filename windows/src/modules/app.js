@@ -39,10 +39,12 @@ class Navigator {
             current.leave()
             return
         }
-        if (this.sheet) {
-            this.sheet.element.remove()
+        const replaced = this.sheet
+        if (replaced) {
+            replaced.content.unsubscribe?.()
+            replaced.element.remove()
         }
-        this.sheet = new SheetHost(this.app, request)
+        this.sheet = new SheetHost(this.app, request, Boolean(replaced?.isFullScreen))
     }
 
     go(route, tile = null) {

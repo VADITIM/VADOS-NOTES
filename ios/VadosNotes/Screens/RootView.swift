@@ -37,6 +37,7 @@ enum SheetRequest: Identifiable, Equatable {
     case pickGroup(TileTarget, parentId: String?)
     case renameGroup(String, parentId: String?)
     case settings
+    case transfer(pageId: String, mode: TransferMode)
 
     var id: String {
         switch self {
@@ -49,13 +50,21 @@ enum SheetRequest: Identifiable, Equatable {
         case .pickGroup(let target, _): return "pick-group-\(target)"
         case .renameGroup(let groupId, _): return "rename-group-\(groupId)"
         case .settings: return "settings"
+        case .transfer(let pageId, _): return "transfer-\(pageId)"
         }
     }
 
     var isNaming: Bool {
         switch self {
         case .newFolder, .renameFolder, .renameNote, .newNote, .pickGroup, .renameGroup: return true
-        case .appearance, .move, .settings: return false
+        case .appearance, .move, .settings, .transfer: return false
+        }
+    }
+
+    var isFullScreen: Bool {
+        switch self {
+        case .settings, .transfer: return true
+        default: return false
         }
     }
 }
@@ -76,7 +85,7 @@ final class Navigator: ObservableObject {
         guard let sheet else {
             guard let current = self.sheet, !isSheetLeaving else { return }
             isSheetLeaving = true
-            let leave = current == .settings ? Motion.sheetDropMilliseconds : current.isNaming ? Motion.keyboardMilliseconds : Motion.overlayLeaveMilliseconds
+            let leave = current.isFullScreen ? Motion.sheetDropMilliseconds : current.isNaming ? Motion.keyboardMilliseconds : Motion.overlayLeaveMilliseconds
             DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(leave)) { [weak self] in
                 guard let self, self.isSheetLeaving else { return }
                 self.isSheetLeaving = false

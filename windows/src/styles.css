@@ -1771,14 +1771,6 @@ svg.squircle ~ * {
     background: var(--palette-accent);
 }
 
-.settings-font-list {
-    display: flex;
-    flex-direction: column;
-    max-height: 260px;
-    overflow-y: auto;
-    scrollbar-width: none;
-}
-
 .settings-font {
     flex: none;
     padding: 9px 4px 9px 14px;
@@ -1794,4 +1786,154 @@ svg.squircle ~ * {
 .settings-font.is-selected {
     border-left-color: var(--palette-accent);
     color: var(--palette-text-bright);
+}
+
+.settings-font:hover {
+    color: var(--palette-text-bright);
+}
+
+.font-dropdown {
+    position: relative;
+}
+
+.font-dropdown-trigger {
+    position: relative;
+    width: 100%;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 16px;
+    text-align: left;
+}
+
+.font-dropdown-name {
+    font-size: 17px;
+    color: var(--palette-text-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.font-dropdown-caret {
+    flex: none;
+    rotate: -90deg;
+    transition: rotate 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.font-dropdown-caret.is-open {
+    rotate: 90deg;
+}
+
+.font-dropdown-popover {
+    position: absolute;
+    z-index: 10;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    transform-origin: top center;
+}
+
+.font-dropdown-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 300px;
+    overflow-y: auto;
+    scrollbar-width: none;
+}
+
+.transfer-module {
+    gap: 18px;
+}
+
+.transfer-header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.transfer-header .segmented {
+    flex: 1;
+}
+
+.transfer-actions {
+    flex: 1;
+    display: flex;
+    gap: 12px;
+}
+
+.transfer-grid {
+    display: grid;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+    touch-action: none;
+    user-select: none;
+}
+
+.transfer-row {
+    height: 100%;
+    padding: 0 8px;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    color: var(--palette-text-muted);
+}
+
+.transfer-row:hover {
+    color: var(--palette-accent);
+}
+
+.transfer-cell {
+    position: relative;
+    aspect-ratio: 210 / 297;
+    border-radius: 6px;
+    outline: 1.5px solid var(--palette-border);
+    overflow: hidden;
+    cursor: pointer;
+    transition: outline-color 160ms, scale 160ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.transfer-cell.is-new {
+    outline-style: dashed;
+}
+
+.transfer-cell.is-selected {
+    outline: 2.5px solid var(--palette-accent);
+    scale: 0.96;
+}
+
+.transfer-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.transfer-cell:not(.is-selected) .transfer-canvas {
+    opacity: 0.55;
+}
+
+.transfer-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--palette-ground);
+    background: var(--palette-accent);
+}
+
+.transfer-badge:empty {
+    display: none;
 }

@@ -521,6 +521,19 @@ enum PageRenderer {
         context.restoreGState()
     }
 
+    static func cellThumbnail(of page: Page, cell: CellPosition, size: CGSize, options: RenderOptions) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let cache = StrokePathCache()
+        return renderer.image { rendererContext in
+            let cellWidth = CGFloat(PaperGeometry.cellWidth)
+            let cellHeight = CGFloat(PaperGeometry.cellHeight)
+            let scale = min(size.width / cellWidth, size.height / cellHeight)
+            let offset = CGPoint(x: -CGFloat(cell.column) * cellWidth * scale, y: -CGFloat(cell.row) * cellHeight * scale)
+            let camera = CanvasCamera(scale: scale, offset: offset)
+            draw(page, in: rendererContext.cgContext, camera: camera, visibleRect: CGRect(origin: .zero, size: size), options: options, cache: cache)
+        }
+    }
+
     static func thumbnail(of page: Page, size: CGSize, options: RenderOptions) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
         let cache = StrokePathCache()

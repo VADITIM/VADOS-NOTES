@@ -573,3 +573,18 @@ export function renderThumbnail(canvas, page, { showsGuides, showsDividers, pape
     const context = canvas.getContext("2d")
     drawPage(context, page, camera, { width, height, pixelRatio, showsGuides, showsDividers, paperStyle, cache: new StrokePathCache() })
 }
+
+export function renderCell(canvas, page, column, row, { showsGuides, showsDividers, paperStyle }) {
+    const width = canvas.clientWidth
+    const height = canvas.clientHeight
+    if (width === 0 || height === 0) {
+        return
+    }
+    const pixelRatio = window.devicePixelRatio || 1
+    canvas.width = Math.round(width * pixelRatio)
+    canvas.height = Math.round(height * pixelRatio)
+    const scale = Math.min(width / cellWidth, height / cellHeight)
+    const camera = new Camera(scale, -column * cellWidth * scale, -row * cellHeight * scale)
+    const context = canvas.getContext("2d")
+    drawPage(context, page, camera, { width, height, pixelRatio, showsGuides, showsDividers, paperStyle, cache: new StrokePathCache() })
+}

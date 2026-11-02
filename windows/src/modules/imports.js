@@ -187,7 +187,7 @@ function render(key, element, level) {
         try {
             const pdf = await documentFor(element.asset)
             const page = await pdf.getPage(element.source_page + 1)
-            const viewport = page.getViewport({ scale: level / millimetresPerPoint })
+            const viewport = page.getViewport({ scale: level * millimetresPerPoint })
             const canvas = document.createElement("canvas")
             canvas.width = Math.max(1, Math.ceil(viewport.width))
             canvas.height = Math.max(1, Math.ceil(viewport.height))

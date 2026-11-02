@@ -471,3 +471,6 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Hold menus no longer dim the page behind them.
 - In code blocks, brackets close themselves, typing the closer steps over it, and Backspace between a pair removes both. On the iPad, Enter on a line of inline code turns it into a code block, and choosing a code language on an empty line opens one.
 - Marker strokes never stack: all markers on a page are drawn as one layer, so where two cross the colour stays the same.
+- The writing font is picked from a drop-down with a search field. The iPad drop-down also opens the system font picker, which lists fonts installed by profile or by font apps.
+- Note actions (Import, Export, Rename, Delete note) have their own module beside GitHub sync; the two share the bottom row half and half.
+- Import and Export open a full-screen view of the note as its grid of cells. Export: the selected cells become the pages of the PDF, one A4 page per cell, in reading order (row by row). Import: after choosing a PDF, the selected cells are where its pages go, page 1 in the first selected cell in reading order and so on; empty rows are offered below the note, and placing a page outside the current extent grows the note. Cells are selected by tapping, by dragging across them, or a whole row at once from its number.

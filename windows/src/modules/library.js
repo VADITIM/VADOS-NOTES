@@ -41,7 +41,7 @@ function rounded(value) {
     return Math.round(value * 100) / 100
 }
 
-function importElement(asset, index, [width, height], now, device, row = index) {
+export function importElement(asset, index, [width, height], now, device, row = index, column = 0) {
     const isA4 = Math.abs(width - cellWidth) <= sizeTolerance && Math.abs(height - cellHeight) <= sizeTolerance
     const scale = isA4 ? 1 : Math.min((cellWidth - importMarginMillimetres * 2) / width, (cellHeight - importMarginMillimetres * 2) / height)
     return {
@@ -52,7 +52,7 @@ function importElement(asset, index, [width, height], now, device, row = index) 
         asset,
         source_page: index,
         source_size_mm: [width, height],
-        placement: { x: rounded((cellWidth - width * scale) / 2), y: rounded(row * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
+        placement: { x: rounded(column * cellWidth + (cellWidth - width * scale) / 2), y: rounded(row * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
         fit: isA4 ? "original" : "fit_cell",
         updated: now,
         device,
@@ -299,6 +299,25 @@ export class Library {
         this.updatePage(pageId, { extent: { cols: page.extent.cols, rows: firstRow + pdf.pages.length } })
         pdf.pages.forEach((size, index) => {
             const element = importElement(pdf.asset, index, size, now, this.device, firstRow + index)
+            element.order = firstOrder + index
+            this.applyElement(pageId, element)
+        })
+    }
+
+    placeDocument(pdf, pageId, cells) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId) || !cells.length) {
+            return
+        }
+        const now = this.timestamp()
+        const firstOrder = page.elements.reduce((highest, element) => Math.max(highest, element.order), -1) + 1
+        const columns = Math.max(page.extent.cols, ...cells.map((cell) => cell.column + 1))
+        const rows = Math.max(page.extent.rows, ...cells.map((cell) => cell.row + 1))
+        if (columns !== page.extent.cols || rows !== page.extent.rows) {
+            this.updatePage(pageId, { extent: { cols: columns, rows } })
+        }
+        cells.slice(0, pdf.pages.length).forEach((cell, index) => {
+            const element = importElement(pdf.asset, index, pdf.pages[index], now, this.device, cell.row, cell.column)
             element.order = firstOrder + index
             this.applyElement(pageId, element)
         })

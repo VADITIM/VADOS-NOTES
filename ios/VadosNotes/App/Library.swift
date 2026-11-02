@@ -30,6 +30,15 @@ struct ImportedDocument {
     let pages: [[Double]]
 }
 
+struct CellPosition: Hashable {
+    let column: Int
+    let row: Int
+
+    static func readingOrder(_ first: CellPosition, _ second: CellPosition) -> Bool {
+        first.row != second.row ? first.row < second.row : first.column < second.column
+    }
+}
+
 @MainActor
 final class Library: ObservableObject {
     @Published private(set) var revision = 0
@@ -226,7 +235,25 @@ final class Library: ObservableObject {
         }
     }
 
-    private func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil) -> Element {
+    func placeDocument(_ document: ImportedDocument, to pageId: String, cells: [CellPosition]) {
+        guard let page = page(pageId), !isReadOnly(pageId), !cells.isEmpty else { return }
+        let now = store.timestamp()
+        let firstOrder = (page.elements.map(\.order).max() ?? -1) + 1
+        let columns = max(page.extent.columns, (cells.map(\.column).max() ?? 0) + 1)
+        let rows = max(page.extent.rows, (cells.map(\.row).max() ?? 0) + 1)
+        if columns != page.extent.columns || rows != page.extent.rows {
+            updatePage(pageId) { header in
+                header.extent = Extent(columns: columns, rows: rows)
+            }
+        }
+        for (index, cell) in cells.prefix(document.pages.count).enumerated() {
+            var element = importElement(asset: document.asset, index: index, size: document.pages[index], now: now, row: cell.row, column: cell.column)
+            element.order = firstOrder + index
+            apply(.element(pageId: pageId, element: element), page: pageId)
+        }
+    }
+
+    func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil, column: Int = 0) -> Element {
         let width = size[0]
         let height = size[1]
         let cellWidth = PaperGeometry.cellWidth
@@ -244,7 +271,7 @@ final class Library: ObservableObject {
             asset: asset,
             sourcePage: index,
             sourceSizeMillimetres: [width, height],
-            placement: Placement(x: rounded((cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
+            placement: Placement(x: rounded(Double(column) * cellWidth + (cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
             fit: isA4 ? .original : .fitCell,
             updated: now,
             device: device

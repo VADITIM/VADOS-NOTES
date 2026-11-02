@@ -120,7 +120,9 @@ export function roundIconButton({ glyphName, label, color = tokens.palette.text_
 }
 
 export function slabButton(title, color, action) {
-    const button = create("button", "slab-button", title.toUpperCase())
+    const label = create("span", "slab-button-title", title.toUpperCase())
+    const button = create("button", "slab-button", label)
+    button.setTitle = (next) => label.textContent = next.toUpperCase()
     button.style.setProperty("--slab-color", color)
     squircle(button, { radius: squircleRadius.slot, fill: color })
     pressable(button)

@@ -100,12 +100,11 @@ struct ModulePop: ViewModifier, Animatable {
 struct SettingsSheet: View {
     private enum Module: CaseIterable {
         case ascii
-        case transfer
         case paper
         case pen
         case text
         case sync
-        case delete
+        case note
     }
 
     @EnvironmentObject private var library: Library
@@ -117,13 +116,8 @@ struct SettingsSheet: View {
     @State private var token = ""
     @State private var hasStoredToken = false
     @State private var isAsciiWheelOpen = false
-    @State private var isImporting = false
     @State private var isDeleteArmed = false
-    @State private var importFailure: String?
-    @State private var fontQuery = ""
-    @State private var fontFamilies: [String] = []
-    @State private var isImportingFont = false
-    @State private var fontFailure: String?
+    @State private var isFontListOpen = false
     @State private var moduleScales: [Module: CGFloat] = [:]
     @Environment(\.accessibilityReduceMotion) private var isMotionReduced
 
@@ -131,7 +125,6 @@ struct SettingsSheet: View {
     private static let smoothingRange = Tokens.shared.ink.smoothingRange
     private static let armedSeconds = 2.4
     private static let contentShare: CGFloat = 0.75
-    private static let fontListHeight: CGFloat = 260
 
     private var pageContext: (notebookId: String, pageId: String)? {
         if case .page(let notebookId, let pageId) = navigator.route {
@@ -171,17 +164,6 @@ struct SettingsSheet: View {
             }
             .scrollIndicators(.hidden)
             .scrollBounceBehavior(.basedOnSize)
-        }
-        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.pdf]) { result in
-            guard case .success(let url) = result, let pageContext else { return }
-            do {
-                let document = try ImportImages.importDocument(from: url, into: library)
-                library.appendDocument(document, to: pageContext.pageId)
-                importFailure = nil
-                navigator.show(nil)
-            } catch {
-                importFailure = ImportError.message(for: error)
-            }
         }
         .onAppear {
             owner = library.sync.settings.owner
@@ -228,11 +210,13 @@ struct SettingsSheet: View {
                     secondColumn
                 }
             }
-            syncModule
-                .modifier(popped(.sync))
-            LinkButton(glyph: "trash", title: isDeleteArmed ? "Tap again to delete" : "Delete note", tint: Palette.destructive, isOn: isDeleteArmed, isEnabled: page != nil, action: deletePressed)
-                .frame(maxWidth: 280)
-                .modifier(popped(.delete))
+            .zIndex(1)
+            HStack(alignment: .top, spacing: 18) {
+                syncModule
+                    .modifier(popped(.sync))
+                noteModule
+                    .modifier(popped(.note))
+            }
         }
     }
 
@@ -240,17 +224,6 @@ struct SettingsSheet: View {
         VStack(spacing: 18) {
             asciiModule
                 .modifier(popped(.ascii))
-            HStack(spacing: 12) {
-                LinkButton(glyph: "import", title: "Import", tint: Palette.importAsset, isEnabled: isPageEditable) {
-                    isImporting = true
-                }
-                LinkButton(glyph: "export", title: "Export", tint: Palette.importAsset, isEnabled: page != nil, action: export)
-            }
-            .modifier(popped(.transfer))
-            if let importFailure {
-                MicroLabel(text: importFailure, color: Palette.destructive)
-                    .modifier(popped(.transfer))
-            }
         }
     }
 
@@ -262,6 +235,7 @@ struct SettingsSheet: View {
                 .modifier(popped(.pen))
             textModule
                 .modifier(popped(.text))
+                .zIndex(1)
         }
     }
 
@@ -348,60 +322,30 @@ struct SettingsSheet: View {
     }
 
     private var textModule: some View {
-        SettingsModule(label: "Text", detail: "Code stays Mono") {
-            TextField("", text: $fontQuery, prompt: Text("Search fonts").foregroundColor(Palette.textFaint))
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .modifier(FieldStyle())
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(fontFamilies.filter { fontQuery.isEmpty || $0.localizedCaseInsensitiveContains(fontQuery) }, id: \.self) { family in
-                        let isSelected = family == preferences.writingFont
-                        Button {
-                            preferences.setWritingFont(family)
-                        } label: {
-                            Text(family)
-                                .font(.custom(family, fixedSize: 16))
-                                .foregroundColor(isSelected ? Palette.textBright : Palette.textBody)
-                                .lineLimit(1)
-                                .padding(.vertical, 9)
-                                .padding(.leading, 14)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .overlay(alignment: .leading) {
-                                    Rectangle()
-                                        .fill(Palette.accent)
-                                        .frame(width: 2)
-                                        .opacity(isSelected ? 1 : 0)
-                                }
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PressableStyle())
+        SettingsModule(label: "Text") {
+            FontDropdown(isOpen: $isFontListOpen)
+        }
+    }
+
+    private var noteModule: some View {
+        SettingsModule(label: "Note", detail: page.map { library.noteTitle($0) } ?? "Open a note") {
+            Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow {
+                    LinkButton(glyph: "import", title: "Import", tint: Palette.importAsset, isEnabled: isPageEditable) {
+                        openTransfer(.import)
+                    }
+                    LinkButton(glyph: "export", title: "Export", tint: Palette.importAsset, isEnabled: page != nil) {
+                        openTransfer(.export)
                     }
                 }
-            }
-            .frame(height: Self.fontListHeight)
-            .scrollIndicators(.hidden)
-            LinkButton(glyph: "import", title: "Add font", tint: Palette.importAsset) {
-                isImportingFont = true
-            }
-            if let fontFailure {
-                MicroLabel(text: fontFailure, color: Palette.destructive)
-            }
-        }
-        .onAppear {
-            fontFamilies = UserFonts.families
-        }
-        .fileImporter(isPresented: $isImportingFont, allowedContentTypes: [.font]) { result in
-            guard case .success(let url) = result else { return }
-            do {
-                let families = try UserFonts.add(from: url)
-                fontFamilies = UserFonts.families
-                fontFailure = nil
-                if let first = families.first {
-                    preferences.setWritingFont(first)
+                GridRow {
+                    LinkButton(glyph: "pencil", title: "Rename", tint: Palette.edit, isEnabled: isPageEditable) {
+                        if let pageContext {
+                            navigator.show(.renameNote(pageContext.pageId))
+                        }
+                    }
+                    LinkButton(glyph: "trash", title: isDeleteArmed ? "Tap again" : "Delete note", tint: Palette.destructive, isOn: isDeleteArmed, isEnabled: page != nil, action: deletePressed)
                 }
-            } catch {
-                fontFailure = "Not a readable font"
             }
         }
     }
@@ -449,11 +393,9 @@ struct SettingsSheet: View {
         }
     }
 
-    private func export() {
-        guard let page else { return }
-        let options = RenderOptions(showsGuides: preferences.showsGuides, showsDividers: preferences.showsDividers, paperStyle: preferences.paperStyle, pixelScale: 4)
-        guard let url = NoteExport.pdf(of: page, title: library.noteTitle(page), options: options) else { return }
-        NoteExport.share(url)
+    private func openTransfer(_ mode: TransferMode) {
+        guard let pageContext else { return }
+        navigator.show(.transfer(pageId: pageContext.pageId, mode: mode))
     }
 
     private func deletePressed() {
@@ -470,5 +412,155 @@ struct SettingsSheet: View {
         library.deletePage(pageContext.pageId)
         navigator.show(nil)
         navigator.go(.notebook(pageContext.notebookId))
+    }
+}
+
+struct FontDropdown: View {
+    @Binding var isOpen: Bool
+
+    @EnvironmentObject private var preferences: Preferences
+    @State private var query = ""
+    @State private var families: [String] = []
+    @State private var isImportingFont = false
+    @State private var isPickingSystemFont = false
+    @State private var failure: String?
+
+    private static let listHeight: CGFloat = 300
+    private static let triggerHeight: CGFloat = 52
+    private static let shape = Squircle(radius: 14)
+
+    private var shown: [String] {
+        families.filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        Button {
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                isOpen.toggle()
+            }
+            if isOpen {
+                query = ""
+                families = UserFonts.families
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text(preferences.writingFont)
+                    .font(.custom(preferences.writingFont, fixedSize: 17))
+                    .foregroundColor(Palette.textBright)
+                    .lineLimit(1)
+                Spacer()
+                GlyphView(name: "back", color: Palette.textMuted, size: 18)
+                    .rotationEffect(.degrees(isOpen ? 90 : -90))
+            }
+            .padding(.horizontal, 16)
+            .frame(height: Self.triggerHeight)
+            .background(Self.shape.fill(Palette.sunkenDeep))
+            .overlay(Self.shape.stroke(Palette.border, lineWidth: 1))
+            .contentShape(Self.shape)
+        }
+        .buttonStyle(PressableStyle())
+        .overlay(alignment: .topLeading) {
+            if isOpen {
+                popover
+                    .fixedSize(horizontal: false, vertical: true)
+                    .offset(y: Self.triggerHeight + 8)
+                    .transition(.popTogether)
+            }
+        }
+        .fileImporter(isPresented: $isImportingFont, allowedContentTypes: [.font]) { result in
+            guard case .success(let url) = result else { return }
+            do {
+                let added = try UserFonts.add(from: url)
+                families = UserFonts.families
+                failure = nil
+                if let first = added.first {
+                    choose(first)
+                }
+            } catch {
+                failure = "Not a readable font"
+            }
+        }
+        .sheet(isPresented: $isPickingSystemFont) {
+            SystemFontPicker { family in
+                isPickingSystemFont = false
+                guard let family else { return }
+                families = UserFonts.families
+                choose(family)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private var popover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("", text: $query, prompt: Text("Search fonts").foregroundColor(Palette.textFaint))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .modifier(FieldStyle())
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(shown, id: \.self) { family in
+                            row(family)
+                                .id(family)
+                        }
+                        if shown.isEmpty {
+                            MicroLabel(text: "No font matches", color: Palette.textFaint)
+                                .padding(14)
+                        }
+                    }
+                }
+                .frame(height: Self.listHeight)
+                .scrollIndicators(.hidden)
+                .onAppear {
+                    reader.scrollTo(preferences.writingFont, anchor: .center)
+                }
+            }
+            HStack(spacing: 12) {
+                LinkButton(glyph: "import", title: "Add font", tint: Palette.importAsset) {
+                    isImportingFont = true
+                }
+                LinkButton(glyph: "text", title: "Installed", tint: Palette.importAsset) {
+                    isPickingSystemFont = true
+                }
+            }
+            if let failure {
+                MicroLabel(text: failure, color: Palette.destructive)
+            }
+        }
+        .padding(12)
+        .background(Squircle.panel.fill(Palette.panelSolid))
+        .overlay(Squircle.panel.stroke(Palette.borderStrong, lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+    }
+
+    private func row(_ family: String) -> some View {
+        let isSelected = family == preferences.writingFont
+        return Button {
+            choose(family)
+        } label: {
+            Text(family)
+                .font(.custom(family, fixedSize: 16))
+                .foregroundColor(isSelected ? Palette.textBright : Palette.textBody)
+                .lineLimit(1)
+                .padding(.vertical, 9)
+                .padding(.leading, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Palette.accent)
+                        .frame(width: 2)
+                        .opacity(isSelected ? 1 : 0)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+    }
+
+    private func choose(_ family: String) {
+        preferences.setWritingFont(family)
+        withAnimation(Motion.powerTwoIn(Motion.stateMilliseconds)) {
+            isOpen = false
+        }
     }
 }
