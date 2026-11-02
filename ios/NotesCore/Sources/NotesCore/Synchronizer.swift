@@ -236,8 +236,6 @@ public final class Synchronizer {
                 _ = try PageCodec.decodeNotebook(data)
             case .page:
                 _ = try PageCodec.decodePage(data)
-            case .group:
-                _ = try PageCodec.decodeGroup(data)
             case nil:
                 return .valid
             }

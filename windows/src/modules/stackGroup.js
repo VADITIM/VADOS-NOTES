@@ -19,8 +19,7 @@ const pullReach = 0.8
 const decideShare = 0.3
 
 export class StackGroup {
-    constructor({ group, caption, isOpen, isSwipeEnabled = () => true, cardHeight, onToggle, onMenu, card }) {
-        this.isSwipeEnabled = isSwipeEnabled
+    constructor({ group, caption, isOpen, cardHeight, onToggle, onMenu, card }) {
         this.group = group
         this.caption = caption
         this.isOpen = isOpen
@@ -110,7 +109,7 @@ export class StackGroup {
             this.wasSwiped = false
         })
         this.element.addEventListener("pointermove", (event) => {
-            if (!start || this.width <= 0 || !this.isSwipeEnabled()) {
+            if (!start || this.width <= 0) {
                 return
             }
             const translation = [event.clientX - start[0], event.clientY - start[1]]
@@ -197,9 +196,7 @@ export class StackGroup {
         const turn = Math.min(1, Math.max(0, (arrowShown - (1 - arrowTurn) / 2) / arrowTurn))
         const labelWidth = Math.max(0, width - stackWidth - labelGap)
         this.shutMask.style.width = `${labelWidth * (1 - arrowShown)}px`
-        this.shutMask.style.transform = `translate(${stackWidth + labelGap + labelWidth * arrowShown}px, ${shutHeight / 2 - 22}px)`
-        this.shutLabel.style.width = `${labelWidth}px`
-        this.shutLabel.style.marginLeft = `${-labelWidth * arrowShown}px`
+        this.shutMask.style.transform = `translate(${stackWidth + labelGap}px, ${shutHeight / 2 - 22}px)`
         this.heading.style.opacity = String(arrowShown)
         this.heading.style.pointerEvents = this.time >= 1 ? "auto" : "none"
         this.heading.style.zIndex = String(count + 1)

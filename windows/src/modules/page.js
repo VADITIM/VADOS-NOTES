@@ -1,4 +1,5 @@
 import { InkCanvas } from "./canvas.js"
+import { applyCodeEdit, codeKeyEdit, codeTextEdit } from "./codeIndentation.js"
 import { create, pressable } from "./components.js"
 import {
     KeyedList,
@@ -6,7 +7,6 @@ import {
     captionButton,
     colorPanel,
     colorVariations,
-    groupEndButton,
     navIconButton,
     navMetrics,
     swatchButton,
@@ -14,34 +14,19 @@ import {
     wheelButton,
 } from "./controls.js"
 import { slotsFromTokens, swatchSlots } from "./menu.js"
-import { cellContaining } from "./model.js"
+import { cellContaining, clampBox } from "./model.js"
 import { duration, tween } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
-import { placedBox, rowGap, snappedTop, textRect } from "./renderer.js"
-import { codeLanguages, languageCaptions, languageTitles } from "./syntaxHighlighter.js"
-import { RichTextEditor } from "./textEditor.js"
-import { inkOnPaper, isLight, tokens, withAlpha } from "./tokens.js"
+import { fontMetrics, lineHeightOf, textRect, writingFamily } from "./renderer.js"
+import { inkOnPaper, isLight, tokens } from "./tokens.js"
 
 const millimetresPerPoint = 0.35278
 const minimumTextWidth = 20
 const editorInset = { top: 6, side: 22 }
 const equalWidthTravel = 240
 const previewDiameterRange = [4, 20]
-const collapsedGroupCount = 2
-const textInlineButtons = [
-    { glyphName: "bold", flag: "isBold", label: "Bold" },
-    { glyphName: "italic", flag: "isItalic", label: "Italic" },
-    { glyphName: "underline", flag: "isUnderlined", label: "Underline" },
-    { glyphName: "strikethrough", flag: "isStruck", label: "Strikethrough" },
-    { glyphName: "underline_dashed", flag: "isDashedUnderlined", label: "Dashed underline" },
-    { glyphName: "code", flag: "isCode", label: "Code" },
-]
-const textLineButtons = [
-    { glyphName: "heading", lineKind: "heading", label: "Heading" },
-    { glyphName: "list_bullet", lineKind: "bullet", label: "Bullet list" },
-    { glyphName: "list_numbered", lineKind: "numbered", label: "Numbered list" },
-]
+const layoutScale = 10
 
 function logShare(value, range) {
     return Math.log(value / range[0]) / Math.log(range[1] / range[0])
@@ -53,6 +38,10 @@ function logValue(share, range) {
 
 function previewDiameter(share) {
     return previewDiameterRange[0] + (previewDiameterRange[1] - previewDiameterRange[0]) * share
+}
+
+export function pointSize(millimetres) {
+    return String(Math.round(millimetres / millimetresPerPoint))
 }
 
 export function pixelCaption(millimetres) {
@@ -91,7 +80,6 @@ export class PageScreen {
         this.equalWidth = tokens.tools.pen.width
         this.camera = null
         this.editor = null
-        this.textStyleState = { style: {}, lineKind: "paragraph", codeLanguage: null, isPlainText: true }
         this.groupCache = new Map()
         this.canvas = new InkCanvas(this.callbacks())
         this.canvasHost.append(this.canvas.element)
@@ -195,8 +183,9 @@ export class PageScreen {
                 if (!page) {
                     return
                 }
-                const box = placedBox({ x: point[0], y: point[1], width: tokens.text.box_width }, page.extent, rowGap())
-                this.library.beginText(this.pageId, [box.x, box.y])
+                const fontSize = preferences.textFontSize()
+                const box = clampBox({ x: point[0], y: point[1], width: tokens.text.box_width }, page.extent, lineHeightOf(fontSize))
+                this.library.beginText(this.pageId, [box.x, box.y], fontSize)
             },
             onTextMove: (elementId, box) => this.library.moveText(elementId, this.pageId, box),
             onMoveElements: (ids, offset) => this.library.moveElements(ids, this.pageId, offset),
@@ -284,7 +273,7 @@ export class PageScreen {
             subNavigationGroups: this.orderedSubNavigationGroups(),
             panelKey: this.panelKey,
             panelAnchor: () => this.panelAnchorElement(),
-            obstacles: Object.entries(this.app.chromeLayout.frames).filter(([key]) => key !== "title").map(([, frame]) => frame),
+            obstacles: Object.values(this.app.chromeLayout.frames),
             keyboardHeight: this.app.keyboardHeight,
             isShown: this.app.navigator.isPageChromeShown && !this.app.navigator.isChromeLeaving,
             onReorderTools: (order) => preferences.setToolOrder(order),
@@ -311,9 +300,9 @@ export class PageScreen {
         if (session) {
             const color = inkOnPaper(session.element.color ?? tokens.text.color, preferences.paperStyle())
             return [[
-                { id: "text-style", caption: ".md", label: "Text styles", tint: tokens.tool_tints.markdown, isTinted: true, action: () => this.toggleSubNav("text-style") },
-                { id: "text-code", glyph: "code", label: "Code", tint: tokens.tool_tints.code, isTinted: true, action: () => this.toggleSubNav("text-code") },
+                { id: "text-size", caption: pointSize(session.element.font_size ?? preferences.textFontSize()), label: "Font size", sizing: this.textSizing(), action: () => this.toggleSubNav("text-size") },
                 { id: "text-color", glyph: "text", label: "Text colour", tint: isLight(color) ? color : tokens.palette.text_bright, isTinted: true, swatch: color, action: () => this.toggleSubNav("text-color") },
+                { id: "edit-text", glyph: "keyboard", label: "Edit", tint: tokens.semantic.edit, isTinted: true, action: () => this.focusEditor() },
             ], [
                 { id: "finish-text", glyph: "check", label: "Done", tint: tokens.semantic.create, isTinted: true, action: () => this.library.finishText() },
             ]]
@@ -323,14 +312,14 @@ export class PageScreen {
             case "pen":
             case "marker": {
                 const color = this.displayColor(tool)
-                return { id: tool, glyph: tool, label: capitalized(tool), tint: tool === "marker" ? tokens.tool_tints.marker : tokens.palette.text_bright, isTinted: true, swatch: color, sizing: this.inkSizing(tool), action: () => this.press(tool) }
+                return { id: tool, glyph: tool, label: capitalized(tool), tint: isLight(color) ? color : tokens.palette.text_bright, swatch: color, sizing: this.inkSizing(tool), action: () => this.press(tool) }
             }
             case "eraser":
-                return { id: "eraser", glyph: "eraser_ring", label: "Eraser", tint: tokens.semantic.destructive, isTinted: true, sizing: this.eraserSizing(), action: () => this.press("eraser") }
+                return { id: "eraser", glyph: "eraser", label: "Eraser", tint: tokens.semantic.destructive, sizing: this.eraserSizing(), action: () => this.press("eraser") }
             case "text":
-                return { id: "text", glyph: "text", label: "Text", tint: tokens.semantic.navigation, isTinted: true, action: () => this.press("text") }
+                return { id: "text", glyph: "text", label: "Text", tint: tokens.palette.accent, action: () => this.press("text") }
             default:
-                return { id: "lasso", glyph: "lasso", label: "Lasso", tint: tokens.palette.accent, isTinted: true, action: () => this.press("lasso") }
+                return { id: "lasso", glyph: "lasso", label: "Lasso", tint: tokens.palette.accent, action: () => this.press("lasso") }
             }
         })
         return [tools]
@@ -344,11 +333,6 @@ export class PageScreen {
             previewDiameter,
             caption: (share) => pixelCaption(logValue(share, range)),
             onChange: (share) => preferences.setToolWidth(tool, logValue(share, range)),
-            canvasPreview: {
-                diameter: (share) => logValue(share, range) * (this.camera?.scale ?? 1),
-                color: withAlpha(this.displayColor(tool), tokens.tools[tool].opacity ?? 1),
-                isRing: false,
-            },
         }
     }
 
@@ -360,27 +344,38 @@ export class PageScreen {
             previewDiameter,
             caption: (share) => pixelCaption(logValue(share, range) * 2),
             onChange: (share) => preferences.setEraserRadius(logValue(share, range)),
-            canvasPreview: {
-                diameter: (share) => logValue(share, range) * 2 * (this.camera?.scale ?? 1),
-                color: tokens.semantic.destructive,
-                isRing: true,
-            },
         }
+    }
+
+    textSizing() {
+        const range = tokens.text.font_size_range
+        return {
+            share: logShare(this.session?.element.font_size ?? preferences.textFontSize(), range),
+            color: tokens.palette.text_bright,
+            previewDiameter,
+            caption: (share) => `${pointSize(logValue(share, range))}pt`,
+            onChange: (share) => this.chooseTextSize(logValue(share, range)),
+        }
+    }
+
+    chooseTextSize(size) {
+        preferences.setTextFontSize(size)
+        this.library.styleText({ font_size: preferences.textFontSize() })
     }
 
     press(tool) {
         if (this.activeTool === tool) {
-            if (tool === "lasso" || tool === "text") {
+            if (tool === "lasso") {
                 return
             }
-            this.toggleSubNav(tool)
+            this.toggleSubNav(tool === "text" ? "text-size" : tool)
             return
         }
         this.previousTool = this.activeTool
         this.eraserReturn = null
-        if (this.subNavKey !== null && tool !== "lasso" && tool !== "text") {
+        if (this.subNavKey !== null && tool !== "lasso") {
             this.panelKey = null
-            this.subNavKey = tool
+            this.subNavKey = tool === "text" ? "text-size" : tool
         } else {
             this.subNavKey = null
             this.panelKey = null
@@ -395,7 +390,7 @@ export class PageScreen {
         this.previousTool = this.activeTool
         if (this.subNavKey !== null) {
             this.panelKey = null
-            this.subNavKey = tool === "lasso" || tool === "text" ? null : tool
+            this.subNavKey = tool === "lasso" ? null : tool === "text" ? "text-size" : tool
         }
         preferences.setActiveTool(tool)
     }
@@ -529,10 +524,8 @@ export class PageScreen {
             return this.inkGroups(key)
         case "eraser":
             return [this.eraserGroup()]
-        case "text-style":
-            return this.textStyleGroups()
-        case "text-code":
-            return this.textCodeGroups()
+        case "text-size":
+            return [this.textSizeGroup()]
         case "text-color":
             return this.textColorGroups()
         default:
@@ -540,10 +533,9 @@ export class PageScreen {
         }
     }
 
-    group(id, make, refresh, onCollapse = null) {
+    group(id, make, refresh) {
         return {
             id,
-            onCollapse,
             make: (orientation) => {
                 const element = make(orientation)
                 element.refresh = () => refresh(element, orientation)
@@ -559,38 +551,17 @@ export class PageScreen {
         return create("div", `nav-row is-${orientation}`)
     }
 
-    isGroupCollapsed(id, count) {
-        return count > collapsedGroupCount && preferences.isSubNavigationGroupCollapsed(id)
-    }
-
-    setGroupCollapsed(isCollapsing, id, count) {
-        if (count <= collapsedGroupCount || this.isGroupCollapsed(id, count) === isCollapsing) {
-            return false
-        }
-        preferences.setSubNavigationGroupCollapsed(isCollapsing, id)
-        return true
-    }
-
     inkGroups(tool) {
         const range = tokens.tools[tool].width_range ?? [0.2, 2]
-        const sizesId = `${tool}-sizes`
-        const coloursId = `${tool}-colours`
-        const sizes = this.group(sizesId, (orientation) => {
+        const sizes = this.group(`${tool}-sizes`, (orientation) => {
             const row = this.row(orientation)
             const ring = new SelectionRing(row, "selection-ring is-size")
-            const plus = groupEndButton({ orientation, action: () => {
-                const count = preferences.widthPresets(tool).length
-                if (this.isGroupCollapsed(sizesId, count)) {
-                    this.setGroupCollapsed(false, sizesId, count)
-                } else {
-                    preferences.addWidthPreset(tool, preferences.toolWidth(tool))
-                }
-            } })
+            const plus = navIconButton({ glyphName: "plus", orientation, action: () => preferences.addWidthPreset(tool, preferences.toolWidth(tool)) })
             plus.dataset.revealedElement = ""
             row.append(plus)
             const list = new KeyedList(row, {
                 make: (entry) => {
-                    const swatch = swatchButton({ color: "#000", isSizePreset: true, orientation, onSelect: () => preferences.setToolWidth(tool, entry.preset), onRemove: () => preferences.removeWidthPreset(tool, entry.preset) })
+                    const swatch = swatchButton({ color: "#000", isSizePreset: true, caption: "", orientation, onSelect: () => preferences.setToolWidth(tool, entry.preset), onRemove: () => preferences.removeWidthPreset(tool, entry.preset) })
                     swatch.dataset.revealedElement = ""
                     return swatch
                 },
@@ -602,9 +573,7 @@ export class PageScreen {
             return row
         }, (row) => {
             const width = preferences.toolWidth(tool)
-            const allPresets = preferences.widthPresets(tool)
-            const isCollapsed = this.isGroupCollapsed(sizesId, allPresets.length)
-            const presets = isCollapsed ? allPresets.slice(0, collapsedGroupCount) : allPresets
+            const presets = preferences.widthPresets(tool)
             const color = this.displayColor(tool)
             row.list.sync(presets.map((preset) => ({ key: String(preset), preset })), { isSwitch: false })
             row.append(row.plus)
@@ -612,26 +581,19 @@ export class PageScreen {
             for (const preset of presets) {
                 const swatch = row.list.elements.get(String(preset))
                 const isSelected = preferences.isSameWidth(preset, width)
-                swatch.update({ color, diameter: previewDiameter(logShare(preset, range)), isSelected })
+                swatch.update({ color, diameter: previewDiameter(logShare(preset, range)), isSelected, caption: pixelCaption(preset) })
                 if (isSelected) {
                     selected = swatch
                 }
             }
-            row.plus.update({ isCollapsed, isEnabled: isCollapsed || !allPresets.some((preset) => preferences.isSameWidth(preset, width)) })
+            row.plus.update({ isEnabled: !presets.some((preset) => preferences.isSameWidth(preset, width)) })
             row.afterLayout = () => row.ring.moveTo(selected)
             requestAnimationFrame(() => row.afterLayout())
-        }, (isCollapsing) => this.setGroupCollapsed(isCollapsing, sizesId, preferences.widthPresets(tool).length))
-        const colours = this.group(coloursId, (orientation) => {
+        })
+        const colours = this.group(`${tool}-colours`, (orientation) => {
             const row = this.row(orientation)
             const ring = new SelectionRing(row, "selection-ring")
-            const plus = groupEndButton({ orientation, action: () => {
-                const count = preferences.colorPresets(tool).length
-                if (this.isGroupCollapsed(coloursId, count)) {
-                    this.setGroupCollapsed(false, coloursId, count)
-                } else {
-                    preferences.addColorPreset(tool, preferences.toolColor(tool))
-                }
-            } })
+            const plus = navIconButton({ glyphName: "plus", orientation, action: () => preferences.addColorPreset(tool, preferences.toolColor(tool)) })
             plus.dataset.revealedElement = ""
             row.append(plus)
             const list = new KeyedList(row, {
@@ -648,9 +610,7 @@ export class PageScreen {
             return row
         }, (row) => {
             const current = preferences.toolColor(tool).toUpperCase()
-            const allColors = preferences.colorPresets(tool)
-            const isCollapsed = this.isGroupCollapsed(coloursId, allColors.length)
-            const colors = isCollapsed ? allColors.slice(0, collapsedGroupCount) : allColors
+            const colors = preferences.colorPresets(tool)
             row.colors = colors
             row.list.sync(colors.map((color, index) => ({ key: String(index), index })), { isSwitch: false })
             row.append(row.plus)
@@ -670,17 +630,9 @@ export class PageScreen {
                     selected = swatch
                 }
             })
-            row.plus.update({ isCollapsed, isEnabled: isCollapsed || !allColors.includes(current) })
+            row.plus.update({ isEnabled: !colors.includes(current) })
             row.afterLayout = () => row.ring.moveTo(selected)
             requestAnimationFrame(() => row.afterLayout())
-        }, (isCollapsing) => {
-            if (!this.setGroupCollapsed(isCollapsing, coloursId, preferences.colorPresets(tool).length)) {
-                return false
-            }
-            if (isCollapsing && this.panelKey === this.variationsKey(tool)) {
-                this.closePanel()
-            }
-            return true
         })
         const wheel = this.group(`${tool}-wheel`, (orientation) => {
             const button = wheelButton({ orientation, action: () => this.togglePanel() })
@@ -730,85 +682,31 @@ export class PageScreen {
         })
     }
 
-    requestTextStyle(command) {
-        this.editor?.field.perform(command)
-    }
-
-    textStyleGroups() {
-        const state = () => this.textStyleState
-        const inline = this.group("text-inline-styles", (orientation) => {
-            const row = this.row(orientation)
-            row.buttons = textInlineButtons.map(({ glyphName, flag, label }) => {
-                const button = navIconButton({ glyphName, tint: tokens.semantic.edit, orientation, action: () => this.requestTextStyle({ kind: "inline", flag }) })
-                button.setAttribute("aria-label", label)
-                button.classList.add("is-washed")
-                button.dataset.revealedElement = ""
-                button.flag = flag
-                row.append(button)
-                return button
-            })
-            return row
-        }, (row) => {
-            row.buttons.forEach((button) => button.update({ isSelected: Boolean(state().style[button.flag]) }))
-        })
-        const lines = this.group("text-line-styles", (orientation) => {
-            const row = this.row(orientation)
-            row.buttons = textLineButtons.map(({ glyphName, lineKind, label }) => {
-                const button = navIconButton({ glyphName, tint: tokens.semantic.edit, orientation, action: () => this.requestTextStyle({ kind: "line", lineKind }) })
-                button.setAttribute("aria-label", label)
-                button.classList.add("is-washed")
-                button.dataset.revealedElement = ""
-                button.lineKind = lineKind
-                row.append(button)
-                return button
-            })
-            return row
-        }, (row) => {
-            row.buttons.forEach((button) => button.update({ isSelected: state().lineKind === button.lineKind }))
-        })
-        return [inline, lines]
-    }
-
-    textCodeGroups() {
-        const languages = this.group("code-languages", (orientation) => {
+    textSizeGroup() {
+        return this.group("text-sizes", (orientation) => {
             const row = this.row(orientation)
             row.ring = new SelectionRing(row, "selection-ring is-caption")
-            row.buttons = codeLanguages.map((language) => {
-                const button = captionButton({ caption: languageCaptions[language], action: () => this.requestTextStyle({ kind: "code", language }) })
-                button.setAttribute("aria-label", languageTitles[language])
+            row.buttons = tokens.text.font_size_presets.map((preset) => {
+                const button = captionButton({ caption: pointSize(preset), action: () => this.chooseTextSize(preset) })
                 button.dataset.revealedElement = ""
-                button.language = language
+                button.preset = preset
                 row.append(button)
                 return button
             })
             return row
         }, (row) => {
+            const size = this.session?.element.font_size ?? preferences.textFontSize()
             let selected = null
-            row.buttons.forEach((button) => {
-                const isSelected = this.textStyleState.codeLanguage === button.language
+            for (const button of row.buttons) {
+                const isSelected = pointSize(button.preset) === pointSize(size)
                 button.update({ isSelected })
                 if (isSelected) {
                     selected = button
                 }
-            })
+            }
             row.afterLayout = () => row.ring.moveTo(selected)
             requestAnimationFrame(() => row.afterLayout())
         })
-        const plain = this.group("code-plain", (orientation) => {
-            const row = this.row(orientation)
-            row.ring = new SelectionRing(row, "selection-ring is-caption")
-            row.button = captionButton({ caption: "Aa", action: () => this.requestTextStyle({ kind: "code", language: null }) })
-            row.button.setAttribute("aria-label", "Normal text")
-            row.button.dataset.revealedElement = ""
-            row.append(row.button)
-            return row
-        }, (row) => {
-            const isSelected = this.textStyleState.isPlainText
-            row.button.update({ isSelected })
-            row.afterLayout = () => row.ring.moveTo(isSelected ? row.button : null)
-            requestAnimationFrame(() => row.afterLayout())
-        })
-        return [languages, plain]
     }
 
     textColorGroups() {
@@ -1014,55 +912,69 @@ export class PageScreen {
             this.closeEditor()
             this.openEditor(session)
         }
-        const content = session.element.content ?? ""
-        if (this.editor.field.markdown !== content) {
-            this.editor.field.load(content)
+        const editor = this.editor
+        if (editor.textarea.value !== (session.element.content ?? "")) {
+            editor.textarea.value = session.element.content ?? ""
         }
         this.placeEditor()
     }
 
     openEditor(session) {
         const frame = create("div", "text-editor")
-        const field = new RichTextEditor({
-            onChange: (markdown) => {
-                this.library.updateText(markdown)
-                this.placeEditor()
-            },
-            onStyleState: (state) => {
-                this.textStyleState = state
-                this.refresh()
-            },
-        })
-        field.onEscape = () => this.library.finishText()
+        const textarea = create("textarea", "text-editor-field")
+        textarea.spellcheck = true
+        textarea.value = session.element.content ?? ""
         const leftHandle = create("span", "text-handle is-left", create("span", "text-handle-bar"))
         const rightHandle = create("span", "text-handle is-right", create("span", "text-handle-bar"))
-        frame.append(field.element, leftHandle, rightHandle)
+        frame.append(textarea, leftHandle, rightHandle)
         this.canvasHost.append(frame)
-        this.editor = { elementId: session.element.id, frame, field }
-        this.textStyleState = { style: {}, lineKind: "paragraph", codeLanguage: null, isPlainText: true }
-        this.placeEditor()
-        field.load(session.element.content ?? "")
+        this.editor = { elementId: session.element.id, frame, textarea }
+        textarea.addEventListener("input", () => {
+            this.library.updateText(textarea.value)
+            this.placeEditor()
+        })
+        textarea.addEventListener("keydown", (event) => {
+            event.stopPropagation()
+            if (event.key === "Escape") {
+                this.library.finishText()
+                return
+            }
+            const edit = codeKeyEdit(textarea.value, textarea.selectionStart, textarea.selectionEnd, event)
+            if (edit) {
+                event.preventDefault()
+                applyCodeEdit(textarea, edit)
+            }
+        })
+        textarea.addEventListener("beforeinput", (event) => {
+            if (event.inputType !== "insertText" || event.isComposing) {
+                return
+            }
+            const edit = codeTextEdit(textarea.value, textarea.selectionStart, textarea.selectionEnd, event.data)
+            if (edit) {
+                event.preventDefault()
+                applyCodeEdit(textarea, edit)
+            }
+        })
         this.bindTextDrag(frame, (origin, translation) => ({ ...origin, x: origin.x + translation[0], y: origin.y + translation[1] }), true)
         this.bindTextDrag(leftHandle, (origin, translation) => {
             const shift = Math.min(translation[0], origin.width - minimumTextWidth)
             return { ...origin, x: origin.x + shift, width: origin.width - shift }
         })
         this.bindTextDrag(rightHandle, (origin, translation) => ({ ...origin, width: Math.max(minimumTextWidth, origin.width + translation[0]) }))
-        requestAnimationFrame(() => field.focus())
+        requestAnimationFrame(() => textarea.focus())
     }
 
     focusEditor() {
-        this.editor?.field.focus()
+        this.editor?.textarea.focus()
     }
 
     bindTextDrag(target, change, isBody = false) {
         let drag = null
         target.addEventListener("pointerdown", (event) => {
-            const isInField = Boolean(this.editor?.field.element.contains(event.target))
-            if (isBody && isInField && event.pointerType === "mouse") {
+            if (isBody && event.target === this.editor?.textarea && event.pointerType === "mouse") {
                 return
             }
-            if (isBody && event.target !== target && !isInField) {
+            if (isBody && event.target !== target && event.target !== this.editor?.textarea) {
                 return
             }
             event.stopPropagation()
@@ -1087,7 +999,7 @@ export class PageScreen {
                 return
             }
             const height = textRect(session.element)?.height ?? 0
-            this.library.placeText(placedBox(change(drag.origin, [translation[0] / this.camera.scale, translation[1] / this.camera.scale]), page.extent, height))
+            this.library.placeText(clampBox(change(drag.origin, [translation[0] / this.camera.scale, translation[1] / this.camera.scale]), page.extent, height))
             this.placeEditor()
         })
         const end = () => {
@@ -1105,17 +1017,24 @@ export class PageScreen {
             return
         }
         const box = session.element.box
+        const fontSize = (session.element.font_size ?? tokens.text.font_size) * camera.scale
+        const metrics = fontMetrics(fontSize * layoutScale)
+        const lineHeight = metrics.lineHeight / layoutScale
         const color = inkOnPaper(session.element.color ?? tokens.text.color, preferences.paperStyle())
-        editor.field.setLook({ zoom: camera.scale, color, paperStyle: preferences.paperStyle(), writingFont: preferences.writingFont() })
-        editor.field.element.style.width = `${box.width * camera.scale}px`
-        editor.field.element.style.minHeight = `${rowGap() * camera.scale}px`
+        const textarea = editor.textarea
+        textarea.style.fontFamily = writingFamily()
+        textarea.style.fontSize = `${fontSize}px`
+        textarea.style.lineHeight = `${lineHeight}px`
+        textarea.style.color = color
+        textarea.style.width = `${box.width * camera.scale}px`
+        textarea.style.height = "0px"
+        textarea.style.height = `${Math.max(textarea.scrollHeight, fontSize * 1.4)}px`
         editor.frame.style.left = `${box.x * camera.scale + camera.offsetX - editorInset.side}px`
-        editor.frame.style.top = `${snappedTop(box.y) * camera.scale + camera.offsetY - editorInset.top}px`
+        editor.frame.style.top = `${box.y * camera.scale + camera.offsetY - editorInset.top}px`
     }
 
     closeEditor() {
         if (this.editor) {
-            this.editor.field.destroy()
             this.editor.frame.remove()
             this.editor = null
         }

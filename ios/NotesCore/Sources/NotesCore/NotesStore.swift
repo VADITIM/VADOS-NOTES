@@ -20,7 +20,6 @@ final class Snapshot {
     private(set) var state: SyncState
     private(set) var notebooks: [String: Notebook] = [:]
     private(set) var pages: [String: Page] = [:]
-    private(set) var groups: [String: GroupRecord] = [:]
     private let stateURL: URL
 
     init(directory: URL) throws {
@@ -59,13 +58,6 @@ final class Snapshot {
     }
 
     private func loadFiles() {
-        let groupsURL = directory.appendingPathComponent(RepositoryPath.groupsDirectory)
-        for file in (try? FileManager.default.contentsOfDirectory(atPath: groupsURL.path)) ?? [] where file.hasSuffix(".json") {
-            let groupPath = RepositoryPath.group(String(file.dropLast(".json".count)))
-            if let data = data(at: groupPath) {
-                absorb(data, at: groupPath)
-            }
-        }
         let root = directory.appendingPathComponent(RepositoryPath.notebooksDirectory)
         guard let notebookDirectories = try? FileManager.default.contentsOfDirectory(atPath: root.path) else { return }
         for notebookId in notebookDirectories {
@@ -95,10 +87,6 @@ final class Snapshot {
             if let page = try? PageCodec.decodePage(data) {
                 pages[page.id] = page
             }
-        case .group:
-            if let group = try? PageCodec.decodeGroup(data) {
-                groups[group.id] = group
-            }
         case nil:
             break
         }
@@ -111,10 +99,8 @@ public final class NotesStore {
     public let assets: AssetStore
     public private(set) var notebooks: [String: Notebook] = [:]
     public private(set) var pages: [String: Page] = [:]
-    public private(set) var groups: [String: GroupRecord] = [:]
     let snapshot: Snapshot
     private let now: () -> Date
-    private var lastIssued: Date?
 
     public init(directory: URL, device: String, assetByteLimit: Int = .max, now: @escaping () -> Date = Timestamp.now) throws {
         self.device = device
@@ -141,10 +127,6 @@ public final class NotesStore {
         pages.values.filter { $0.notebook == notebookId && !$0.deleted }.sorted { $0.id < $1.id }
     }
 
-    public func liveGroups(in parentId: String?) -> [GroupRecord] {
-        groups.values.filter { !$0.deleted && $0.parent == parentId }.sorted { $0.id < $1.id }
-    }
-
     public var referencedAssets: Set<String> {
         var referenced = Set<String>()
         for page in pages.values where !page.deleted {
@@ -163,12 +145,7 @@ public final class NotesStore {
     }
 
     public func timestamp() -> Date {
-        var issued = now()
-        if let lastIssued, issued <= lastIssued {
-            issued = lastIssued.addingTimeInterval(0.001)
-        }
-        lastIssued = issued
-        return issued
+        now()
     }
 
     public func apply(_ change: Change) throws {
@@ -188,9 +165,6 @@ public final class NotesStore {
         case .page(_, let pageId):
             guard let page = pages[pageId] else { return nil }
             return try PageCodec.encodePage(page)
-        case .group(let groupId):
-            guard let group = groups[groupId] else { return nil }
-            return try PageCodec.encodeGroup(group)
         case nil:
             return nil
         }
@@ -199,7 +173,6 @@ public final class NotesStore {
     func rebuild() {
         notebooks = snapshot.notebooks
         pages = snapshot.pages
-        groups = snapshot.groups
         for entry in journal.entries {
             integrate(entry.change)
         }
@@ -232,12 +205,6 @@ public final class NotesStore {
                 page.device = element.device
             }
             pages[pageId] = page
-        case .group(let group):
-            if let existing = groups[group.id] {
-                groups[group.id] = Merge.group(existing, group)
-            } else {
-                groups[group.id] = group
-            }
         }
     }
 }

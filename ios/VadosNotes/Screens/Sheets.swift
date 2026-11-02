@@ -128,8 +128,8 @@ struct SheetHost: View {
         case .pickGroup(let target, let parentId):
             GroupSheet(target: target, parentId: parentId)
         case .renameGroup(let groupId, let parentId):
-            NameSheet(heading: "Rename group", initial: library.groups(in: parentId).first { $0.id == groupId }?.title ?? "", confirmTitle: "Rename", confirmColor: Palette.edit) { title in
-                library.renameGroup(groupId, to: title)
+            NameSheet(heading: "Rename group", initial: Preferences.shared.groups(in: parentId).first { $0.id == groupId }?.title ?? "", confirmTitle: "Rename", confirmColor: Palette.edit) { title in
+                Preferences.shared.renameGroup(groupId, to: title, in: parentId)
                 navigator.show(nil)
             }
         case .settings:
@@ -289,7 +289,7 @@ struct GroupSheet: View {
     let parentId: String?
 
     @EnvironmentObject private var navigator: Navigator
-    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var preferences: Preferences
     @State private var title = ""
     @FocusState private var isFocused: Bool
 
@@ -311,13 +311,13 @@ struct GroupSheet: View {
     }
 
     var body: some View {
-        let groups = library.groups(in: parentId).filter { $0.isFolders == isFolders }
+        let groups = preferences.groups(in: parentId).filter { $0.isFolders == isFolders }
         SheetPanel(heading: "Add to group") {
             if !groups.isEmpty {
                 VStack(spacing: 4) {
                     ForEach(groups) { group in
                         Button {
-                            library.addToGroup(memberId, groupId: group.id, in: parentId)
+                            preferences.addToGroup(memberId, groupId: group.id, in: parentId)
                             navigator.show(nil)
                         } label: {
                             HStack(spacing: 12) {
@@ -352,7 +352,7 @@ struct GroupSheet: View {
 
     private func create() {
         guard !trimmed.isEmpty else { return }
-        library.createGroup(trimmed, isFolders: isFolders, with: memberId, in: parentId)
+        preferences.createGroup(trimmed, isFolders: isFolders, with: memberId, in: parentId)
         navigator.show(nil)
     }
 }

@@ -15,7 +15,6 @@ const sidePadding = 28
 const dropEdgeShare = 0.22
 const noteColumnWidth = 170
 const dragTolerance = 8
-const slotReach = 48
 const tileIcons = { folder: 64, add: 40, note: 22 }
 
 export function folderLook(notebook) {
@@ -231,12 +230,8 @@ export class GridScreen {
         this.arrangedFolders = null
         this.arrangedNotes = null
         this.lastSignature = null
-        this.resizeObserver = new ResizeObserver(() => {
-            this.layoutMasonry(false)
-            this.layoutColumns()
-        })
+        this.resizeObserver = new ResizeObserver(() => this.layoutMasonry(false))
         this.resizeObserver.observe(this.scroller)
-        this.bindGroupClosing()
         this.unsubscribeImports = subscribeImports(() => {
             for (const tile of this.tiles.values()) {
                 tile.importRevision = (tile.importRevision ?? 0) + 1
@@ -289,7 +284,7 @@ export class GridScreen {
     }
 
     groups() {
-        return this.library.groups(this.notebookId)
+        return preferences.groups(this.notebookId)
     }
 
     isGrouped(id) {
@@ -355,7 +350,10 @@ export class GridScreen {
         if (this.trimmedQuery()) {
             sections.push(...this.results())
         } else if (this.notebookId) {
-            sections.push(...this.foldersSection(), ...this.notesSection())
+            const notesFirst = this.notes().length === 0 && !this.hasGroups(false)
+            const folders = this.foldersSection()
+            const notes = this.notesSection()
+            sections.push(...(notesFirst ? [...notes, ...folders] : [...folders, ...notes]))
         } else {
             sections.push(...this.foldersSection())
         }
@@ -440,18 +438,23 @@ export class GridScreen {
         return [heading, ...this.groupRows(false), masonry].filter(() => notebookId)
     }
 
-    masonryMetrics(width) {
+    layoutMasonry(isAnimated) {
+        const masonry = this.masonry
+        if (!masonry?.isConnected) {
+            return
+        }
+        const width = masonry.clientWidth
+        if (!width) {
+            return
+        }
         const count = Math.max(1, Math.floor((width + gridSpacing) / (noteColumnWidth + gridSpacing)))
         const columnWidth = (width - gridSpacing * (count - 1)) / count
-        return { count, columnWidth, unit: noteUnitHeight(columnWidth) }
-    }
-
-    masonryFrames(cells, width) {
-        const { count, columnWidth, unit } = this.masonryMetrics(width)
+        const unit = noteUnitHeight(columnWidth)
         const heights = new Array(count).fill(0)
-        const frames = cells.map((cell) => {
-            const span = Math.min(count, Math.max(1, cell.span || 1))
-            const rows = Math.max(1, cell.rows || 1)
+        const before = isAnimated ? new Map([...masonry.children].map((child) => [child, child.getBoundingClientRect()])) : null
+        for (const child of masonry.children) {
+            const span = Math.min(count, Math.max(1, Number(child.dataset.span) || 1))
+            const rows = Math.max(1, Number(child.dataset.rows) || 1)
             const tileWidth = columnWidth * span + gridSpacing * (span - 1)
             const tileHeight = unit * rows + gridSpacing * (rows - 1)
             let bestColumn = 0
@@ -466,31 +469,12 @@ export class GridScreen {
             for (let column = bestColumn; column < bestColumn + span; column += 1) {
                 heights[column] = bestTop + tileHeight + gridSpacing
             }
-            return { left: bestColumn * (columnWidth + gridSpacing), top: bestTop, width: tileWidth, height: tileHeight }
-        })
-        return { frames, height: Math.max(0, Math.max(...heights) - gridSpacing) }
-    }
-
-    layoutMasonry(isAnimated) {
-        const masonry = this.masonry
-        if (!masonry?.isConnected) {
-            return
+            child.style.left = `${bestColumn * (columnWidth + gridSpacing)}px`
+            child.style.top = `${bestTop}px`
+            child.style.width = `${tileWidth}px`
+            child.style.height = `${tileHeight}px`
         }
-        const width = masonry.clientWidth
-        if (!width) {
-            return
-        }
-        const before = isAnimated ? new Map([...masonry.children].map((child) => [child, child.getBoundingClientRect()])) : null
-        const children = [...masonry.children]
-        const { frames, height } = this.masonryFrames(children.map((child) => ({ span: Number(child.dataset.span) || 1, rows: Number(child.dataset.rows) || 1 })), width)
-        children.forEach((child, index) => {
-            const frame = frames[index]
-            child.style.left = `${frame.left}px`
-            child.style.top = `${frame.top}px`
-            child.style.width = `${frame.width}px`
-            child.style.height = `${frame.height}px`
-        })
-        masonry.style.height = `${height}px`
+        masonry.style.height = `${Math.max(0, Math.max(...heights) - gridSpacing)}px`
         if (before) {
             for (const [child, rect] of before) {
                 const after = child.getBoundingClientRect()
@@ -518,7 +502,6 @@ export class GridScreen {
                     group,
                     caption: `${group.members.length} ${isFolders ? "folder" : "note"}${group.members.length === 1 ? "" : "s"}`,
                     isOpen: this.openGroups.has(group.id),
-                    isSwipeEnabled: () => !this.drag,
                     cardHeight: (cell) => (isFolders ? (cell - 28) / 1.25 + 28 + 12 + 44 : noteUnitHeight(cell)),
                     onToggle: (isOpen) => {
                         if (isOpen) {
@@ -529,25 +512,23 @@ export class GridScreen {
                         stack.setOpen(isOpen)
                     },
                     onMenu: (point) => this.showGroupMenu(group, point),
-                    card: (id) => this.groupCard(id, isFolders, group.id),
+                    card: (id) => this.groupCard(id, isFolders),
                 })
                 this.stacks.set(key, stack)
             }
             stack.setOpen(this.openGroups.has(group.id))
             const row = create("div", "group-row", stack.element)
-            row.dataset.group = group.id
-            row.dataset.kind = isFolders ? "folder" : "note"
             return row
         })
     }
 
-    groupCard(id, isFolders, groupId) {
+    groupCard(id, isFolders) {
         if (isFolders) {
             const folder = this.library.notebook(id)
-            return folder ? this.makeFolderTile(folder, 0, true, false, groupId) : create("div")
+            return folder ? this.makeFolderTile(folder, 0, false, false) : create("div")
         }
         const page = this.library.page(id)
-        return page ? this.makeNoteTile(page, 0, true, false, groupId) : create("div")
+        return page ? this.makeNoteTile(page, 0, false, false) : create("div")
     }
 
     results() {
@@ -611,45 +592,52 @@ export class GridScreen {
         return this.cachedTile(key, () => this.makeNoteTile(page, rank, isDraggable, false))
     }
 
-    makeFolderTile(folder, rank, isDraggable, isResult, groupId = null) {
+    makeFolderTile(folder, rank, isDraggable, isResult) {
         const parentId = this.library.parentOf(folder.id)
         const caption = isResult && parentId ? this.library.path(parentId) : this.library.folderSummary(folder.id)
         const tile = folderTile(folder, caption)
         const holder = create("div", "tile-holder", tile)
         holder.tile = tile
         holder.dataset.key = `folder:${folder.id}`
-        holder.dataset.draggable = String(isDraggable && !groupId)
+        holder.dataset.draggable = String(isDraggable)
         appear(holder, rank)
-        tileGestures(holder, this.callbacks("folder", folder.id, isDraggable, () => this.app.navigator.go({ kind: "notebook", notebookId: folder.id }), (point) => this.showFolderMenu(folder.id, point), groupId))
+        tileGestures(holder, this.callbacks("folder", folder.id, isDraggable, () => this.app.navigator.go({ kind: "notebook", notebookId: folder.id }), (point) => this.showFolderMenu(folder.id, point)))
         return holder
     }
 
-    makeNoteTile(page, rank, isDraggable, isResult, groupId = null) {
+    makeNoteTile(page, rank, isDraggable, isResult) {
         const caption = isResult ? this.library.path(page.notebook) : page.extent.cols * page.extent.rows > 1 ? `${page.extent.cols}×${page.extent.rows}` : ""
         const tile = noteTile(page, this.library.noteTitle(page), caption)
         const holder = create("div", "tile-holder is-note", tile)
         holder.tile = tile
         holder.dataset.key = `note:${page.id}`
-        holder.dataset.draggable = String(isDraggable && !groupId)
+        holder.dataset.draggable = String(isDraggable)
         appear(holder, rank)
-        tileGestures(holder, this.callbacks("note", page.id, isDraggable, (frame) => this.app.navigator.go({ kind: "page", notebookId: page.notebook, pageId: page.id }, frame), (point) => this.showNoteMenu(page.id, point), groupId))
+        tileGestures(holder, this.callbacks("note", page.id, isDraggable, (frame) => this.app.navigator.go({ kind: "page", notebookId: page.notebook, pageId: page.id }, frame), (point) => this.showNoteMenu(page.id, point)))
         return holder
     }
 
-    callbacks(kind, id, isDraggable, onTap, onMenu, groupId = null) {
+    callbacks(kind, id, isDraggable, onTap, onMenu) {
         return {
             onTap,
             onMenu,
-            onDragBegin: isDraggable ? (point) => this.beginDrag(kind, id, point, groupId) : null,
+            onDragBegin: isDraggable ? (point) => this.beginDrag(kind, id, point) : null,
             onDragMove: isDraggable ? (point) => this.moveDrag(point) : null,
             onDragEnd: isDraggable ? (point, isDrop) => this.endDrag(point, isDrop) : null,
         }
     }
 
-    beginDrag(kind, id, point, groupId = null) {
+    tileFrames() {
+        const frames = []
+        for (const holder of this.content.querySelectorAll(".tile-holder[data-draggable='true']")) {
+            frames.push({ key: holder.dataset.key, rect: holder.getBoundingClientRect(), holder })
+        }
+        return frames
+    }
+
+    beginDrag(kind, id, point) {
         this.app.menu.dismiss()
-        const scope = groupId ? `.group-row[data-group='${groupId}'] ` : ""
-        const holder = this.content.querySelector(`${scope}.tile-holder[data-key='${kind}:${id}']`)
+        const holder = this.content.querySelector(`.tile-holder[data-key='${kind}:${id}']`)
         if (!holder) {
             return
         }
@@ -658,8 +646,6 @@ export class GridScreen {
         this.arrangedNotes = this.notes().map((page) => page.id)
         const ghost = holder.cloneNode(true)
         ghost.className = "tile-ghost"
-        ghost.getAnimations?.().forEach((running) => running.cancel())
-        ghost.style.opacity = "1"
         ghost.style.width = `${rect.width}px`
         ghost.style.height = `${rect.height}px`
         ghost.querySelectorAll("canvas").forEach((canvas, index) => {
@@ -668,31 +654,10 @@ export class GridScreen {
             canvas.height = source.height
             canvas.getContext("2d").drawImage(source, 0, 0)
         })
-        const grab = [point[0] - rect.left, point[1] - rect.top]
-        ghost.style.transformOrigin = `${grab[0]}px ${grab[1]}px`
         this.app.overlayHost.append(ghost)
-        animate(ghost, [{ scale: "1" }, { scale: String(tokens.motion.scales.held) }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
         holder.classList.add("is-source")
-        this.drag = { kind, id, holder, ghost, grab, target: null, groupId, placeholder: null }
+        this.drag = { kind, id, holder, ghost, grab: [point[0] - rect.left, point[1] - rect.top], target: null }
         this.moveDrag(point)
-    }
-
-    shownOrder(kind) {
-        return (kind === "folder" ? this.arrangedFolders : this.arrangedNotes) ?? []
-    }
-
-    setShownOrder(kind, order) {
-        if (kind === "folder") {
-            this.arrangedFolders = order
-            this.reorderLive(".folder-grid", "folder", order)
-        } else {
-            this.arrangedNotes = order
-            this.reorderLive(".masonry", "note", order)
-        }
-    }
-
-    isLoose(drag) {
-        return Boolean(drag.groupId) && drag.target?.kind === "slot"
     }
 
     moveDrag(point) {
@@ -702,72 +667,35 @@ export class GridScreen {
         }
         drag.ghost.style.left = `${point[0] - drag.grab[0]}px`
         drag.ghost.style.top = `${point[1] - drag.grab[1]}px`
-        const previous = drag.target
         const target = this.dropTarget(drag, point)
-        if (target) {
-            drag.target = target
-        } else {
-            const index = this.slotIndex(drag, point)
-            if (index !== null) {
-                drag.target = { kind: "slot", index }
-            } else if (drag.target?.kind !== "slot") {
-                drag.target = null
+        const previousInto = drag.target?.kind === "into" ? drag.target.id : null
+        drag.target = target
+        drag.ghost.classList.toggle("is-into", target?.kind === "into")
+        const nextInto = target?.kind === "into" ? target.id : null
+        if (previousInto !== nextInto) {
+            for (const [id, isTarget] of [[previousInto, false], [nextInto, true]]) {
+                const holder = id ? this.content.querySelector(`.tile-holder[data-key='folder:${id}']`) : null
+                if (holder) {
+                    holder.classList.toggle("is-drop-target", isTarget)
+                    animate(holder, [{ scale: isTarget ? "1" : "1.04" }, { scale: isTarget ? "1.04" : "1" }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
+                }
             }
         }
-        drag.ghost.classList.toggle("is-into", drag.target?.kind === "into")
-        this.markTarget(previous, false)
-        this.markTarget(drag.target, true)
-        this.syncPlaceholder(drag)
-        if (drag.target?.kind !== "slot") {
-            return
-        }
-        const others = this.shownOrder(drag.kind).filter((candidate) => candidate !== drag.id)
-        const order = [...others]
-        order.splice(Math.min(drag.target.index, others.length), 0, drag.id)
-        if (order.join() !== this.shownOrder(drag.kind).join()) {
-            this.setShownOrder(drag.kind, order)
-        }
-    }
-
-    markTarget(target, isMarked) {
-        const element = target?.kind === "into"
-            ? this.content.querySelector(`.tile-holder[data-key='folder:${target.id}']`)
-            : target?.kind === "group" ? this.content.querySelector(`.group-row[data-group='${target.id}']`) : null
-        if (!element || element.classList.contains("is-drop-target") === isMarked) {
-            return
-        }
-        element.classList.toggle("is-drop-target", isMarked)
-        if (target.kind === "into") {
-            animate(element, [{ scale: isMarked ? "1" : "1.04" }, { scale: isMarked ? "1.04" : "1" }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
-        }
-    }
-
-    syncPlaceholder(drag) {
-        if (!drag.groupId) {
-            return
-        }
-        const isLoose = this.isLoose(drag)
-        if (isLoose && !drag.placeholder) {
-            const container = this.content.querySelector(drag.kind === "folder" ? ".folder-grid" : ".masonry")
-            if (!container) {
-                return
+        if (target?.kind === "before" || target?.kind === "after") {
+            const isAfter = target.kind === "after"
+            if (drag.kind === "folder") {
+                const next = moved(this.arrangedFolders, drag.id, target.id, isAfter)
+                if (next.join() !== this.arrangedFolders.join()) {
+                    this.arrangedFolders = next
+                    this.reorderLive(".folder-grid", "folder", next)
+                }
+            } else {
+                const next = moved(this.arrangedNotes, drag.id, target.id, isAfter)
+                if (next.join() !== this.arrangedNotes.join()) {
+                    this.arrangedNotes = next
+                    this.reorderLive(".masonry", "note", next)
+                }
             }
-            const placeholder = drag.kind === "folder"
-                ? this.makeFolderTile(this.library.notebook(drag.id), 0, false, false)
-                : this.makeNoteTile(this.library.page(drag.id), 0, false, false)
-            placeholder.getAnimations().forEach((running) => running.cancel())
-            placeholder.classList.add("is-source")
-            if (drag.kind === "note") {
-                const page = this.library.page(drag.id)
-                placeholder.dataset.span = String(page?.extent.cols ?? 1)
-                placeholder.dataset.rows = String(page?.extent.rows ?? 1)
-            }
-            container.append(placeholder)
-            drag.placeholder = placeholder
-        } else if (!isLoose && drag.placeholder) {
-            drag.placeholder.remove()
-            drag.placeholder = null
-            this.setShownOrder(drag.kind, this.shownOrder(drag.kind).filter((candidate) => candidate !== drag.id))
         }
     }
 
@@ -796,100 +724,33 @@ export class GridScreen {
         }
     }
 
-    folderSlotFrames(grid, count) {
-        const style = getComputedStyle(grid)
-        const columns = style.gridTemplateColumns.split(" ").filter(Boolean)
-        const columnCount = Math.max(1, columns.length)
-        const columnWidth = parseFloat(columns[0]) || 230
-        const gap = parseFloat(style.columnGap) || gridSpacing
-        const rowGap = parseFloat(style.rowGap) || gridSpacing
-        const first = grid.firstElementChild?.getBoundingClientRect()
-        const area = grid.getBoundingClientRect()
-        const left = area.left + (parseFloat(style.paddingLeft) || 0)
-        const top = area.top + (parseFloat(style.paddingTop) || 0)
-        const height = first?.height || columnWidth
-        return Array.from({ length: count }, (unused, index) => {
-            const column = index % columnCount
-            const row = Math.floor(index / columnCount)
-            const x = left + column * (columnWidth + gap)
-            const y = top + row * (height + rowGap)
-            return { left: x, top: y, right: x + columnWidth, bottom: y + height }
-        })
-    }
-
-    slotIndex(drag, point) {
-        const isFolder = drag.kind === "folder"
-        const area = this.content.querySelector(isFolder ? ".folder-grid" : ".masonry")
-        if (!area) {
-            return null
-        }
-        const order = this.shownOrder(drag.kind)
-        const others = order.filter((candidate) => candidate !== drag.id)
-        const leading = isFolder ? (this.notebookId ? 0 : 1) : 1
-        let candidates
-        if (isFolder) {
-            const frames = this.folderSlotFrames(area, leading + others.length + 1)
-            candidates = others.concat([null]).map((unused, index) => frames[leading + index])
-        } else {
-            const origin = area.getBoundingClientRect()
-            const cellOf = (id) => {
-                const page = this.library.page(id)
-                return { span: page?.extent.cols ?? 1, rows: page?.extent.rows ?? 1 }
-            }
-            candidates = others.concat([null]).map((unused, index) => {
-                const cells = others.map(cellOf)
-                cells.splice(index, 0, cellOf(drag.id))
-                const frame = this.masonryFrames([{ span: 1, rows: 1 }, ...cells], area.clientWidth).frames[leading + index]
-                return { left: origin.left + frame.left, top: origin.top + frame.top, right: origin.left + frame.left + frame.width, bottom: origin.top + frame.top + frame.height }
-            })
-        }
-        const contains = (rect) => point[0] >= rect.left && point[0] <= rect.right && point[1] >= rect.top && point[1] <= rect.bottom
-        const bounds = area.getBoundingClientRect()
-        const isNear = (point[0] >= bounds.left - slotReach && point[0] <= bounds.right + slotReach && point[1] >= bounds.top - slotReach && point[1] <= bounds.bottom + slotReach) || candidates.some(contains)
-        if (!isNear) {
-            return null
-        }
-        const isShown = !drag.groupId || this.isLoose(drag)
-        const current = isShown ? order.indexOf(drag.id) : -1
-        if (current >= 0 && current < candidates.length && contains(candidates[current])) {
-            return current
-        }
-        const containing = candidates.map((rect, index) => index).filter((index) => contains(candidates[index]))
-        const pool = containing.length ? containing : candidates.map((rect, index) => index)
-        const distance = (index) => Math.hypot((candidates[index].left + candidates[index].right) / 2 - point[0], (candidates[index].top + candidates[index].bottom) / 2 - point[1])
-        return pool.reduce((best, index) => (distance(index) < distance(best) ? index : best), pool[0])
-    }
-
     dropTarget(drag, point) {
         const back = this.app.chromeLayout.back
         if (this.notebookId && back && point[0] >= back.x && point[0] <= back.x + back.width && point[1] >= back.y && point[1] <= back.y + back.height) {
             const parentId = this.library.parentOf(this.notebookId)
             return drag.kind === "folder" || parentId ? { kind: "up", id: parentId } : null
         }
-        for (const holder of this.content.querySelectorAll(".tile-holder[data-key^='folder:']")) {
-            const rect = holder.getBoundingClientRect()
-            if (holder.classList.contains("is-source") || point[0] < rect.left || point[0] > rect.right || point[1] < rect.top || point[1] > rect.bottom) {
+        for (const { key, rect } of this.tileFrames()) {
+            if (point[0] < rect.left || point[0] > rect.right || point[1] < rect.top || point[1] > rect.bottom) {
                 continue
             }
-            const id = holder.dataset.key.slice("folder:".length)
-            if (id === drag.id || !this.library.notebook(id)) {
+            const [kind, id] = key.split(":")
+            if (id === drag.id) {
                 continue
-            }
-            if (drag.kind === "note") {
-                return { kind: "into", id }
             }
             const share = (point[0] - rect.left) / Math.max(1, rect.width)
-            if (share > dropEdgeShare && share < 1 - dropEdgeShare && this.library.canMoveNotebook(drag.id, id)) {
+            if (kind === "folder" && (drag.kind === "note" || (share > dropEdgeShare && share < 1 - dropEdgeShare))) {
+                if (drag.kind === "folder" && !this.library.canMoveNotebook(drag.id, id)) {
+                    return null
+                }
                 return { kind: "into", id }
             }
-        }
-        for (const row of this.content.querySelectorAll(`.group-row[data-kind='${drag.kind}']`)) {
-            const rect = row.getBoundingClientRect()
-            if (point[0] >= rect.left && point[0] <= rect.right && point[1] >= rect.top && point[1] <= rect.bottom) {
-                return { kind: "group", id: row.dataset.group }
+            if (kind !== drag.kind) {
+                return null
             }
+            return { kind: share < 0.5 ? "before" : "after", id }
         }
-        return null
+        return drag.target?.kind === "before" || drag.target?.kind === "after" ? drag.target : null
     }
 
     endDrag(point, isDrop) {
@@ -897,17 +758,12 @@ export class GridScreen {
         if (!drag) {
             return
         }
-        if (isDrop) {
-            this.moveDrag(point)
-        }
-        const target = isDrop ? drag.target : null
+        const target = isDrop ? this.dropTarget(drag, point) : null
         this.drag = null
         drag.holder.classList.remove("is-source")
-        drag.placeholder?.remove()
-        this.markTarget(drag.target, false)
-        this.content.querySelectorAll(".is-drop-target").forEach((element) => {
-            element.classList.remove("is-drop-target")
-            element.getAnimations().forEach((running) => running.cancel())
+        this.content.querySelectorAll(".is-drop-target").forEach((holder) => {
+            holder.classList.remove("is-drop-target")
+            holder.getAnimations().forEach((running) => running.cancel())
         })
         animate(drag.ghost, [{ opacity: 1 }, { opacity: 0 }], { milliseconds: duration("state"), curveName: "power_two_out", fill: "forwards" }).finished.then(() => drag.ghost.remove())
         const arrangedFolders = this.arrangedFolders
@@ -915,31 +771,19 @@ export class GridScreen {
         this.arrangedFolders = null
         this.arrangedNotes = null
         this.lastSignature = null
-        const leaveGroup = () => {
-            if (drag.groupId) {
-                this.library.removeFromGroup(drag.id, this.notebookId)
-            }
-        }
         if (target?.kind === "into") {
-            leaveGroup()
             if (drag.kind === "folder") {
                 this.library.moveNotebook(drag.id, target.id)
             } else {
                 this.library.movePage(drag.id, target.id)
             }
         } else if (target?.kind === "up") {
-            leaveGroup()
             if (drag.kind === "folder") {
                 this.library.moveNotebook(drag.id, target.id)
             } else if (target.id) {
                 this.library.movePage(drag.id, target.id)
             }
-        } else if (target?.kind === "group") {
-            if (target.id !== drag.groupId) {
-                this.library.addToGroup(drag.id, target.id, this.notebookId)
-            }
-        } else if (isDrop && (!drag.groupId || target?.kind === "slot")) {
-            leaveGroup()
+        } else if (isDrop) {
             if (drag.kind === "folder" && arrangedFolders) {
                 this.library.arrangeFolders(arrangedFolders)
             } else if (drag.kind === "note" && arrangedNotes) {
@@ -947,46 +791,6 @@ export class GridScreen {
             }
         }
         this.update()
-    }
-
-    closeGroups() {
-        if (!this.openGroups.size) {
-            return
-        }
-        this.openGroups.clear()
-        for (const stack of this.stacks.values()) {
-            stack.setOpen(false)
-        }
-    }
-
-    bindGroupClosing() {
-        let swipe = null
-        this.scroller.addEventListener("pointerdown", (event) => {
-            const isInsideOpenGroup = [...this.content?.querySelectorAll(".group-row") ?? []].some((row) => this.openGroups.has(row.dataset.group) && row.contains(event.target))
-            swipe = isInsideOpenGroup || event.button !== 0 ? null : { start: [event.clientX, event.clientY], pointerId: event.pointerId, isDecided: false }
-        })
-        this.scroller.addEventListener("pointermove", (event) => {
-            if (!swipe || swipe.pointerId !== event.pointerId || swipe.isDecided) {
-                return
-            }
-            const travel = [event.clientX - swipe.start[0], event.clientY - swipe.start[1]]
-            if (Math.hypot(...travel) < 22) {
-                return
-            }
-            swipe.isDecided = true
-            if (Math.abs(travel[0]) > Math.abs(travel[1]) * 2 && !this.drag) {
-                this.closeGroups()
-            }
-        })
-        this.scroller.addEventListener("pointerup", () => {
-            swipe = null
-        })
-        this.scroller.addEventListener("click", (event) => {
-            const isEmpty = !event.target.closest(".tile-holder, .stack-card, .stack-heading, .stack-arrow, .stack-shut-hit, .add-stack, .grid-heading button")
-            if (isEmpty) {
-                this.closeGroups()
-            }
-        })
     }
 
     menuTitle(action, memberId) {
@@ -1003,7 +807,7 @@ export class GridScreen {
 
     toggleGroup(target, memberId) {
         if (this.isGrouped(memberId)) {
-            this.library.removeFromGroup(memberId, this.notebookId)
+            preferences.removeFromGroup(memberId, this.notebookId)
         } else {
             this.app.navigator.show({ kind: "pickGroup", target, parentId: this.notebookId })
         }
@@ -1061,10 +865,20 @@ export class GridScreen {
                     this.app.navigator.show({ kind: "renameGroup", groupId: group.id, parentId: this.notebookId })
                 } else if (action === "ungroup") {
                     this.openGroups.delete(group.id)
-                    this.library.ungroup(group.id)
+                    preferences.ungroup(group.id, this.notebookId)
                 }
             },
         })
         this.app.menu.present(slots, point, group.title)
     }
+}
+
+function moved(order, id, otherId, isAfter) {
+    const result = order.filter((candidate) => candidate !== id)
+    const index = result.indexOf(otherId)
+    if (index < 0) {
+        return order
+    }
+    result.splice(isAfter ? index + 1 : index, 0, id)
+    return result
 }

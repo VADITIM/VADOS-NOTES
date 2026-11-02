@@ -220,7 +220,6 @@ async function start() {
     await document.fonts.load(`italic 700 16px "General Sans"`)
     const library = new Library()
     await library.open()
-    library.adoptDeviceGroups(preferences.takeDeviceGroups())
     const sync = new SyncCoordinator(library)
     await sync.open()
     new App(document.getElementById("root"), library, sync)

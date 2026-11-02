@@ -157,7 +157,7 @@ function classify(contents, path) {
         if (value.schema_version !== schemaVersion) {
             return { isValid: false, reason: "unsupported_version" }
         }
-        const prefix = { page: "p_", notebook: "nb_", group: "g_" }[kind.kind]
+        const prefix = kind.kind === "page" ? "p_" : "nb_"
         if (typeof value.id !== "string" || !value.id.startsWith(prefix)) {
             return { isValid: false, reason: "corrupt_remote" }
         }

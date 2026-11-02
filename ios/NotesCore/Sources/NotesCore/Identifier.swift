@@ -4,7 +4,6 @@ public enum Identifier {
     public static let notebookPrefix = "nb"
     public static let pagePrefix = "p"
     public static let elementPrefix = "e"
-    public static let groupPrefix = "g"
 
     private static let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
     private static let timeCharacterCount = 10

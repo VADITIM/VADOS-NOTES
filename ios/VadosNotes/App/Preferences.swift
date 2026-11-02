@@ -29,7 +29,7 @@ enum NavOrientation: String {
     case vertical
 }
 
-struct DeviceGroup: Codable {
+struct TileGroup: Codable, Equatable, Identifiable {
     var id: String
     var title: String
     var isFolders: Bool
@@ -295,17 +295,60 @@ final class Preferences: ObservableObject {
         write("subNavigationCollapsed.\(id)", isCollapsed)
     }
 
-    func takeDeviceGroups() -> [(parentId: String?, groups: [DeviceGroup])] {
-        let prefix = "groups."
-        var taken: [(parentId: String?, groups: [DeviceGroup])] = []
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
-            let parent = String(key.dropFirst(prefix.count))
-            if let data = defaults.data(forKey: key), let groups = try? JSONDecoder().decode([DeviceGroup].self, from: data) {
-                taken.append((parent == "root" ? nil : parent, groups))
-            }
-            defaults.removeObject(forKey: key)
+    func groups(in parentId: String?) -> [TileGroup] {
+        guard let data = defaults.data(forKey: "groups.\(parentId ?? "root")") else { return [] }
+        return (try? JSONDecoder().decode([TileGroup].self, from: data)) ?? []
+    }
+
+    func setGroups(_ groups: [TileGroup], in parentId: String?) {
+        write("groups.\(parentId ?? "root")", try? JSONEncoder().encode(groups.filter { !$0.members.isEmpty }))
+    }
+
+    func group(of memberId: String, in parentId: String?) -> TileGroup? {
+        groups(in: parentId).first { $0.members.contains(memberId) }
+    }
+
+    func addToGroup(_ memberId: String, groupId: String, in parentId: String?) {
+        var groups = groups(in: parentId).map { group in
+            var trimmed = group
+            trimmed.members.removeAll { $0 == memberId }
+            return trimmed
         }
-        return taken
+        guard let index = groups.firstIndex(where: { $0.id == groupId }) else { return }
+        groups[index].members.append(memberId)
+        setGroups(groups, in: parentId)
+    }
+
+    func createGroup(_ title: String, isFolders: Bool, with memberId: String, in parentId: String?) {
+        var groups = groups(in: parentId).map { group in
+            var trimmed = group
+            trimmed.members.removeAll { $0 == memberId }
+            return trimmed
+        }
+        groups.append(TileGroup(id: UUID().uuidString, title: title, isFolders: isFolders, members: [memberId]))
+        setGroups(groups, in: parentId)
+    }
+
+    func removeFromGroup(_ memberId: String, in parentId: String?) {
+        setGroups(groups(in: parentId).map { group in
+            var trimmed = group
+            trimmed.members.removeAll { $0 == memberId }
+            return trimmed
+        }, in: parentId)
+    }
+
+    func renameGroup(_ groupId: String, to title: String, in parentId: String?) {
+        setGroups(groups(in: parentId).map { group in
+            var renamed = group
+            if renamed.id == groupId {
+                renamed.title = title
+            }
+            return renamed
+        }, in: parentId)
+    }
+
+    func ungroup(_ groupId: String, in parentId: String?) {
+        setGroups(groups(in: parentId).filter { $0.id != groupId }, in: parentId)
     }
 
     var navPlacement: NavPlacement? {

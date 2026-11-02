@@ -44,6 +44,10 @@ export function creationDate(identifier) {
     return new Date(milliseconds)
 }
 
+export function timestampNow() {
+    return new Date().toISOString()
+}
+
 export function timestampMilliseconds(text) {
     return Date.parse(text)
 }
@@ -517,14 +521,6 @@ export function mergeNotebook(first, second) {
     return mergeElement(first, second)
 }
 
-export function mergeGroup(first, second) {
-    return mergeElement(first, second)
-}
-
-export function groupPath(groupId) {
-    return `groups/${groupId}.json`
-}
-
 export function notebookPath(notebookId) {
     return `notebooks/${notebookId}/notebook.json`
 }
@@ -553,7 +549,6 @@ export function encodePage(page) {
         `  "device": ${canonical(page.device)},`,
         `  "extent": ${canonical(page.extent)},`,
         ...optional("extent_updated"),
-        ...optional("group"),
         ...optional("icon"),
         `  "id": ${canonical(page.id)},`,
         `  "notebook": ${canonical(page.notebook)},`,
@@ -603,10 +598,6 @@ export function assetAtRepositoryPath(path) {
 }
 
 export function repositoryPathKind(path) {
-    const group = /^groups\/([^/]+)\.json$/.exec(path)
-    if (group) {
-        return { kind: "group", groupId: group[1] }
-    }
     const notebook = /^notebooks\/([^/]+)\/notebook\.json$/.exec(path)
     if (notebook) {
         return { kind: "notebook", notebookId: notebook[1] }

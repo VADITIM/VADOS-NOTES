@@ -96,7 +96,7 @@ struct GridScreen: View {
     }
 
     private var groups: [TileGroup] {
-        library.groups(in: notebookId)
+        preferences.groups(in: notebookId)
     }
 
     private func isGrouped(_ id: String) -> Bool {
@@ -544,7 +544,7 @@ struct GridScreen: View {
             }
         case .group(let groupId):
             if groupId != current.groupId {
-                library.addToGroup(current.id, groupId: groupId, in: notebookId)
+                preferences.addToGroup(current.id, groupId: groupId, in: notebookId)
             }
         case .slot, nil:
             if current.groupId != nil {
@@ -561,7 +561,7 @@ struct GridScreen: View {
 
     private func leaveGroup(_ current: TileDrag) {
         if current.groupId != nil {
-            library.removeFromGroup(current.id, in: notebookId)
+            preferences.removeFromGroup(current.id, in: notebookId)
         }
     }
 
@@ -586,7 +586,7 @@ struct GridScreen: View {
 
     private func toggleGroup(_ target: TileTarget, memberId: String) {
         if isGrouped(memberId) {
-            library.removeFromGroup(memberId, in: notebookId)
+            preferences.removeFromGroup(memberId, in: notebookId)
         } else {
             navigator.show(.pickGroup(target, parentId: notebookId))
         }
@@ -635,7 +635,7 @@ struct GridScreen: View {
             case "rename": navigator.show(.renameGroup(group.id, parentId: notebookId))
             case "ungroup":
                 openGroups.remove(group.id)
-                library.ungroup(group.id)
+                preferences.ungroup(group.id, in: notebookId)
             default: break
             }
         })

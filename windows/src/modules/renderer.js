@@ -1,7 +1,6 @@
 import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth, scaledElement, translatedElement } from "./model.js"
 import { importImage } from "./imports.js"
 import { markdownBlocks } from "./markdown.js"
-import { lineSyntaxTokens, syntaxTokens } from "./syntaxHighlighter.js"
 import { writingFont } from "./preferences.js"
 import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
@@ -17,6 +16,7 @@ export const minimumScale = 0.01
 export const maximumScale = 40
 export const panSlackShare = 0.45
 const layoutScale = 10
+const minimumTextHeightPerFontSize = 1.4
 
 export class Camera {
     constructor(scale = 3, offsetX = 0, offsetY = 0) {
@@ -161,87 +161,29 @@ export function fontMetrics(fontSizePixels) {
     measuringContext.font = `${fontSizePixels}px ${monoFamily}`
     const metrics = measuringContext.measureText("Hg")
     const ascent = metrics.fontBoundingBoxAscent ?? fontSizePixels * 1.12
-    const descent = metrics.fontBoundingBoxDescent ?? fontSizePixels * 0.361
-    return { ascent, descent, lineHeight: ascent + descent }
-}
-
-export function rowGap() {
-    return cellHeight / Math.max(1, Math.round(cellHeight / tokens.page.grid_spacing))
-}
-
-let unitMetrics = null
-
-function monoUnitMetrics() {
-    if (!unitMetrics || !unitMetrics.isLoaded) {
-        const measured = fontMetrics(100)
-        unitMetrics = { ascent: measured.ascent / 100, descent: measured.descent / 100, isLoaded: document.fonts?.check?.(`16px ${monoFamily}`) ?? true }
-    }
-    return unitMetrics
-}
-
-export function rhythmFontSize() {
-    const unit = monoUnitMetrics()
-    return (rowGap() / (unit.ascent + unit.descent)) * tokens.text.row_font_scale
-}
-
-function rhythmBaseline() {
-    return monoUnitMetrics().ascent * rhythmFontSize()
-}
-
-export function rowsFor(scale) {
-    return Math.max(1, Math.ceil(scale))
-}
-
-export function snappedTop(top) {
-    const lift = rhythmBaseline()
-    return Math.round((top + lift) / rowGap()) * rowGap() - lift
-}
-
-export function placedBox(box, extent, height) {
-    const width = Math.min(box.width, paperWidth(extent))
-    const clamped = { ...box, width, x: Math.min(paperWidth(extent) - width, Math.max(0, box.x)), y: Math.min(paperHeight(extent) - height, Math.max(0, box.y)) }
-    let top = snappedTop(clamped.y)
-    if (top < 0) {
-        top += rowGap()
-    }
-    if (top + height > paperHeight(extent) && top - rowGap() >= 0) {
-        top -= rowGap()
-    }
-    return { ...clamped, y: top }
-}
-
-export function fittedText(element, extent) {
-    if (element.type !== "text" || !element.box) {
-        return element
-    }
-    const height = textRect(element)?.height ?? rowGap()
-    return { ...element, font_size: rhythmFontSize(), box: placedBox(element.box, extent, height) }
+    const descent = metrics.fontBoundingBoxDescent ?? fontSizePixels * 0.36
+    return { ascent, descent, lineHeight: (ascent + descent) * tokens.text.line_height }
 }
 
 const indentCharacters = 3
 const markerGapCharacters = 1
 
-export function isMonoRun(style, isInCodeBlock) {
-    return Boolean(style.isCode) || isInCodeBlock || writingFont() === "Space Mono"
+function runFont(style, sizePixels) {
+    return `${style.isItalic ? "italic " : ""}${style.isBold ? "700" : "400"} ${sizePixels}px ${style.isCode ? monoFamily : writingFamily()}`
 }
 
-export function runFont(style, sizePixels, isInCodeBlock = false) {
-    const family = isMonoRun(style, isInCodeBlock) ? monoFamily : writingFamily()
-    return `${style.isItalic ? "italic " : ""}${style.isBold ? "700" : "400"} ${sizePixels}px ${family}`
-}
-
-function measure(text, style, sizePixels, isInCodeBlock) {
-    measuringContext.font = runFont(style, sizePixels, isInCodeBlock)
+function measure(text, style, sizePixels) {
+    measuringContext.font = runFont(style, sizePixels)
     return measuringContext.measureText(text).width
 }
 
 const plainRunStyle = { isBold: false, isItalic: false, isCode: false, isStruck: false, isLink: false }
 
-function wrapRuns(runs, sizePixels, startX, widthPixels, isInCodeBlock) {
+function wrapRuns(runs, sizePixels, startX, widthPixels) {
     const lines = [[]]
     let x = startX
     const place = (text, style) => {
-        const width = measure(text, style, sizePixels, isInCodeBlock)
+        const width = measure(text, style, sizePixels)
         const line = lines[lines.length - 1]
         const last = line[line.length - 1]
         if (last && last.style === style && last.x + last.width === x) {
@@ -254,7 +196,7 @@ function wrapRuns(runs, sizePixels, startX, widthPixels, isInCodeBlock) {
     }
     const newLine = () => {
         const line = lines[lines.length - 1]
-        while (line.length && /^\s+$/.test(line[line.length - 1].text) && !isInCodeBlock) {
+        while (line.length && /^\s+$/.test(line[line.length - 1].text)) {
             line.pop()
         }
         lines.push([])
@@ -266,9 +208,9 @@ function wrapRuns(runs, sizePixels, startX, widthPixels, isInCodeBlock) {
                 continue
             }
             const isSpace = /^\s+$/.test(piece)
-            const width = measure(piece, run.style, sizePixels, isInCodeBlock)
+            const width = measure(piece, run.style, sizePixels)
             const isLineEmpty = lines[lines.length - 1].length === 0
-            if (isSpace && isLineEmpty && !isInCodeBlock) {
+            if (isSpace && isLineEmpty) {
                 continue
             }
             if (x + width <= startX + widthPixels || isSpace) {
@@ -284,7 +226,7 @@ function wrapRuns(runs, sizePixels, startX, widthPixels, isInCodeBlock) {
             }
             let chunk = ""
             for (const character of piece) {
-                if (chunk && x + measure(chunk + character, run.style, sizePixels, isInCodeBlock) > startX + widthPixels) {
+                if (chunk && x + measure(chunk + character, run.style, sizePixels) > startX + widthPixels) {
                     place(chunk, run.style)
                     newLine()
                     chunk = ""
@@ -297,53 +239,8 @@ function wrapRuns(runs, sizePixels, startX, widthPixels, isInCodeBlock) {
     return lines
 }
 
-function splitByTokens(runs, tokensOf) {
-    const result = []
-    for (const run of runs) {
-        const tokens = tokensOf(run)
-        if (!tokens.length) {
-            result.push(run)
-            continue
-        }
-        let position = 0
-        for (const token of tokens) {
-            if (token.start > position) {
-                result.push({ text: run.text.slice(position, token.start), style: run.style })
-            }
-            result.push({ text: run.text.slice(token.start, token.end), style: { ...run.style, syntaxKind: token.kind } })
-            position = token.end
-        }
-        if (position < run.text.length) {
-            result.push({ text: run.text.slice(position), style: run.style })
-        }
-    }
-    return result
-}
-
-function codeBlockTokens(blocks) {
-    const result = blocks.map(() => [])
-    let start = 0
-    while (start < blocks.length) {
-        const language = blocks[start].kind === "code" ? blocks[start].language : null
-        if (!language) {
-            start += 1
-            continue
-        }
-        let end = start
-        while (end < blocks.length && blocks[end].kind === "code" && blocks[end].language === language) {
-            end += 1
-        }
-        const lines = blocks.slice(start, end).map((block) => block.runs.map((run) => run.text).join(""))
-        lineSyntaxTokens(lines, language).forEach((tokens, index) => {
-            result[start + index] = tokens
-        })
-        start = end
-    }
-    return result
-}
-
 export function textLayout(element) {
-    const fontSize = rhythmFontSize()
+    const fontSize = element.font_size ?? tokens.text.font_size
     const width = element.box?.width ?? tokens.text.box_width
     const content = element.content ?? ""
     const key = `${writingFont()}|${fontSize}|${width}|${content}`
@@ -355,42 +252,38 @@ export function textLayout(element) {
     let top = 0
     const widthPixels = width * layoutScale
     const blocks = content.length ? markdownBlocks(content) : []
-    const blockTokens = codeBlockTokens(blocks)
-    const lift = tokens.text.baseline_lift
-    blocks.forEach((block, blockIndex) => {
-        const isInCodeBlock = block.kind === "code"
+    for (const block of blocks) {
         const sizePixels = fontSize * block.scale * layoutScale
-        const rows = rowsFor(block.scale)
-        const lineHeight = rowGap() * rows
-        const characterWidth = measure("0", plainRunStyle, sizePixels, true)
+        const metrics = fontMetrics(sizePixels)
+        const characterWidth = measure("0", plainRunStyle, sizePixels)
         const startX = block.indent * indentCharacters * characterWidth
-        const runs = isInCodeBlock
-            ? splitByTokens(block.runs, () => blockTokens[blockIndex])
-            : splitByTokens(block.runs, (run) => (run.style.isCode && run.style.codeLanguage ? syntaxTokens(run.text, run.style.codeLanguage) : []))
-        const wrapped = block.kind === "rule" ? [[]] : wrapRuns(runs, sizePixels, startX, Math.max(characterWidth, widthPixels - startX), isInCodeBlock)
-        const baseline = monoUnitMetrics().ascent * fontSize - lift + rowGap() * (rows - 1)
+        const wrapped = block.kind === "rule" ? [[]] : wrapRuns(block.runs, sizePixels, startX, Math.max(characterWidth, widthPixels - startX))
         wrapped.forEach((segments, index) => {
             lines.push({
-                top,
-                height: lineHeight,
-                baseline,
+                top: top / layoutScale,
+                height: metrics.lineHeight / layoutScale,
+                descent: metrics.descent / layoutScale,
                 fontSize: fontSize * block.scale,
                 kind: block.kind,
                 isFirst: index === 0,
                 isChecked: Boolean(block.isChecked),
-                marker: index === 0 && block.marker ? { text: block.marker, x: (startX - (Array.from(block.marker).length + markerGapCharacters) * characterWidth) / layoutScale } : null,
+                marker: index === 0 && block.marker ? { text: block.marker, x: (startX - (block.marker.length + markerGapCharacters) * characterWidth) / layoutScale } : null,
                 quoteX: block.kind === "quote" ? (characterWidth * 0.8) / layoutScale : null,
                 segments: segments.map((segment) => ({ text: segment.text, style: segment.style, x: segment.x / layoutScale, width: segment.width / layoutScale })),
             })
-            top += lineHeight
+            top += metrics.lineHeight
         })
-    })
-    const layout = { lines, fontSize, height: top }
+    }
+    const layout = { lines, fontSize, height: top / layoutScale }
     if (layoutCache.size > 2000) {
         layoutCache.clear()
     }
     layoutCache.set(key, layout)
     return layout
+}
+
+export function lineHeightOf(fontSize) {
+    return fontMetrics(fontSize * layoutScale).lineHeight / layoutScale
 }
 
 export function textRect(element) {
@@ -400,9 +293,9 @@ export function textRect(element) {
     const layout = textLayout(element)
     return {
         x: element.box.x,
-        y: snappedTop(element.box.y),
+        y: element.box.y,
         width: element.box.width,
-        height: Math.max(layout.height, rowGap()),
+        height: Math.max(layout.height, (element.font_size ?? tokens.text.font_size) * minimumTextHeightPerFontSize),
     }
 }
 
@@ -419,9 +312,10 @@ function drawGuides(context, visible, camera, colors) {
         context.moveTo(x, visible.minimumY)
         context.lineTo(x, visible.maximumY)
     }
-    for (let row = Math.floor(visible.minimumY / rowGap()); row * rowGap() <= visible.maximumY; row += 1) {
-        context.moveTo(visible.minimumX, row * rowGap())
-        context.lineTo(visible.maximumX, row * rowGap())
+    const rowSpacing = cellHeight / Math.max(1, Math.round(cellHeight / spacing))
+    for (let row = Math.floor(visible.minimumY / rowSpacing); row * rowSpacing <= visible.maximumY; row += 1) {
+        context.moveTo(visible.minimumX, row * rowSpacing)
+        context.lineTo(visible.maximumX, row * rowSpacing)
     }
     context.stroke()
     context.restore()
@@ -485,10 +379,6 @@ function drawStroke(context, element, visible, cache, style, isOpaque = false) {
     context.stroke(cached.path)
 }
 
-export function syntaxColors(style) {
-    return style === "light" ? tokens.syntax.light : tokens.syntax.dark
-}
-
 function drawText(context, element, camera, pixelRatio, style) {
     if (!element.content || !element.box) {
         return
@@ -496,9 +386,9 @@ function drawText(context, element, camera, pixelRatio, style) {
     const layout = textLayout(element)
     const scale = camera.scale * pixelRatio
     const color = inkOnPaper(element.color ?? tokens.text.color, style)
-    const syntax = syntaxColors(style)
+    const faint = withAlpha(color, 0.14)
     const left = (element.box.x * camera.scale + camera.offsetX) * pixelRatio
-    const top = (snappedTop(element.box.y) * camera.scale + camera.offsetY) * pixelRatio
+    const top = (element.box.y * camera.scale + camera.offsetY) * pixelRatio
     const boxWidth = element.box.width * scale
     context.save()
     context.setTransform(1, 0, 0, 1, 0, 0)
@@ -506,19 +396,16 @@ function drawText(context, element, camera, pixelRatio, style) {
     for (const line of layout.lines) {
         const lineTop = top + line.top * scale
         const lineHeight = line.height * scale
-        const baseline = lineTop + line.baseline * scale
+        const baseline = top + (line.top + line.height - line.descent) * scale
         const sizePixels = line.fontSize * scale
-        const isInCodeBlock = line.kind === "code"
         context.globalAlpha = line.isChecked ? 0.55 : 1
-        if (isInCodeBlock) {
-            context.fillStyle = syntax.background
+        if (line.kind === "code") {
+            context.fillStyle = faint
             context.fillRect(left, lineTop, boxWidth, lineHeight)
         }
         if (line.kind === "rule") {
-            const thickness = Math.max(0.15, line.fontSize * 0.04) * scale
             context.fillStyle = withAlpha(color, 0.45)
-            context.fillRect(left, lineTop + lineHeight / 2 - thickness / 2, boxWidth, thickness)
-            continue
+            context.fillRect(left, lineTop + lineHeight / 2 - Math.max(1, scale * 0.15) / 2, boxWidth, Math.max(1, scale * 0.15))
         }
         if (line.quoteX !== null) {
             context.fillStyle = withAlpha(color, 0.5)
@@ -532,24 +419,18 @@ function drawText(context, element, camera, pixelRatio, style) {
         for (const segment of line.segments) {
             const x = left + segment.x * scale
             const width = segment.width * scale
-            if (segment.style.isCode && !isInCodeBlock) {
-                context.fillStyle = syntax.background
-                context.fillRect(x, lineTop, width, lineHeight)
+            if (segment.style.isCode && line.kind !== "code") {
+                context.fillStyle = faint
+                context.fillRect(x, lineTop + lineHeight * 0.08, width, lineHeight * 0.84)
             }
-            const ink = segment.style.syntaxKind ? syntax[segment.style.syntaxKind] : color
-            context.font = runFont(segment.style, sizePixels, isInCodeBlock)
-            context.fillStyle = ink
+            context.font = runFont(segment.style, sizePixels)
+            context.fillStyle = color
             context.fillText(segment.text, x, baseline)
-            const thickness = Math.max(1, sizePixels * 0.06)
+            const thickness = Math.max(1, sizePixels * 0.07)
             if (segment.style.isStruck) {
                 context.fillRect(x, baseline - sizePixels * 0.3, width, thickness)
             }
-            if (segment.style.isDashedUnderlined) {
-                const dash = Math.max(2, sizePixels * 0.3)
-                for (let start = x; start < x + width; start += dash * 2) {
-                    context.fillRect(start, baseline + sizePixels * 0.14, Math.min(dash, x + width - start), thickness)
-                }
-            } else if (segment.style.isUnderlined || segment.style.isLink) {
+            if (segment.style.isLink) {
                 context.fillRect(x, baseline + sizePixels * 0.14, width, thickness)
             }
         }

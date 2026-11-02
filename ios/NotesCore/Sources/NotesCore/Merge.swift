@@ -39,8 +39,7 @@ public enum Merge {
             title: newer.title,
             color: newer.color,
             icon: newer.icon,
-            order: newer.order,
-            group: newer.group
+            order: newer.order
         )
     }
 
@@ -58,13 +57,6 @@ public enum Merge {
     }
 
     public static func notebook(_ first: Notebook, _ second: Notebook) -> Notebook {
-        if first.deleted != second.deleted {
-            return first.deleted ? first : second
-        }
-        return isNewer(first.updated, first.device, than: second.updated, second.device) ? first : second
-    }
-
-    public static func group(_ first: GroupRecord, _ second: GroupRecord) -> GroupRecord {
         if first.deleted != second.deleted {
             return first.deleted ? first : second
         }

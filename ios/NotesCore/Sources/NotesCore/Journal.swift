@@ -4,7 +4,6 @@ public enum Change: Codable, Equatable, Sendable {
     case notebook(Notebook)
     case page(PageHeader)
     case element(pageId: String, element: Element)
-    case group(GroupRecord)
 
     public func path(notebookOf pageNotebook: (String) -> String?) -> String? {
         switch self {
@@ -15,8 +14,6 @@ public enum Change: Codable, Equatable, Sendable {
         case .element(let pageId, _):
             guard let notebookId = pageNotebook(pageId) else { return nil }
             return RepositoryPath.page(notebook: notebookId, page: pageId)
-        case .group(let group):
-            return RepositoryPath.group(group.id)
         }
     }
 }
