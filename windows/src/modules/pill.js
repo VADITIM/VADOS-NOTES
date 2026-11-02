@@ -8,6 +8,13 @@ export function spring(name) {
     if (cached) {
         return cached
     }
+    const { values, milliseconds } = springSamples(name)
+    const result = { easing: `linear(${values.map((value) => value.toFixed(4)).join(", ")})`, milliseconds }
+    springCache.set(name, result)
+    return result
+}
+
+export function springSamples(name) {
     const { response, damping_fraction: damping } = tokens.motion.springs[name]
     const stiffness = Math.pow((2 * Math.PI) / response, 2)
     const friction = (4 * Math.PI * damping) / response
@@ -17,27 +24,30 @@ export function spring(name) {
     let velocity = 0
     let time = 0
     let restTime = 0
-    while (time < 3) {
+    while (time < 3 && restTime <= 0.03) {
         values.push(position)
         const force = -stiffness * (position - 1) - friction * velocity
         velocity += force * step
         position += velocity * step
         time += step
-        if (Math.abs(position - 1) < 0.001 && Math.abs(velocity) < 0.01) {
-            restTime += step
-            if (restTime > 0.03) {
-                break
-            }
-        } else {
-            restTime = 0
-        }
+        restTime = Math.abs(position - 1) < 0.001 && Math.abs(velocity) < 0.01 ? restTime + step : 0
     }
     values.push(1)
     const stride = Math.max(1, Math.floor(values.length / 80))
-    const sampled = values.filter((value, index) => index % stride === 0 || index === values.length - 1)
-    const result = { easing: `linear(${sampled.map((value) => value.toFixed(4)).join(", ")})`, milliseconds: Math.round(time * 1000) }
-    springCache.set(name, result)
-    return result
+    return { values: values.filter((value, index) => index % stride === 0 || index === values.length - 1), milliseconds: Math.round(time * 1000) }
+}
+
+export function popScale(element, target, { name, delay = 0 }) {
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform === "none" ? undefined : getComputedStyle(element).transform)
+    const from = element.dataset.popScale === undefined ? 1 - target : Math.hypot(matrix.a, matrix.b)
+    element.getAnimations().forEach((running) => running.cancel())
+    element.dataset.popScale = String(target)
+    const { values, milliseconds } = springSamples(name)
+    const frames = values.map((value) => {
+        const scale = from + (target - from) * value
+        return { transform: `scale(${Math.max(0.001, scale)})`, opacity: Math.min(1, Math.max(0, scale)) }
+    })
+    return element.animate(frames, { duration: milliseconds, delay, fill: "both" })
 }
 
 export function springAnimate(element, keyframes, name, fill = "none") {
@@ -203,7 +213,7 @@ export class PillMotion {
         this.after(isMidLeave ? duration("navigation_spread") / 2 : enterMilliseconds, () => this.setElements(true))
     }
 
-    leave(finish = () => {}) {
+    leave(finish = () => {}, { keepsShape = false } = {}) {
         if (!this.isPresent) {
             finish()
             return
@@ -213,9 +223,14 @@ export class PillMotion {
         this.setElements(false)
         const elementsGone = duration("navigation_leave_element")
         const narrowed = elementsGone + (duration("navigation_leave_spread") * 3) / 4
-        this.animateValue("shellSpread", 0, duration("navigation_leave_spread"), "power_three_in_out", elementsGone)
-        this.animateValue("shellScale", 0, duration("navigation_leave_pop"), "power_two_in", narrowed)
-        this.after(narrowed + duration("navigation_leave_pop"), () => {
+        const gone = narrowed + duration("navigation_leave_pop")
+        if (keepsShape) {
+            this.animateValue("shellScale", 0, gone - elementsGone, "power_two_in", elementsGone)
+        } else {
+            this.animateValue("shellSpread", 0, duration("navigation_leave_spread"), "power_three_in_out", elementsGone)
+            this.animateValue("shellScale", 0, duration("navigation_leave_pop"), "power_two_in", narrowed)
+        }
+        this.after(gone, () => {
             this.isPresent = false
             this.onFrame()
             finish()

@@ -11,6 +11,7 @@ const TOKENS: &str = include_str!("../../../shared/tokens.json");
 const BACKGROUND_ART: &str = include_str!("../../../ios/VadosNotes/Resources/background.txt");
 const STORE_DIRECTORY: &str = "notes";
 const NOTEBOOKS_DIRECTORY: &str = "notebooks";
+const GROUPS_DIRECTORY: &str = "groups";
 const SYNCED_DIRECTORY: &str = "synced";
 const SYNC_STATE_FILE: &str = "sync-state.json";
 const ASSETS_DIRECTORY: &str = "assets";
@@ -41,6 +42,7 @@ fn load_files(app: AppHandle, synced: Option<bool>) -> Result<Vec<StoredFile>, S
     let root = if synced.unwrap_or(false) { store.join(SYNCED_DIRECTORY) } else { store };
     let mut files = Vec::new();
     collect(&root, &root.join(NOTEBOOKS_DIRECTORY), &mut files)?;
+    collect(&root, &root.join(GROUPS_DIRECTORY), &mut files)?;
     Ok(files)
 }
 
@@ -212,8 +214,9 @@ fn checked_relative_path(path: &str) -> Result<PathBuf, String> {
     let is_plain = relative
         .components()
         .all(|component| matches!(component, Component::Normal(_)));
-    let is_working = relative.starts_with(NOTEBOOKS_DIRECTORY);
-    let is_synced = relative.starts_with(Path::new(SYNCED_DIRECTORY).join(NOTEBOOKS_DIRECTORY));
+    let is_working = relative.starts_with(NOTEBOOKS_DIRECTORY) || relative.starts_with(GROUPS_DIRECTORY);
+    let synced = Path::new(SYNCED_DIRECTORY);
+    let is_synced = relative.starts_with(synced.join(NOTEBOOKS_DIRECTORY)) || relative.starts_with(synced.join(GROUPS_DIRECTORY));
     let is_state = relative == Path::new(SYNCED_DIRECTORY).join(SYNC_STATE_FILE);
     let is_json = relative.extension().is_some_and(|extension| extension == "json");
     if is_plain && is_json && (is_working || is_synced || is_state) {
