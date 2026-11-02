@@ -32,6 +32,10 @@ targets:
           - SpaceMono-Regular.ttf
           - SpaceMono-Bold.ttf
           - Audiowide-Regular.ttf
+          - GeneralSans-Regular.otf
+          - GeneralSans-Bold.otf
+          - GeneralSans-Italic.otf
+          - GeneralSans-BoldItalic.otf
         UILaunchScreen:
           UIColorName: LaunchGround
         UIApplicationSceneManifest:

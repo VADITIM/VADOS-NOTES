@@ -187,6 +187,24 @@ enum MarkdownText {
         UIFont(name: isBold ? Typography.monoBoldName : Typography.monoName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: isBold ? .bold : .regular)
     }
 
+    static func isMono(_ style: MarkdownStyle, isInCodeBlock: Bool) -> Bool {
+        style.isCode || isInCodeBlock || Preferences.writingFont == .mono
+    }
+
+    static func runFont(_ size: CGFloat, style: MarkdownStyle, isInCodeBlock: Bool) -> UIFont {
+        guard !isMono(style, isInCodeBlock: isInCodeBlock) else {
+            return font(size, isBold: style.isBold)
+        }
+        let name: String
+        switch (style.isBold, style.isItalic) {
+        case (true, true): name = Typography.sansBoldItalicName
+        case (true, false): name = Typography.sansBoldName
+        case (false, true): name = Typography.sansItalicName
+        case (false, false): name = Typography.sansName
+        }
+        return UIFont(name: name, size: size) ?? .systemFont(ofSize: size, weight: style.isBold ? .bold : .regular)
+    }
+
     private static func attributed(_ block: MarkdownBlock, size: CGFloat, rows: Int, indent: CGFloat, color: UIColor, paperStyle: PaperStyle, codeTokens: [CodeHighlighting.LineToken]) -> NSAttributedString {
         let paragraph = TextRhythm.paragraph(rows: rows, zoom: 1)
         paragraph.firstLineHeadIndent = indent
@@ -208,14 +226,14 @@ enum MarkdownText {
     }
 
     static func runAttributes(_ style: MarkdownStyle, size: CGFloat, rows: Int, zoom: CGFloat, color: UIColor, paperStyle: PaperStyle, isInCodeBlock: Bool) -> [NSAttributedString.Key: Any] {
-        let runFont = font(size * zoom, isBold: style.isBold)
+        let runFont = runFont(size * zoom, style: style, isInCodeBlock: isInCodeBlock)
         var attributes: [NSAttributedString.Key: Any] = [
             .font: runFont,
             .foregroundColor: color,
             .paragraphStyle: TextRhythm.paragraph(rows: rows, zoom: zoom),
             .baselineOffset: TextRhythm.baselineOffset(font: runFont, rows: rows, zoom: zoom),
         ]
-        if style.isItalic {
+        if style.isItalic && isMono(style, isInCodeBlock: isInCodeBlock) {
             attributes[.obliqueness] = 0.2
         }
         if style.isCode && !isInCodeBlock {
@@ -257,7 +275,7 @@ enum MarkdownText {
         let fontSize = TextRhythm.fontSize
         let width = CGFloat(element.box?.width ?? Tokens.shared.text.boxWidth)
         let content = element.content ?? ""
-        let key = "\(fontSize)|\(width)|\(color.description)|\(paperStyle.rawValue)|\(content)"
+        let key = "\(Preferences.writingFont.rawValue)|\(fontSize)|\(width)|\(color.description)|\(paperStyle.rawValue)|\(content)"
         if let cached = cache[key] {
             return cached
         }
@@ -310,7 +328,7 @@ enum MarkdownText {
             if let marker = laid.block.marker {
                 let markerX = rect.minX + laid.indent - CGFloat(marker.count + 1) * laid.characterWidth
                 let markerColor = laid.block.isChecked ? color.withAlphaComponent(0.55) : color
-                (marker as NSString).draw(at: CGPoint(x: markerX, y: rect.minY), withAttributes: [.font: font(laid.fontSize, isBold: true), .foregroundColor: markerColor])
+                (marker as NSString).draw(at: CGPoint(x: markerX, y: rect.minY), withAttributes: [.font: runFont(laid.fontSize, style: MarkdownStyle(isBold: true), isInCodeBlock: false), .foregroundColor: markerColor])
             }
             laid.text.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
         }

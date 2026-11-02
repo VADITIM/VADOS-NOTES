@@ -201,6 +201,17 @@ export function setTextFontSize(size) {
     write("textFontSize", clamp(size, tokens.text.font_size_range))
 }
 
+export function writingFont() {
+    const font = readSetting("writingFont", tokens.text.font)
+    return tokens.text.fonts.includes(font) ? font : tokens.text.font
+}
+
+export function setWritingFont(font) {
+    if (tokens.text.fonts.includes(font)) {
+        write("writingFont", font)
+    }
+}
+
 export function toolOrder() {
     const stored = readSetting("toolOrder", [])
     const known = Array.isArray(stored) ? stored.filter((tool) => allTools.includes(tool)) : []

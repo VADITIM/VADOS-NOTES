@@ -5,6 +5,10 @@ enum Typography {
     static let monoName = "SpaceMono-Regular"
     static let monoBoldName = "SpaceMono-Bold"
     static let headingName = "Audiowide-Regular"
+    static let sansName = "GeneralSans-Regular"
+    static let sansBoldName = "GeneralSans-Bold"
+    static let sansItalicName = "GeneralSans-Italic"
+    static let sansBoldItalicName = "GeneralSans-BoldItalic"
 
     static func mono(_ size: CGFloat) -> Font {
         .custom(monoName, fixedSize: size)

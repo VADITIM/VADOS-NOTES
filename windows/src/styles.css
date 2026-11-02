@@ -16,6 +16,34 @@
     font-weight: 400;
 }
 
+@font-face {
+    font-family: "General Sans";
+    src: url("fonts/GeneralSans-Regular.otf") format("opentype");
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "General Sans";
+    src: url("fonts/GeneralSans-Italic.otf") format("opentype");
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: "General Sans";
+    src: url("fonts/GeneralSans-Bold.otf") format("opentype");
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "General Sans";
+    src: url("fonts/GeneralSans-BoldItalic.otf") format("opentype");
+    font-weight: 700;
+    font-style: italic;
+}
+
 :root {
     color-scheme: dark;
     --palette-ground: #0E0E0E;
@@ -713,8 +741,12 @@ svg.squircle ~ * {
     width: min(560px, 100%);
 }
 
+.sheet-host.is-settings .sheet-frame {
+    padding: 0;
+}
+
 .sheet-host.is-settings .sheet-frame > * {
-    width: min(820px, 100%);
+    width: 100%;
 }
 
 .sheet-panel {
@@ -889,13 +921,17 @@ svg.squircle ~ * {
 }
 
 .settings-sheet {
-    max-height: calc(100vh - 48px);
+    height: 100vh;
     overflow-y: auto;
     scrollbar-width: none;
-    padding-bottom: 24px;
+    background: var(--palette-ground);
 }
 
 .settings-panels {
+    width: 75vw;
+    min-height: 100%;
+    margin: 0 auto;
+    padding: 24px 0;
     display: flex;
     flex-direction: column;
     gap: 18px;

@@ -1,9 +1,15 @@
 import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth, scaledElement, translatedElement } from "./model.js"
 import { importImage } from "./imports.js"
 import { markdownBlocks } from "./markdown.js"
+import { writingFont } from "./preferences.js"
 import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
 export const monoFamily = "\"Space Mono\""
+const writingFamilies = { Mono: monoFamily, Sans: "\"General Sans\", \"Space Mono\"" }
+
+export function writingFamily() {
+    return writingFamilies[writingFont()] ?? monoFamily
+}
 export const minimumScale = 0.01
 export const maximumScale = 40
 export const panSlackShare = 0.45
@@ -161,7 +167,7 @@ const indentCharacters = 3
 const markerGapCharacters = 1
 
 function runFont(style, sizePixels) {
-    return `${style.isItalic ? "italic " : ""}${style.isBold ? "700" : "400"} ${sizePixels}px ${monoFamily}`
+    return `${style.isItalic ? "italic " : ""}${style.isBold ? "700" : "400"} ${sizePixels}px ${style.isCode ? monoFamily : writingFamily()}`
 }
 
 function measure(text, style, sizePixels) {
@@ -235,7 +241,7 @@ export function textLayout(element) {
     const fontSize = element.font_size ?? tokens.text.font_size
     const width = element.box?.width ?? tokens.text.box_width
     const content = element.content ?? ""
-    const key = `${fontSize}|${width}|${content}`
+    const key = `${writingFont()}|${fontSize}|${width}|${content}`
     const cached = layoutCache.get(key)
     if (cached) {
         return cached

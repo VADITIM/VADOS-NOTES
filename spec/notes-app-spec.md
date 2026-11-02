@@ -465,3 +465,5 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Columns and rows can be removed again: the page menu splits each add row into add and an icon-only remove, which removes the cell under the hold point. The extent carries its own clock, `extent_updated`, so a removal survives sync.
 - The hold menus have no container: only their rows, with dividers centred in their gap.
 - Tapping a lasso selection opens a selection menu: Cut and Copy as icons on top, then Duplicate, Colour and Equal width. Paste sits at the top of the page menu and centres the clipboard on the hold point.
+- Settings fill the screen: one container covers the whole window and the modules sit in a column 75% of its width.
+- The writing font is a setting: Mono (Space Mono, the default) or Sans (General Sans). Code blocks and inline code are always Mono. The choice is per device and is not synced; the stored Markdown does not change.

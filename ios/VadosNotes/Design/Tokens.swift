@@ -99,6 +99,7 @@ struct Tokens: Decodable {
 
     struct TextTokens: Decodable {
         let font: String
+        let fonts: [String]
         let fontSize: Double
         let lineHeight: Double
         let boxWidth: Double

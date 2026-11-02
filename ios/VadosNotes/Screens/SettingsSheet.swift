@@ -103,6 +103,7 @@ struct SettingsSheet: View {
         case transfer
         case paper
         case pen
+        case text
         case sync
         case delete
     }
@@ -125,6 +126,7 @@ struct SettingsSheet: View {
     private static let asciiOpacityRange = Tokens.shared.background.opacityRange
     private static let smoothingRange = Tokens.shared.ink.smoothingRange
     private static let armedSeconds = 2.4
+    private static let contentShare: CGFloat = 0.75
 
     private var pageContext: (notebookId: String, pageId: String)? {
         if case .page(let notebookId, let pageId) = navigator.route {
@@ -156,6 +158,8 @@ struct SettingsSheet: View {
         GeometryReader { proxy in
             ScrollView {
                 panels
+                    .frame(width: proxy.size.width * Self.contentShare)
+                    .padding(.top, 24)
                     .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
                     .background(Color.clear.contentShape(Rectangle()).onTapGesture { navigator.show(nil) })
@@ -251,6 +255,8 @@ struct SettingsSheet: View {
                 .modifier(popped(.paper))
             penModule
                 .modifier(popped(.pen))
+            textModule
+                .modifier(popped(.text))
         }
     }
 
@@ -332,6 +338,14 @@ struct SettingsSheet: View {
         SettingsModule(label: "Pen") {
             SettingsSlider(title: "Smoothing", share: Self.share(preferences.inkSmoothing, Self.smoothingRange), caption: String(format: "%.1f", preferences.inkSmoothing)) { share in
                 preferences.setInkSmoothing(Self.value(share, Self.smoothingRange))
+            }
+        }
+    }
+
+    private var textModule: some View {
+        SettingsModule(label: "Text", detail: "Code stays Mono") {
+            Segmented(options: Tokens.shared.text.fonts.compactMap(WritingFont.init(rawValue:)).map { SegmentOption(value: $0, title: $0.rawValue) }, selected: preferences.writingFont) { font in
+                preferences.setWritingFont(font)
             }
         }
     }

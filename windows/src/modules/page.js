@@ -18,7 +18,7 @@ import { cellContaining, clampBox } from "./model.js"
 import { duration, tween } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
-import { fontMetrics, lineHeightOf, monoFamily, textRect } from "./renderer.js"
+import { fontMetrics, lineHeightOf, textRect, writingFamily } from "./renderer.js"
 import { inkOnPaper, isLight, tokens } from "./tokens.js"
 
 const millimetresPerPoint = 0.35278
@@ -1022,7 +1022,7 @@ export class PageScreen {
         const lineHeight = metrics.lineHeight / layoutScale
         const color = inkOnPaper(session.element.color ?? tokens.text.color, preferences.paperStyle())
         const textarea = editor.textarea
-        textarea.style.fontFamily = monoFamily
+        textarea.style.fontFamily = writingFamily()
         textarea.style.fontSize = `${fontSize}px`
         textarea.style.lineHeight = `${lineHeight}px`
         textarea.style.color = color

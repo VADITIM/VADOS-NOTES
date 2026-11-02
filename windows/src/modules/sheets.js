@@ -408,7 +408,9 @@ function settingsSheet(app) {
         preferences.setInkSmoothing(rangeValue(share, smoothingRange))
         return preferences.inkSmoothing().toFixed(1)
     }))
-    const rightColumn = create("div", "settings-column", paperModule, penModule)
+    const fontToggle = segmented(tokens.text.fonts.map((font) => ({ value: font, title: font })), preferences.writingFont(), (font) => preferences.setWritingFont(font))
+    const textModule = settingsModule("Text", "Code stays Mono", fontToggle)
+    const rightColumn = create("div", "settings-column", paperModule, penModule, textModule)
 
     const settings = syncSettings()
     const owner = field({ placeholder: "Owner", value: settings.owner })
@@ -460,11 +462,17 @@ function settingsSheet(app) {
 
     const panels = create("div", "settings-panels", create("div", "settings-columns", leftColumn, rightColumn), syncModule, deleteButton)
     const sheet = create("div", "settings-sheet", panels)
+    sheet.addEventListener("pointerdown", (event) => {
+        if (event.target === sheet || event.target === panels) {
+            app.navigator.show(null)
+        }
+    })
     sheet.refresh = () => {
         renderSync()
         renderAscii(false)
         asciiToggle.select(preferences.showsAsciiBackground(), true)
         paperToggle.select(preferences.paperStyle(), true)
+        fontToggle.select(preferences.writingFont(), true)
     }
     sheet.unsubscribe = app.sync.subscribe(() => renderSync())
     return sheet

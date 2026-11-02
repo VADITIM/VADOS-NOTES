@@ -168,7 +168,7 @@ function noteTile(page, title, caption) {
         const ratio = paperWidth(current.extent) / paperHeight(current.extent)
         const fittedWidth = Math.min(width, height * ratio)
         const fittedHeight = fittedWidth / ratio
-        const key = `${current.id}|${current.updated}|${current.extent.cols}x${current.extent.rows}|${preferences.showsGuides()}|${preferences.showsDividers()}|${preferences.paperStyle()}|${fittedWidth}|${fittedHeight}|${tile.importRevision ?? 0}`
+        const key = `${current.id}|${current.updated}|${current.extent.cols}x${current.extent.rows}|${preferences.showsGuides()}|${preferences.showsDividers()}|${preferences.paperStyle()}|${preferences.writingFont()}|${fittedWidth}|${fittedHeight}|${tile.importRevision ?? 0}`
         if (key === renderedKey) {
             return
         }

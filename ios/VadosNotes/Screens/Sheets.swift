@@ -24,13 +24,13 @@ struct SheetHost: View {
 
     var body: some View {
         ZStack(alignment: request.isNaming ? .bottom : .top) {
-            Color.black.opacity(isBackdropShown ? 0.45 : 0)
+            (request == .settings ? Palette.ground : Color.black.opacity(0.45))
+                .opacity(isBackdropShown ? 1 : 0)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
             if request == .settings {
                 content
-                    .padding(.horizontal, 24)
-                    .padding(.top, insets.top + 24)
+                    .padding(.top, insets.top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if isShown {
                 if request.isNaming {
@@ -89,9 +89,7 @@ struct SheetHost: View {
                 return
             }
             guard request != .settings else {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
+                withAnimation(Motion.powerTwoIn(Motion.sheetDropMilliseconds)) {
                     isShown = false
                 }
                 return
