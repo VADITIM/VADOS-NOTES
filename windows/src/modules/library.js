@@ -3,6 +3,7 @@ import {
     cellCountAlong,
     cellHeight,
     cellRemoval,
+    cellSwap,
     cellWidth,
     decodeFile,
     encodeNotebook,
@@ -316,9 +317,9 @@ export class Library {
         if (columns !== page.extent.cols || rows !== page.extent.rows) {
             this.updatePage(pageId, { extent: { cols: columns, rows } })
         }
-        cells.slice(0, pdf.pages.length).forEach((cell, index) => {
-            const element = importElement(pdf.asset, index, pdf.pages[index], now, this.device, cell.row, cell.column)
-            element.order = firstOrder + index
+        cells.filter((cell) => cell.index < pdf.pages.length).forEach((cell, position) => {
+            const element = importElement(pdf.asset, cell.index, pdf.pages[cell.index], now, this.device, cell.row, cell.column)
+            element.order = firstOrder + position
             this.applyElement(pageId, element)
         })
     }
@@ -388,8 +389,33 @@ export class Library {
         if (!page || this.isReadOnly(pageId)) {
             return
         }
-        const extent = isColumns ? { cols: page.extent.cols * 2, rows: page.extent.rows } : { cols: page.extent.cols, rows: page.extent.rows * 2 }
+        const extent = isColumns ? { cols: page.extent.cols + 1, rows: page.extent.rows } : { cols: page.extent.cols, rows: page.extent.rows + 1 }
         this.updatePage(pageId, { extent })
+    }
+
+    swapCells(pageId, first, second) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId)) {
+            return
+        }
+        this.finishText()
+        const now = this.timestamp()
+        const moved = cellSwap(page.elements.filter((element) => !element.deleted), first, second, (element) => {
+            const bounds = elementBounds(element)
+            return bounds ? [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2] : null
+        })
+        if (!moved.length) {
+            return
+        }
+        const step = { before: [], after: [] }
+        for (const element of moved) {
+            const original = page.elements.find((candidate) => candidate.id === element.id)
+            const shifted = { ...element, updated: now, device: this.device }
+            this.applyElement(pageId, shifted)
+            step.before.push(original)
+            step.after.push(shifted)
+        }
+        this.record(step, pageId)
     }
 
     removeCell(pageId, isColumns, index) {

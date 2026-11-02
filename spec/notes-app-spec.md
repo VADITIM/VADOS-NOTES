@@ -26,9 +26,9 @@ A GoodNotes replacement for iPad and Windows. Ink is written on the iPad, typing
 
 - A page has no fixed size. Elements use one unbounded coordinate space.
 - Extent is expressed in whole A4 cells: `cols` and `rows`.
-- Expanding doubles one axis at a time: 1×1 → 2×1 → 2×2 → 4×2, and so on.
+- Expanding adds one column or one row at a time: 1×1 → 2×1 → 2×2 → 3×2, and so on.
 - Expansion only changes the visible extent and the cell boundary lines. No stored element moves.
-- Expansion is triggered by a button: "add column" or "add row" in the page menu doubles that axis.
+- Expansion is triggered by a button: "add column" or "add row" in the page menu adds one cell along that axis.
 - Beside each add button sits a remove button. It removes the one column or row under the hold point: elements whose centre lies in it are deleted, later columns or rows move back by one cell, and the axis shrinks by one. It is never below one cell, arms first like every destructive slot, and is one undo step.
 - All coordinates and lengths in a page file are millimetres. One A4 cell is 210 × 297, and cell (c, r) spans x ∈ [210c, 210(c+1)), y ∈ [297r, 297(r+1)).
 
@@ -336,7 +336,7 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - **Accept:** a page from iPad renders identically on Windows, including layer order.
 
 ### Phase 4: Infinite canvas and expansion
-- Extent in A4 cells with doubling expansion.
+- Extent in A4 cells, grown one column or row at a time.
 - Expansion trigger implemented per the open decision.
 - **Accept:** expanding 1×1 → 2×1 → 2×2 → 4×2 keeps all elements in place.
 
@@ -466,11 +466,14 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The hold menus have no container: only their rows, with dividers centred in their gap.
 - Tapping a lasso selection opens a selection menu: Cut and Copy as icons on top, then Duplicate, Colour and Equal width. Paste sits at the top of the page menu and centres the clipboard on the hold point.
 - Settings fill the screen: one container covers the whole window and the modules sit in a column 75% of its width.
-- The writing font is a setting: any font family installed on the device, with Space Mono (the default) and General Sans bundled first. The iPad can also add a font file. Code blocks and inline code are always Mono. The choice is per device and is not synced; the stored Markdown does not change.
+- The writing font is a setting: any font family installed on the device, with Space Mono (the default), General Sans and the VAD/OS handwriting font ("My Handwriting") bundled first. The iPad can also add a font file. Code blocks and inline code are always Mono. The choice is per device and is not synced; the stored Markdown does not change.
 - An imported PDF page fills its whole cell and behaves as the page itself: it cannot be selected or moved, and the grid and dividers draw over it.
 - Hold menus no longer dim the page behind them.
 - In code blocks, brackets close themselves, typing the closer steps over it, and Backspace between a pair removes both. On the iPad, Enter on a line of inline code turns it into a code block, and choosing a code language on an empty line opens one.
 - Marker strokes never stack: all markers on a page are drawn as one layer, so where two cross the colour stays the same.
 - The writing font is picked from a drop-down with a search field. The iPad drop-down also opens the system font picker, which lists fonts installed by profile or by font apps.
-- Note actions (Import, Export, Rename, Delete note) have their own module beside GitHub sync; the two share the bottom row half and half.
-- Import and Export open a full-screen view of the note as its grid of cells. Export: the selected cells become the pages of the PDF, one A4 page per cell, in reading order (row by row). Import: after choosing a PDF, the selected cells are where its pages go, page 1 in the first selected cell in reading order and so on; empty rows are offered below the note, and placing a page outside the current extent grows the note. Cells are selected by tapping, by dragging across them, or a whole row at once from its number.
+- GitHub sync sits under ASCII. Import and Export are modes of the View All view; Rename and Delete are in the note's hold menus.
+- A View All button left of Back (on a note) opens the note as its grid of cells beside a strip of its pages. View all mode lets any cell be dragged onto another to swap their contents; Export and Import are the other two modes of the same view.
+- Import and Export open a full-screen view of the note as its grid of cells. Export: the selected cells become the pages of the PDF, one A4 page per cell, in reading order (row by row) unless pages are carried to another order. Import: after choosing a PDF, the selected cells are where its pages go, page 1 in the first selected cell in reading order and so on; empty rows are offered below the note, and placing a page outside the current extent grows the note. Cells are selected by tapping, by dragging across them, or a whole row at once from its number.
+- The Import and Export view shows the PDF's pages on the left, top to bottom, and the note's cells on the right. Every placed cell and strip page shows its page number as x/N at the bottom right. A page can be dragged to another cell (swapping with a page already there), and a held page from the strip can be dropped into a cell. A Normal / Inverted setting at the top decides whether white PDF pages are inverted on dark paper.
+- Every colour wheel has a Copy colour button at its top right.

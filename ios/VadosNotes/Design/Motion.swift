@@ -27,6 +27,7 @@ enum Motion {
     static let riseDelayMilliseconds = durations.riseDelay
     static let riseStaggerMilliseconds = durations.riseStagger
     static let sheetDropMilliseconds = durations.sheetDrop
+    static let tileDragHoldMilliseconds = durations.tileDragHold
     static let navigationPopMilliseconds = durations.navigationPop
     static let navigationSpreadMilliseconds = durations.navigationSpread
     static let navigationSpreadDelayMilliseconds = durations.navigationSpreadDelay

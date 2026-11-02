@@ -36,6 +36,7 @@ targets:
           - GeneralSans-Bold.otf
           - GeneralSans-Italic.otf
           - GeneralSans-BoldItalic.otf
+          - VADOS-Font.otf
         UILaunchScreen:
           UIColorName: LaunchGround
         UIApplicationSceneManifest:

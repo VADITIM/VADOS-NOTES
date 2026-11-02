@@ -7,7 +7,7 @@ import { animate, applyDesignVariables, duration } from "./motion.js"
 import { ToolNav } from "./navigation.js"
 import { PageScreen } from "./page.js"
 import * as preferences from "./preferences.js"
-import { SheetHost } from "./sheets.js"
+import { isFullScreen, SheetHost } from "./sheets.js"
 import { SyncCoordinator } from "./sync.js"
 import { loadTokens } from "./tokens.js"
 import { TopBar } from "./topBar.js"
@@ -40,11 +40,14 @@ class Navigator {
             return
         }
         const replaced = this.sheet
-        if (replaced) {
+        const isHandOff = Boolean(replaced?.isFullScreen && isFullScreen(request))
+        if (isHandOff) {
+            replaced.handOff()
+        } else if (replaced) {
             replaced.content.unsubscribe?.()
             replaced.element.remove()
         }
-        this.sheet = new SheetHost(this.app, request, Boolean(replaced?.isFullScreen))
+        this.sheet = new SheetHost(this.app, request, isHandOff)
     }
 
     go(route, tile = null) {
@@ -220,6 +223,7 @@ async function start() {
     await document.fonts.load(`700 16px "General Sans"`)
     await document.fonts.load(`italic 16px "General Sans"`)
     await document.fonts.load(`italic 700 16px "General Sans"`)
+    await document.fonts.load(`16px "My Handwriting"`)
     const library = new Library()
     await library.open()
     const sync = new SyncCoordinator(library)

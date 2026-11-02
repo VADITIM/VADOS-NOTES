@@ -4,6 +4,8 @@ import { hideTurned, popTogether, revealElement, springAnimate, switchOut } from
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { componentsToHex, hexComponents, tokens } from "./tokens.js"
 
+const copiedMilliseconds = 1400
+
 export const navMetrics = {
     edgeMargin: 16,
     bottomGap: 24,
@@ -424,6 +426,26 @@ export function colorPanel({ color, onChange }) {
     const panel = create("div", "color-panel")
     squircle(panel, { radius: squircleRadius.panel, fill: tokens.palette.panel_solid, border: tokens.palette.border })
     const heading = create("span", "micro-label", "COLOUR")
+    const copyTitle = create("span", "color-panel-copy-title", "COPY")
+    const copyButton = create("button", "color-panel-copy", glyph("copy", { size: 16 }), copyTitle)
+    pressable(copyButton)
+    let copiedTimer = null
+    copyButton.addEventListener("click", async () => {
+        try {
+            await navigator.clipboard.writeText(hexFromHsv(hsv))
+        } catch {
+            return
+        }
+        copyButton.classList.add("is-copied")
+        copyTitle.textContent = "COPIED"
+        animate(copyTitle, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "translateY(0)" }], { milliseconds: duration("state"), curveName: "power_two_out" })
+        clearTimeout(copiedTimer)
+        copiedTimer = setTimeout(() => {
+            copyButton.classList.remove("is-copied")
+            copyTitle.textContent = "COPY"
+        }, copiedMilliseconds)
+    })
+    const header = create("div", "color-panel-header", heading, copyButton)
     const wheel = create("div", "color-wheel")
     wheel.style.width = `${wheelSize}px`
     wheel.style.height = `${wheelSize}px`
@@ -502,7 +524,7 @@ export function colorPanel({ color, onChange }) {
         }
     })
     hexInput.addEventListener("keydown", (event) => event.stopPropagation())
-    panel.append(heading, wheel, valueSlider, create("div", "color-panel-row", swatch, hexWrapper))
+    panel.append(header, wheel, valueSlider, create("div", "color-panel-row", swatch, hexWrapper))
     panel.update = ({ color: next }) => {
         if (isDragging || document.activeElement === hexInput || next.toUpperCase() === hexFromHsv(hsv)) {
             return

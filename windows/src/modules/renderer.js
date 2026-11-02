@@ -1,7 +1,7 @@
 import { cellCount, cellHeight, cellWidth, liveElements, paperHeight, paperWidth, scaledElement, translatedElement } from "./model.js"
 import { importImage } from "./imports.js"
 import { markdownBlocks } from "./markdown.js"
-import { writingFont } from "./preferences.js"
+import { invertsPdfPages, writingFont } from "./preferences.js"
 import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
 export const monoFamily = "\"Space Mono\""
@@ -456,7 +456,7 @@ function drawImport(context, element, camera, pixelRatio, paperStyle, colors, vi
     if (visible && (rect.x > visible.maximumX || rect.x + rect.width < visible.minimumX || rect.y > visible.maximumY || rect.y + rect.height < visible.minimumY)) {
         return
     }
-    const image = importImage(element, camera.scale * pixelRatio, paperStyle === "dark")
+    const image = importImage(element, camera.scale * pixelRatio, paperStyle === "dark" && invertsPdfPages())
     if (!image) {
         context.fillStyle = colors.guide
         context.fillRect(rect.x, rect.y, rect.width, rect.height)

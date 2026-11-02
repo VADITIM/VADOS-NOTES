@@ -65,6 +65,10 @@ struct SheetHost: View {
                 }
                 return
             }
+            guard !(request.isFullScreen && navigator.isHandedOff) else {
+                isShown = true
+                return
+            }
             withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
                 isShown = true
             }

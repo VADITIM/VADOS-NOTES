@@ -104,7 +104,6 @@ struct SettingsSheet: View {
         case pen
         case text
         case sync
-        case note
     }
 
     @EnvironmentObject private var library: Library
@@ -116,14 +115,13 @@ struct SettingsSheet: View {
     @State private var token = ""
     @State private var hasStoredToken = false
     @State private var isAsciiWheelOpen = false
-    @State private var isDeleteArmed = false
     @State private var isFontListOpen = false
     @State private var moduleScales: [Module: CGFloat] = [:]
     @Environment(\.accessibilityReduceMotion) private var isMotionReduced
 
     private static let asciiOpacityRange = Tokens.shared.background.opacityRange
     private static let smoothingRange = Tokens.shared.ink.smoothingRange
-    private static let armedSeconds = 2.4
+    private static let asciiSliderLength: CGFloat = 220
     private static let contentShare: CGFloat = 0.75
 
     private var pageContext: (notebookId: String, pageId: String)? {
@@ -175,6 +173,11 @@ struct SettingsSheet: View {
         .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
             popModules(isShown: !isLeaving)
         }
+        .onChange(of: navigator.isSheetHandingOff) { _, isHandingOff in
+            if isHandingOff {
+                popModules(isShown: false)
+            }
+        }
     }
 
     private func popped(_ module: Module) -> ModulePop {
@@ -211,12 +214,6 @@ struct SettingsSheet: View {
                 }
             }
             .zIndex(1)
-            HStack(alignment: .top, spacing: 18) {
-                syncModule
-                    .modifier(popped(.sync))
-                noteModule
-                    .modifier(popped(.note))
-            }
         }
     }
 
@@ -224,6 +221,8 @@ struct SettingsSheet: View {
         VStack(spacing: 18) {
             asciiModule
                 .modifier(popped(.ascii))
+            syncModule
+                .modifier(popped(.sync))
         }
     }
 
@@ -245,15 +244,14 @@ struct SettingsSheet: View {
                 preferences.setShowsAsciiBackground(isOn)
             }
             let current = preferences.asciiBackgroundColor.uppercased()
-            let colors = Tokens.shared.background.colors
-            HStack(spacing: 2) {
-                WheelButton(isOpen: isAsciiWheelOpen || !colors.map { $0.uppercased() }.contains(current), orientation: .horizontal) {
+            HStack(spacing: 12) {
+                WheelButton(isOpen: isAsciiWheelOpen, orientation: .horizontal) {
                     withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                         isAsciiWheelOpen.toggle()
                     }
                 }
-                ForEach(colors, id: \.self) { color in
-                    SwatchButton(color: Color(hex: color), isSelected: color.uppercased() == current, orientation: .horizontal, onSelect: { preferences.setAsciiBackgroundColor(color) })
+                SizeSlider(orientation: .horizontal, share: Self.share(preferences.asciiBackgroundOpacity, Self.asciiOpacityRange), previewDiameter: 0, previewColor: .clear, length: Self.asciiSliderLength) { share in
+                    preferences.setAsciiBackgroundOpacity(Self.value(share, Self.asciiOpacityRange))
                 }
             }
             if isAsciiWheelOpen {
@@ -261,9 +259,6 @@ struct SettingsSheet: View {
                     preferences.setAsciiBackgroundColor(hex)
                 }
                 .transition(.popTogether)
-            }
-            SettingsSlider(title: "Opacity", share: Self.share(preferences.asciiBackgroundOpacity, Self.asciiOpacityRange), caption: "\(Int((preferences.asciiBackgroundOpacity * 100).rounded()))%") { share in
-                preferences.setAsciiBackgroundOpacity(Self.value(share, Self.asciiOpacityRange))
             }
             Segmented(options: [SegmentOption(value: false, title: "Still"), SegmentOption(value: true, title: "Moving")], selected: preferences.isAsciiBackgroundMoving) { isMoving in
                 preferences.setAsciiBackgroundMoving(isMoving)
@@ -327,29 +322,6 @@ struct SettingsSheet: View {
         }
     }
 
-    private var noteModule: some View {
-        SettingsModule(label: "Note", detail: page.map { library.noteTitle($0) } ?? "Open a note") {
-            Grid(horizontalSpacing: 12, verticalSpacing: 12) {
-                GridRow {
-                    LinkButton(glyph: "import", title: "Import", tint: Palette.importAsset, isEnabled: isPageEditable) {
-                        openTransfer(.import)
-                    }
-                    LinkButton(glyph: "export", title: "Export", tint: Palette.importAsset, isEnabled: page != nil) {
-                        openTransfer(.export)
-                    }
-                }
-                GridRow {
-                    LinkButton(glyph: "pencil", title: "Rename", tint: Palette.edit, isEnabled: isPageEditable) {
-                        if let pageContext {
-                            navigator.show(.renameNote(pageContext.pageId))
-                        }
-                    }
-                    LinkButton(glyph: "trash", title: isDeleteArmed ? "Tap again" : "Delete note", tint: Palette.destructive, isOn: isDeleteArmed, isEnabled: page != nil, action: deletePressed)
-                }
-            }
-        }
-    }
-
     private var syncModule: some View {
         SettingsModule(label: "GitHub sync", detail: "\(library.sync.status.label) · \(library.store.journal.entries.count) queued") {
             HStack(spacing: 10) {
@@ -391,27 +363,6 @@ struct SettingsSheet: View {
                 navigator.show(nil)
             }
         }
-    }
-
-    private func openTransfer(_ mode: TransferMode) {
-        guard let pageContext else { return }
-        navigator.show(.transfer(pageId: pageContext.pageId, mode: mode))
-    }
-
-    private func deletePressed() {
-        guard let pageContext else { return }
-        guard isDeleteArmed else {
-            Haptics.tick()
-            isDeleteArmed = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.armedSeconds) {
-                isDeleteArmed = false
-            }
-            return
-        }
-        Haptics.landed()
-        library.deletePage(pageContext.pageId)
-        navigator.show(nil)
-        navigator.go(.notebook(pageContext.notebookId))
     }
 }
 

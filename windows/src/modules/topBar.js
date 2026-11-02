@@ -137,8 +137,11 @@ export class TopBar {
         this.back = holdable(create("button", "back-button", glyph("back", { color: tokens.semantic.navigation })), { action: () => this.goBack() })
         this.back.setAttribute("aria-label", "Back")
         this.back.hidden = true
+        this.viewAll = holdable(create("button", "back-button view-all-button", glyph("view_all", { color: tokens.semantic.view })), { action: () => this.openViewAll() })
+        this.viewAll.setAttribute("aria-label", "View all")
+        this.viewAll.hidden = true
         this.settings = roundIconButton({ glyphName: "gear", label: "Settings", action: () => this.app.navigator.show({ kind: "settings" }) })
-        this.controls = create("div", "top-bar-controls", this.back, this.settings)
+        this.controls = create("div", "top-bar-controls", this.viewAll, this.back, this.settings)
         this.right = create("div", "top-bar-right", this.searchHost, this.controls)
         this.element.append(this.left, this.right)
         this.folderTitle = null
@@ -160,6 +163,13 @@ export class TopBar {
         }
         const trimmed = title.trim()
         this.app.library.updatePage(page.pageId, { title: trimmed ? title : null })
+    }
+
+    openViewAll() {
+        const route = this.app.navigator.route
+        if (route.kind === "page") {
+            this.app.navigator.show({ kind: "transfer", mode: "view", pageId: route.pageId })
+        }
     }
 
     goBack() {
@@ -210,6 +220,18 @@ export class TopBar {
                 this.backLeaving = false
                 if (this.app.navigator.route.kind === "library") {
                     this.back.hidden = true
+                }
+            })
+        }
+        if (isPage && this.viewAll.hidden) {
+            this.viewAll.hidden = false
+            popTogether(this.viewAll, true)
+        } else if (!isPage && !this.viewAll.hidden && !this.viewAllLeaving) {
+            this.viewAllLeaving = true
+            popTogether(this.viewAll, false).finished.then(() => {
+                this.viewAllLeaving = false
+                if (this.app.navigator.route.kind !== "page") {
+                    this.viewAll.hidden = true
                 }
             })
         }

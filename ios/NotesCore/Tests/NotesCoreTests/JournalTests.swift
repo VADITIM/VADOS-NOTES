@@ -95,20 +95,20 @@ final class JournalTests: XCTestCase {
         XCTAssertFalse(policy.isDue(at: Fixtures.time(100)))
     }
 
-    func testDoublingKeepsElementsInPlace() {
+    func testAddingCellsKeepsElementsInPlace() {
         var page = Fixtures.page(elements: [Fixtures.stroke("e_A")])
         let original = page.elements
         var extents: [Extent] = [page.extent]
-        page.extent = page.extent.doublingColumns()
+        page.extent = page.extent.addingColumn()
         extents.append(page.extent)
-        page.extent = page.extent.doublingRows()
+        page.extent = page.extent.addingRow()
         extents.append(page.extent)
-        page.extent = page.extent.doublingColumns()
+        page.extent = page.extent.addingColumn()
         extents.append(page.extent)
 
-        XCTAssertEqual(extents, [Extent(columns: 1, rows: 1), Extent(columns: 2, rows: 1), Extent(columns: 2, rows: 2), Extent(columns: 4, rows: 2)])
+        XCTAssertEqual(extents, [Extent(columns: 1, rows: 1), Extent(columns: 2, rows: 1), Extent(columns: 2, rows: 2), Extent(columns: 3, rows: 2)])
         XCTAssertEqual(page.elements, original)
-        XCTAssertEqual(PaperGeometry.width(of: page.extent), 840)
+        XCTAssertEqual(PaperGeometry.width(of: page.extent), 630)
     }
 
     func testEraserHitsStrokesWithinReach() {

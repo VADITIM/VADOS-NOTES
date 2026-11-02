@@ -76,12 +76,12 @@ public struct Extent: Codable, Equatable, Hashable, Sendable {
         columns * rows
     }
 
-    public func doublingColumns() -> Extent {
-        Extent(columns: columns * 2, rows: rows)
+    public func addingColumn() -> Extent {
+        Extent(columns: columns + 1, rows: rows)
     }
 
-    public func doublingRows() -> Extent {
-        Extent(columns: columns, rows: rows * 2)
+    public func addingRow() -> Extent {
+        Extent(columns: columns, rows: rows + 1)
     }
 
     public func union(_ other: Extent) -> Extent {

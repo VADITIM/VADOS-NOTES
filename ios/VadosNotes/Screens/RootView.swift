@@ -74,6 +74,8 @@ final class Navigator: ObservableObject {
     @Published private(set) var route: Route = .library
     @Published private(set) var sheet: SheetRequest?
     @Published private(set) var isSheetLeaving = false
+    @Published private(set) var isSheetHandingOff = false
+    private(set) var isHandedOff = false
     @Published private(set) var isChromeLeaving = false
     @Published private(set) var isPageChromeShown = false
     @Published var query = ""
@@ -83,6 +85,7 @@ final class Navigator: ObservableObject {
 
     func show(_ sheet: SheetRequest?) {
         guard let sheet else {
+            isSheetHandingOff = false
             guard let current = self.sheet, !isSheetLeaving else { return }
             isSheetLeaving = true
             let leave = current.isFullScreen ? Motion.sheetDropMilliseconds : current.isNaming ? Motion.keyboardMilliseconds : Motion.overlayLeaveMilliseconds
@@ -93,7 +96,19 @@ final class Navigator: ObservableObject {
             }
             return
         }
+        if let current = self.sheet, current.isFullScreen, sheet.isFullScreen, !isSheetLeaving {
+            guard !isSheetHandingOff else { return }
+            isSheetHandingOff = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.sheetDropMilliseconds)) { [weak self] in
+                guard let self, self.isSheetHandingOff else { return }
+                self.isSheetHandingOff = false
+                self.isHandedOff = true
+                self.sheet = sheet
+            }
+            return
+        }
         isSheetLeaving = false
+        isHandedOff = false
         withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
             self.sheet = sheet
         }
@@ -377,6 +392,16 @@ struct TopBar: View {
                     }
                 }
                 HStack(spacing: 14) {
+                    if isPage {
+                        HoldableButton(action: openViewAll) {
+                            GlyphView(name: "view_all", color: Palette.view)
+                                .frame(width: TopBar.controlHeight, height: TopBar.controlHeight)
+                                .background(Circle().fill(Palette.panel))
+                                .overlay(Circle().stroke(Palette.border, lineWidth: 1))
+                        }
+                        .accessibilityLabel("View all")
+                        .transition(.popTogether)
+                    }
                     if folderId != nil {
                         HoldableButton(action: goBack) {
                             GlyphView(name: "back", color: Palette.navigation)
@@ -400,6 +425,11 @@ struct TopBar: View {
                 headFolderId = next
             }
         }
+    }
+
+    private func openViewAll() {
+        guard case .page(_, let pageId) = navigator.route else { return }
+        navigator.show(.transfer(pageId: pageId, mode: .view))
     }
 
     private func goBack() {

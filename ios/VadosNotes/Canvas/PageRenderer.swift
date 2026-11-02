@@ -446,7 +446,7 @@ enum PageRenderer {
 
     private static func drawImport(_ element: Element, in context: CGContext, camera: CanvasCamera, visiblePage: CGRect, options: RenderOptions, guide: UIColor) {
         guard let rect = importRect(for: element), rect.intersects(visiblePage) else { return }
-        guard let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * options.pixelScale), isDark: options.paperStyle == .dark) else {
+        guard let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * options.pixelScale), isDark: options.paperStyle == .dark && Preferences.invertsPdfPages) else {
             context.setFillColor(guide.cgColor)
             context.fill(rect)
             return

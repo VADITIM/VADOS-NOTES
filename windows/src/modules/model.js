@@ -676,6 +676,27 @@ export function translatedElement(element, offset) {
     return moved
 }
 
+export function cellSwap(elements, first, second, centre) {
+    if (first.column === second.column && first.row === second.row) {
+        return []
+    }
+    const contains = (cell, point) => point[0] >= cell.column * cellWidth && point[0] < (cell.column + 1) * cellWidth && point[1] >= cell.row * cellHeight && point[1] < (cell.row + 1) * cellHeight
+    const offset = [(second.column - first.column) * cellWidth, (second.row - first.row) * cellHeight]
+    const moved = []
+    for (const element of elements) {
+        const point = element.deleted ? null : centre(element)
+        if (!point) {
+            continue
+        }
+        if (contains(first, point)) {
+            moved.push(translatedElement(element, offset))
+        } else if (contains(second, point)) {
+            moved.push(translatedElement(element, [-offset[0], -offset[1]]))
+        }
+    }
+    return moved
+}
+
 export function cellCountAlong(extent, isColumns) {
     return isColumns ? extent.cols : extent.rows
 }

@@ -12,7 +12,7 @@ import { syncSettings } from "./sync.js"
 import { tokens } from "./tokens.js"
 import { transferSheet } from "./transfer.js"
 
-const armedMilliseconds = 2400
+const asciiSliderLength = 220
 
 function sheetPanel(heading, ...content) {
     const panel = create("div", "sheet-panel", microLabel(heading), ...content)
@@ -386,7 +386,6 @@ function settingsSheet(app) {
     const page = () => (pageContext ? library.page(pageContext.pageId) : null)
     const isPageEditable = () => Boolean(pageContext && page() && !library.isReadOnly(pageContext.pageId))
 
-    const asciiColors = tokens.background.colors
     let isWheelOpen = false
     const asciiToggle = segmented([{ value: true, title: "On" }, { value: false, title: "Off" }], preferences.showsAsciiBackground(), (value) => preferences.setShowsAsciiBackground(value))
     const asciiSwatchRow = create("div", "settings-swatches")
@@ -394,22 +393,11 @@ function settingsSheet(app) {
         isWheelOpen = !isWheelOpen
         renderAscii(true)
     } })
-    asciiSwatchRow.append(wheel)
-    const asciiSwatches = asciiColors.map((color) => {
-        const swatch = swatchButton({ color, orientation: "horizontal", onSelect: () => {
-            preferences.setAsciiBackgroundColor(color)
-            renderAscii(false)
-        } })
-        asciiSwatchRow.append(swatch)
-        return { color, swatch }
-    })
+    const opacityRange = tokens.background.opacity_range
+    const opacity = sizeSlider({ share: rangeShare(preferences.asciiBackgroundOpacity(), opacityRange), length: asciiSliderLength, onChange: (share) => preferences.setAsciiBackgroundOpacity(rangeValue(share, opacityRange)) })
+    asciiSwatchRow.append(wheel, opacity)
     const asciiPanelHost = create("div", "settings-panel-host")
     let asciiPanel = null
-    const opacityRange = tokens.background.opacity_range
-    const opacity = settingsSlider("Opacity", rangeShare(preferences.asciiBackgroundOpacity(), opacityRange), `${Math.round(preferences.asciiBackgroundOpacity() * 100)}%`, (share) => {
-        preferences.setAsciiBackgroundOpacity(rangeValue(share, opacityRange))
-        return `${Math.round(preferences.asciiBackgroundOpacity() * 100)}%`
-    })
     const motionToggle = segmented([{ value: false, title: "Still" }, { value: true, title: "Moving" }], preferences.isAsciiBackgroundMoving(), (value) => {
         preferences.setAsciiBackgroundMoving(value)
         renderAscii(true)
@@ -417,11 +405,7 @@ function settingsSheet(app) {
     const canvasToggle = segmented([{ value: true, title: "Both" }, { value: false, title: "Exclude canvas" }], preferences.doesAsciiBackgroundMoveInCanvas(), (value) => preferences.setAsciiBackgroundMovesInCanvas(value))
     const renderAscii = (isAnimated) => {
         const current = preferences.asciiBackgroundColor().toUpperCase()
-        const isCustom = !asciiColors.map((color) => color.toUpperCase()).includes(current)
-        wheel.update({ isOpen: isWheelOpen || isCustom })
-        for (const { color, swatch } of asciiSwatches) {
-            swatch.update({ color, isSelected: color.toUpperCase() === current })
-        }
+        wheel.update({ isOpen: isWheelOpen })
         if (isWheelOpen && !asciiPanel) {
             asciiPanel = colorPanel({ color: current, onChange: (hex) => preferences.setAsciiBackgroundColor(hex) })
             asciiPanelHost.append(asciiPanel)
@@ -451,7 +435,7 @@ function settingsSheet(app) {
     }
     canvasToggle.hidden = !preferences.isAsciiBackgroundMoving()
     renderAscii(false)
-    const asciiModule = settingsModule("ASCII", null, asciiToggle, asciiSwatchRow, asciiPanelHost, opacity, motionToggle, canvasToggle)
+    const asciiModule = settingsModule("ASCII", null, asciiToggle, asciiSwatchRow, asciiPanelHost, motionToggle, canvasToggle)
 
     const leftColumn = create("div", "settings-column", asciiModule)
 
@@ -502,37 +486,8 @@ function settingsSheet(app) {
     }
     renderSync()
 
-    const openTransfer = (mode) => {
-        if (pageContext) {
-            app.navigator.show({ kind: "transfer", mode, pageId: pageContext.pageId })
-        }
-    }
-    const importButton = linkButton({ glyphName: "import", title: "Import", tint: tokens.semantic.import, isEnabled: isPageEditable(), action: () => openTransfer("import") })
-    const exportButton = linkButton({ glyphName: "export", title: "Export", tint: tokens.semantic.import, isEnabled: Boolean(page()), action: () => openTransfer("export") })
-    const renameButton = linkButton({ glyphName: "pencil", title: "Rename", tint: tokens.semantic.edit, isEnabled: isPageEditable(), action: () => pageContext && app.navigator.show({ kind: "renameNote", pageId: pageContext.pageId }) })
-    let isDeleteArmed = false
-    let armTimer = null
-    const deleteButton = linkButton({ glyphName: "trash", title: "Delete note", tint: tokens.semantic.destructive, isEnabled: Boolean(page()), action: () => {
-        if (!pageContext) {
-            return
-        }
-        if (!isDeleteArmed) {
-            isDeleteArmed = true
-            deleteButton.update({ title: "Tap again", isOn: true })
-            clearTimeout(armTimer)
-            armTimer = setTimeout(() => {
-                isDeleteArmed = false
-                deleteButton.update({ title: "Delete note", isOn: false })
-            }, armedMilliseconds)
-            return
-        }
-        library.deletePage(pageContext.pageId)
-        app.navigator.show(null)
-        app.navigator.go({ kind: "notebook", notebookId: pageContext.notebookId })
-    } })
-    const noteModule = settingsModule("Note", page() ? library.noteTitle(page()) : "Open a note", create("div", "settings-grid", importButton, exportButton, renameButton, deleteButton))
-
-    const panels = create("div", "settings-panels", create("div", "settings-columns", leftColumn, rightColumn), create("div", "settings-columns", create("div", "settings-column", syncModule), create("div", "settings-column", noteModule)))
+    leftColumn.append(syncModule)
+    const panels = create("div", "settings-panels", create("div", "settings-columns", leftColumn, rightColumn))
     const sheet = create("div", "settings-sheet", panels)
     sheet.addEventListener("pointerdown", (event) => {
         if (event.target === sheet || event.target === panels) {
@@ -634,12 +589,15 @@ export class SheetHost {
         }
         this.backdrop.style.opacity = "1"
         if (this.isReplacing && this.isFullScreen) {
-            animate(this.content, [{ opacity: 0, transform: "translateY(24px)" }, { opacity: 1, transform: "translateY(0)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
+            animate(this.content, [{ opacity: 0 }, { opacity: 1 }], { milliseconds: duration("overlay_leave"), curveName: "power_two_out" })
+            animate(this.content.firstElementChild ?? this.content, [{ opacity: 0, transform: "translateY(24px) scale(0.98)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out", delay: duration("overlay_leave") / 2 })
+            this.content.riseParts?.()
             return
         }
         animate(this.backdrop, [{ opacity: 0 }, { opacity: 1 }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
         if (this.isFullScreen) {
             animate(this.content, [{ transform: `translateY(${-this.frame.offsetHeight}px)` }, { transform: "translateY(0)" }], { milliseconds: duration("sheet_drop"), curveName: "power_two_out" })
+            this.content.riseParts?.()
         } else {
             animate(this.content, [{ opacity: 0, transform: "translateY(24px) scale(0.94)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
         }
@@ -666,6 +624,15 @@ export class SheetHost {
 
     refresh() {
         this.content.refresh?.()
+    }
+
+    handOff() {
+        this.isLeaving = true
+        this.content.unsubscribe?.()
+        this.element.style.pointerEvents = "none"
+        const milliseconds = duration("overlay_leave")
+        animate(this.content.firstElementChild ?? this.content, [{ opacity: 1, transform: "translateY(0) scale(1)" }, { opacity: 0, transform: "translateY(-24px) scale(0.98)" }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
+        setTimeout(() => this.element.remove(), milliseconds / 2 + duration("overlay_enter"))
     }
 
     leave() {

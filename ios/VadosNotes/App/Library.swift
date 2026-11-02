@@ -39,6 +39,11 @@ struct CellPosition: Hashable {
     }
 }
 
+struct PagePlacement: Hashable {
+    let cell: CellPosition
+    let index: Int
+}
+
 @MainActor
 final class Library: ObservableObject {
     @Published private(set) var revision = 0
@@ -235,7 +240,9 @@ final class Library: ObservableObject {
         }
     }
 
-    func placeDocument(_ document: ImportedDocument, to pageId: String, cells: [CellPosition]) {
+    func placeDocument(_ document: ImportedDocument, to pageId: String, placements: [PagePlacement]) {
+        let placements = placements.filter { $0.index < document.pages.count }.sorted { $0.index < $1.index }
+        let cells = placements.map(\.cell)
         guard let page = page(pageId), !isReadOnly(pageId), !cells.isEmpty else { return }
         let now = store.timestamp()
         let firstOrder = (page.elements.map(\.order).max() ?? -1) + 1
@@ -246,9 +253,9 @@ final class Library: ObservableObject {
                 header.extent = Extent(columns: columns, rows: rows)
             }
         }
-        for (index, cell) in cells.prefix(document.pages.count).enumerated() {
-            var element = importElement(asset: document.asset, index: index, size: document.pages[index], now: now, row: cell.row, column: cell.column)
-            element.order = firstOrder + index
+        for (position, placement) in placements.enumerated() {
+            var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column)
+            element.order = firstOrder + position
             apply(.element(pageId: pageId, element: element), page: pageId)
         }
     }
@@ -321,8 +328,29 @@ final class Library: ObservableObject {
 
     func expand(_ pageId: String, columns: Bool) {
         updatePage(pageId) { header in
-            header.extent = columns ? header.extent.doublingColumns() : header.extent.doublingRows()
+            header.extent = columns ? header.extent.addingColumn() : header.extent.addingRow()
         }
+    }
+
+    func swapCells(_ pageId: String, _ first: CellPosition, _ second: CellPosition) {
+        guard let page = page(pageId), !isReadOnly(pageId), first != second else { return }
+        finishText()
+        let now = store.timestamp()
+        let moved = CellSwap.moved(page.liveElements, swapping: CellIndex(column: first.column, row: first.row), with: CellIndex(column: second.column, row: second.row)) { element in
+            Self.elementBounds(element).map { Point(x: Double($0.midX), y: Double($0.midY)) }
+        }
+        guard !moved.isEmpty else { return }
+        var step = UndoStep(before: [], after: [])
+        for element in moved {
+            guard let original = page.element(withId: element.id) else { continue }
+            var shifted = element
+            shifted.updated = now
+            shifted.device = device
+            apply(.element(pageId: pageId, element: shifted), page: pageId)
+            step.before.append(original)
+            step.after.append(shifted)
+        }
+        record(step, on: pageId)
     }
 
     func removeCell(_ pageId: String, along axis: CellAxis, at index: Int) {

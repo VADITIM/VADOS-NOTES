@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private struct NavigationTapsResumeKey: EnvironmentKey {
     static let defaultValue = Date.distantPast
@@ -537,13 +538,19 @@ struct ColorPanel: View {
     @State private var hsv = HSV(hue: 0, saturation: 0, value: 1)
     @State private var hexText = ""
     @State private var isDragging = false
+    @State private var copiedAt: Date?
     @FocusState private var isHexFocused: Bool
 
     private static let wheelSize: CGFloat = 184
+    private static let copiedSeconds: Double = 1.4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            MicroLabel(text: "Colour")
+            HStack {
+                MicroLabel(text: "Colour")
+                Spacer()
+                copyButton
+            }
             ZStack {
                 Circle()
                     .fill(AngularGradient(colors: stride(from: 0.0, through: 360, by: 30).map { Color(hex: HSV(hue: $0.truncatingRemainder(dividingBy: 360), saturation: 1, value: hsv.value).hex) }, center: .center))
@@ -616,6 +623,39 @@ struct ColorPanel: View {
             hsv = HSV(hex: next)
             hexText = next.uppercased()
         }
+    }
+
+    private var copyButton: some View {
+        let isCopied = copiedAt != nil
+        return Button {
+            UIPasteboard.general.string = hsv.hex
+            Haptics.tick()
+            let stamp = Date()
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                copiedAt = stamp
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.copiedSeconds) {
+                guard copiedAt == stamp else { return }
+                withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                    copiedAt = nil
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                GlyphView(name: "copy", color: isCopied ? Palette.accent : Palette.textMuted, size: 16)
+                Text(isCopied ? "COPIED" : "COPY")
+                    .font(Typography.monoBold(10))
+                    .tracking(1.5)
+                    .foregroundColor(isCopied ? Palette.accent : Palette.textMuted)
+                    .id(isCopied)
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(Squircle(radius: 9).fill(Palette.sunkenDeep))
+            .contentShape(Squircle(radius: 9))
+        }
+        .buttonStyle(PressableStyle())
     }
 
     private func emit() {
