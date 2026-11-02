@@ -27,6 +27,18 @@ final class CodecTests: XCTestCase {
         XCTAssertTrue(text.contains("\"schema_version\": 1"))
     }
 
+    func testExtentStampRoundTripsAndIsLeftOutWhenUnset() throws {
+        var page = Fixtures.page(extent: Extent(columns: 3, rows: 1), at: 4)
+        XCTAssertFalse(String(decoding: try PageCodec.encodePage(page), as: UTF8.self).contains("extent_updated"))
+
+        page.extentUpdated = Fixtures.time(3)
+        let data = try PageCodec.encodePage(page)
+        let decoded = try PageCodec.decodePage(data)
+
+        XCTAssertEqual(decoded.extentUpdated, Fixtures.time(3))
+        XCTAssertEqual(try PageCodec.encodePage(decoded), data)
+    }
+
     func testPageNameColorAndIconRoundTrip() throws {
         var page = Fixtures.page(elements: [Fixtures.stroke("e_A")])
         page.title = "Lecture \"one\""

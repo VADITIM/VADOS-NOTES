@@ -235,6 +235,7 @@ struct Tokens: Decodable {
         let pageTile: [MenuSlotToken]
         let grouping: [MenuSlotToken]
         let group: [MenuSlotToken]
+        let selection: [MenuSlotToken]
     }
 
     struct FolderTokens: Decodable {

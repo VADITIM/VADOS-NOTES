@@ -489,8 +489,32 @@ export function mergeHeader(first, second) {
     return {
         ...newer,
         deleted: Boolean(first.deleted || second.deleted),
-        extent: { cols: Math.max(first.extent.cols, second.extent.cols), rows: Math.max(first.extent.rows, second.extent.rows) },
+        extent: mergedExtent(first, second),
+        ...stampOf(first, second),
     }
+}
+
+function stampOf(first, second) {
+    const stamps = [first.extent_updated, second.extent_updated].filter(Boolean)
+    if (stamps.length === 0) {
+        return {}
+    }
+    return { extent_updated: stamps.reduce((latest, stamp) => (timestampMilliseconds(stamp) > timestampMilliseconds(latest) ? stamp : latest)) }
+}
+
+function mergedExtent(first, second) {
+    const firstStamp = first.extent_updated ? timestampMilliseconds(first.extent_updated) : null
+    const secondStamp = second.extent_updated ? timestampMilliseconds(second.extent_updated) : null
+    if (firstStamp !== null && secondStamp !== null && firstStamp !== secondStamp) {
+        return { ...(firstStamp > secondStamp ? first.extent : second.extent) }
+    }
+    if (firstStamp !== null && secondStamp === null) {
+        return { ...first.extent }
+    }
+    if (firstStamp === null && secondStamp !== null) {
+        return { ...second.extent }
+    }
+    return { cols: Math.max(first.extent.cols, second.extent.cols), rows: Math.max(first.extent.rows, second.extent.rows) }
 }
 
 export function mergeNotebook(first, second) {
@@ -524,6 +548,7 @@ export function encodePage(page) {
         `  "deleted": ${canonical(page.deleted)},`,
         `  "device": ${canonical(page.device)},`,
         `  "extent": ${canonical(page.extent)},`,
+        ...optional("extent_updated"),
         ...optional("icon"),
         `  "id": ${canonical(page.id)},`,
         `  "notebook": ${canonical(page.notebook)},`,
@@ -649,6 +674,41 @@ export function translatedElement(element, offset) {
         moved.placement = { ...element.placement, x: element.placement.x + offset[0], y: element.placement.y + offset[1] }
     }
     return moved
+}
+
+export function cellCountAlong(extent, isColumns) {
+    return isColumns ? extent.cols : extent.rows
+}
+
+export function removingCell(extent, isColumns) {
+    return isColumns ? { cols: Math.max(1, extent.cols - 1), rows: extent.rows } : { cols: extent.cols, rows: Math.max(1, extent.rows - 1) }
+}
+
+export function cellContaining(extent, point, isColumns) {
+    const position = isColumns ? point[0] : point[1]
+    const size = isColumns ? cellWidth : cellHeight
+    return Math.min(cellCountAlong(extent, isColumns) - 1, Math.max(0, Math.floor(position / size)))
+}
+
+export function cellRemoval(elements, index, isColumns, centre) {
+    const size = isColumns ? cellWidth : cellHeight
+    const start = index * size
+    const end = start + size
+    const shift = isColumns ? [-size, 0] : [0, -size]
+    const outcome = { removed: [], moved: [] }
+    for (const element of elements) {
+        const point = element.deleted ? null : centre(element)
+        if (!point) {
+            continue
+        }
+        const position = isColumns ? point[0] : point[1]
+        if (position >= start && position < end) {
+            outcome.removed.push(element)
+        } else if (position >= end) {
+            outcome.moved.push(translatedElement(element, shift))
+        }
+    }
+    return outcome
 }
 
 export function scaledElement(element, anchor, factor) {

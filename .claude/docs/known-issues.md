@@ -21,4 +21,6 @@ Deliberate shortcuts, each with its ceiling and upgrade path.
 - **Holding a preset in the secondary nav both arms it for removal and lifts its group.** Moving on reorders the group while the preset stays armed for its 2.4 s. Upgrade: disarm when a group lift starts.
 - **Closing a note does not shrink back into its tile.** It cuts back to the folder. Upgrade: run the flight backwards from the page's transition, aimed at the tile's last frame.
 - **Windows and Linux are behind the iPad since 2026-10-28.** The `.md` style nav, the code nav, syntax highlighting, text fitted to the guide rows and the later nav and settings passes are iPad only; Windows edits text as raw Markdown in a plain field. Code auto-indent is on both. Upgrade: port the iPad commits after `f4c478b`.
+- **The clipboard is in-app only.** Cut and Copy keep elements in memory for the app run; they do not reach the system pasteboard and are lost on quit. Upgrade: write the elements as JSON with a custom pasteboard type.
+- **The selection menu on Windows was checked by parts.** The menu layout and the library operations were run in a browser; a full lasso, tap and Cut was not clicked through, because the harness cannot draw a closed lasso.
 - **Grouped folders and notes cannot be dragged.** Reordering and moving them goes through ungrouping or the Move sheet.

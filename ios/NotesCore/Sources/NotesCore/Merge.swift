@@ -34,12 +34,26 @@ public enum Merge {
             updated: newer.updated,
             device: newer.device,
             deleted: first.deleted || second.deleted,
-            extent: first.extent.union(second.extent),
+            extent: extent(first, second),
+            extentUpdated: [first.extentUpdated, second.extentUpdated].compactMap { $0 }.max(),
             title: newer.title,
             color: newer.color,
             icon: newer.icon,
             order: newer.order
         )
+    }
+
+    static func extent(_ first: PageHeader, _ second: PageHeader) -> Extent {
+        switch (first.extentUpdated, second.extentUpdated) {
+        case let (firstDate?, secondDate?) where firstDate != secondDate:
+            return firstDate > secondDate ? first.extent : second.extent
+        case (_?, nil):
+            return first.extent
+        case (nil, _?):
+            return second.extent
+        default:
+            return first.extent.union(second.extent)
+        }
     }
 
     public static func notebook(_ first: Notebook, _ second: Notebook) -> Notebook {

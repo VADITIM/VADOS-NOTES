@@ -57,6 +57,7 @@ struct PageScreen: View {
     @State private var flightTile: CGRect?
     @State private var flightProgress: CGFloat = 1
     @State private var selectionMenu: SelectionMenuRequest?
+    @State private var selectionCommand: SelectionCommand?
     @State private var equalWidth = Tokens.shared.tools.pen.width
     @State private var equalWidthStart: Double?
 
@@ -178,6 +179,7 @@ struct PageScreen: View {
             hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
             isReadOnly: library.isReadOnly(pageId),
             topInset: topInset,
+            selectionCommand: selectionCommand,
             callbacks: callbacks()
         )
         .overlay(alignment: .topLeading) {
@@ -277,16 +279,19 @@ struct PageScreen: View {
             onMoveElements: { ids, offset in library.moveElements(ids, on: pageId, by: offset) },
             onScaleElements: { ids, anchor, factor in library.scaleElements(ids, on: pageId, about: anchor, by: factor) },
             onSelectionMenu: { request in
-                guard request != selectionMenu else { return }
-                withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
-                    selectionMenu = request
+                if let request {
+                    showSelectionMenu(request)
+                } else if selectionMenu != nil {
+                    withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                        selectionMenu = nil
+                    }
                 }
             },
             onInput: {
                 library.noteInput(on: pageId)
                 closePanel()
             },
-            onHold: { point in showPageMenu(at: point) },
+            onHold: { point, pagePoint in showPageMenu(at: point, pagePoint: pagePoint) },
             onHoldMove: { point in menu.drag(to: point) },
             onHoldEnd: { point in menu.release(at: point) },
             onUndo: { library.undo(pageId) },
@@ -818,18 +823,84 @@ struct PageScreen: View {
         ]
     }
 
-    private func showPageMenu(at point: CGPoint) {
+    private func select(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        selectionCommand = SelectionCommand(ids: ids, serial: (selectionCommand?.serial ?? 0) + 1)
+    }
+
+    private func showSelectionMenu(_ request: SelectionMenuRequest) {
+        let page = library.page(pageId)
+        let selected = page?.liveElements.filter { request.ids.contains($0.id) } ?? []
+        let point = CGPoint(x: request.frame.maxX, y: request.frame.minY)
+        let slots = MenuSlot.fromTokens(
+            Tokens.shared.menus.selection,
+            title: { action in
+                switch action {
+                case "cut": return "Cut"
+                case "copy": return "Copy"
+                case "duplicate": return "Duplicate"
+                case "color": return "Colour"
+                case "equal_width": return "Equal width"
+                default: return action
+                }
+            },
+            isEnabled: { action in
+                switch action {
+                case "color": return selected.contains { $0.type != .importPage }
+                case "equal_width": return selected.contains { $0.type == .stroke }
+                default: return !selected.isEmpty
+                }
+            },
+            perform: { action in
+                switch action {
+                case "cut":
+                    library.cutElements(request.ids, on: pageId)
+                case "copy":
+                    library.copyElements(request.ids, on: pageId)
+                case "duplicate":
+                    select(library.duplicate(request.ids, on: pageId))
+                case "color":
+                    showColorMenu(for: selected, at: point)
+                case "equal_width":
+                    withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                        selectionMenu = request
+                    }
+                default:
+                    break
+                }
+            }
+        )
+        menu.present(slots, at: point, title: "Selection")
+    }
+
+    private func showColorMenu(for elements: [Element], at point: CGPoint) {
+        let ids = elements.map(\.id)
+        let first = elements.first { $0.type != .importPage }
+        let colors = first?.tool.map { preferences.colorPresets($0) } ?? Tokens.shared.text.colors
+        let slots = MenuSlot.swatches(colors, current: first?.color) { color in
+            library.setColor(ids, on: pageId, to: color.uppercased())
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.overlayLeaveMilliseconds)) {
+            menu.present(slots, at: point, title: "Colour")
+        }
+    }
+
+    private func showPageMenu(at point: CGPoint, pagePoint: Point) {
         let page = library.page(pageId)
         let isReadOnly = library.isReadOnly(pageId)
         let showsGuides = preferences.showsGuides
         let showsDividers = preferences.showsDividers
-        let actions = ["expand_columns", "expand_rows", "toggle_guides", "toggle_dividers", "delete_page"]
+        let hasClipboard = !library.clipboard.isEmpty
+        let actions = ["paste", "expand_columns", "shrink_columns", "expand_rows", "shrink_rows", "toggle_guides", "toggle_dividers", "delete_page"]
         let slots = MenuSlot.fromTokens(
             Tokens.shared.menus.page.filter { actions.contains($0.action) },
             title: { action in
                 switch action {
+                case "paste": return "Paste"
                 case "expand_columns": return "Add column"
+                case "shrink_columns": return "Remove column"
                 case "expand_rows": return "Add row"
+                case "shrink_rows": return "Remove row"
                 case "toggle_guides": return showsGuides ? "Guides off" : "Guides on"
                 case "toggle_dividers": return showsDividers ? "Cell lines off" : "Cell lines on"
                 case "delete_page": return "Delete note"
@@ -838,7 +909,10 @@ struct PageScreen: View {
             },
             isEnabled: { action in
                 switch action {
+                case "paste": return hasClipboard && page != nil && !isReadOnly
                 case "expand_columns", "expand_rows": return page != nil && !isReadOnly
+                case "shrink_columns": return !isReadOnly && (page?.extent.columns ?? 1) > 1
+                case "shrink_rows": return !isReadOnly && (page?.extent.rows ?? 1) > 1
                 case "toggle_dividers": return (page?.extent.cellCount ?? 1) > 1
                 case "delete_page": return page != nil
                 default: return true
@@ -846,10 +920,20 @@ struct PageScreen: View {
             },
             perform: { action in
                 switch action {
+                case "paste":
+                    select(library.paste(on: pageId, centredAt: pagePoint))
                 case "expand_columns":
                     library.expand(pageId, columns: true)
+                case "shrink_columns":
+                    if let page {
+                        library.removeCell(pageId, along: .columns, at: page.extent.cell(containing: pagePoint, along: .columns))
+                    }
                 case "expand_rows":
                     library.expand(pageId, columns: false)
+                case "shrink_rows":
+                    if let page {
+                        library.removeCell(pageId, along: .rows, at: page.extent.cell(containing: pagePoint, along: .rows))
+                    }
                 case "toggle_guides":
                     preferences.setShowsGuides(!showsGuides)
                 case "toggle_dividers":

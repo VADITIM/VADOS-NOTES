@@ -29,6 +29,7 @@ A GoodNotes replacement for iPad and Windows. Ink is written on the iPad, typing
 - Expanding doubles one axis at a time: 1×1 → 2×1 → 2×2 → 4×2, and so on.
 - Expansion only changes the visible extent and the cell boundary lines. No stored element moves.
 - Expansion is triggered by a button: "add column" or "add row" in the page menu doubles that axis.
+- Beside each add button sits a remove button. It removes the one column or row under the hold point: elements whose centre lies in it are deleted, later columns or rows move back by one cell, and the axis shrinks by one. It is never below one cell, arms first like every destructive slot, and is one undo step.
 - All coordinates and lengths in a page file are millimetres. One A4 cell is 210 × 297, and cell (c, r) spans x ∈ [210c, 210(c+1)), y ∈ [297r, 297(r+1)).
 
 ### 3.2 Layers
@@ -76,9 +77,12 @@ One JSON file per page.
   "device": "ipad-01",
   "deleted": false,
   "extent": { "cols": 2, "rows": 1 },
+  "extent_updated": "2026-10-25T13:40:00Z",
   "elements": []
 }
 ```
+
+`extent_updated` is optional. It is written whenever the extent changes and is the extent's own clock (5.5).
 
 ### 4.2 Element
 
@@ -178,7 +182,8 @@ A Git Data API commit is atomic: either all pages in a flush land or none do.
 - **Elements:** union by ID. Two devices adding elements never conflict.
 - **Deletions:** tombstones. A tombstone wins over a copy of the same element without the deletion.
 - **Edits to existing elements** (moving or changing a text block): latest `updated` wins, per element.
-- **Page metadata** (extent, title): latest `updated` wins.
+- **Page metadata** (title, colour, icon, order): latest `updated` wins.
+- **Extent:** latest `extent_updated` wins; a stamped extent wins over an unstamped one; two unstamped extents (or an exact tie) merge to their union. `updated` cannot decide it, because every element edit moves the page's `updated`, so a device that drew on a stale copy would bring a removed column back.
 
 ### 5.6 Offline
 
@@ -457,3 +462,6 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Text is larger on its rows and stands a little above the ruled line instead of touching it.
 - Code blocks indent like a code editor: Enter keeps the indent and adds a level after an open bracket (or a Python colon), a closing bracket and Backspace take one off, Tab runs to the next stop. The level is read from the block. The keyboard drops autocorrect and smart quotes inside code.
 - Imported files are capped at 50 MB each, GitHub's own warning size and half its 100 MB limit. Assets sync through `assets/<sha256>` in the same commit as the first page that uses them, and every device fetches the assets its pages reference.
+- Columns and rows can be removed again: the page menu splits each add row into add and an icon-only remove, which removes the cell under the hold point. The extent carries its own clock, `extent_updated`, so a removal survives sync.
+- The hold menus have no container: only their rows, with dividers centred in their gap.
+- Tapping a lasso selection opens a selection menu: Cut and Copy as icons on top, then Duplicate, Colour and Equal width. Paste sits at the top of the page menu and centres the clipboard on the hold point.

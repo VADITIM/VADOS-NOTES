@@ -10,19 +10,32 @@ const padding = 6
 const titleHeight = 26
 const screenMargin = 16
 const fingerGap = 14
+const swatchesPerLine = 4
 
 const arrangement = {
-    rename: [0, 0, "pencil"],
-    appearance: [0, 1, "star"],
-    group: [1, 0, "stack"],
-    ungroup: [1, 0, "stack"],
-    move: [1, 1, "move"],
-    expand_columns: [0, 0, "add_column"],
-    expand_rows: [0, 1, "add_row"],
-    toggle_guides: [1, 0, "guides"],
-    toggle_dividers: [1, 1, "cell_lines"],
-    delete_notebook: [2, 0, "trash"],
-    delete_page: [2, 0, "trash"],
+    rename: { section: 0, rank: 0, glyph: "pencil" },
+    appearance: { section: 0, rank: 1, glyph: "star" },
+    group: { section: 1, rank: 0, glyph: "stack" },
+    ungroup: { section: 1, rank: 0, glyph: "stack" },
+    move: { section: 1, rank: 1, glyph: "move" },
+    paste: { section: 0, rank: 0, glyph: "paste" },
+    expand_columns: { section: 1, rank: 0, glyph: "add_column" },
+    shrink_columns: { section: 1, rank: 0, glyph: "remove_column", lane: 1, isIconOnly: true },
+    expand_rows: { section: 1, rank: 1, glyph: "add_row" },
+    shrink_rows: { section: 1, rank: 1, glyph: "remove_row", lane: 1, isIconOnly: true },
+    toggle_guides: { section: 2, rank: 0, glyph: "guides" },
+    toggle_dividers: { section: 2, rank: 1, glyph: "cell_lines" },
+    delete_notebook: { section: 3, rank: 0, glyph: "trash" },
+    delete_page: { section: 3, rank: 0, glyph: "trash" },
+    cut: { section: 0, rank: 0, glyph: "cut", isIconOnly: true },
+    copy: { section: 0, rank: 0, glyph: "copy", lane: 1, isIconOnly: true },
+    duplicate: { section: 1, rank: 0, glyph: "duplicate" },
+    color: { section: 1, rank: 1, glyph: "color" },
+    equal_width: { section: 1, rank: 2, glyph: "equal_width" },
+}
+
+function isTrailing(slot) {
+    return slot.isDestructive && slot.lane === 0
 }
 
 export function slotsFromTokens(definitions, { title, isEnabled = () => true, perform }) {
@@ -32,13 +45,50 @@ export function slotsFromTokens(definitions, { title, isEnabled = () => true, pe
             position: definition.slot,
             title: title(definition.action),
             role: definition.role,
-            glyph: arranged?.[2] ?? null,
-            section: arranged?.[0] ?? 0,
-            rank: arranged?.[1] ?? definition.slot,
+            glyph: arranged?.glyph ?? null,
+            section: arranged?.section ?? 0,
+            rank: arranged?.rank ?? definition.slot,
+            lane: arranged?.lane ?? 0,
+            isIconOnly: arranged?.isIconOnly ?? false,
             isEnabled: isEnabled(definition.action),
             isDestructive: definition.role === "destructive",
             handler: () => perform(definition.action),
         }
+    })
+}
+
+export function swatchSlots(colors, current, perform) {
+    return colors.map((color, index) => ({
+        position: index,
+        title: color,
+        role: "edit",
+        glyph: null,
+        section: 0,
+        rank: Math.floor(index / swatchesPerLine),
+        lane: index % swatchesPerLine,
+        isIconOnly: true,
+        lineCapacity: swatchesPerLine,
+        swatch: color,
+        isActive: color.toUpperCase() === current?.toUpperCase(),
+        isEnabled: true,
+        isDestructive: false,
+        handler: () => perform(color),
+    }))
+}
+
+function lineFrames(line, top) {
+    const gaps = spacing * (line.length - 1)
+    const iconCount = line.filter((slot) => slot.isIconOnly).length
+    const labelCount = line.length - iconCount
+    const capacity = Math.max(line.length, line[0].lineCapacity ?? 0)
+    const iconWidth = labelCount === 0 ? (rowSize[0] - spacing * (capacity - 1)) / capacity : rowSize[1]
+    const labelWidth = labelCount === 0 ? 0 : (rowSize[0] - gaps - iconWidth * iconCount) / labelCount
+    let left = padding
+    return line.map((slot) => {
+        const width = slot.isIconOnly ? iconWidth : labelWidth
+        const frame = { x: left, y: top, width }
+        left += width + spacing
+        return frame
     })
 }
 
@@ -60,9 +110,9 @@ export class MenuController {
 
     present(slots, point, title = null) {
         this.removeNow()
-        const ordered = [...slots].sort((first, second) => {
-            if (first.isDestructive !== second.isDestructive) {
-                return first.isDestructive ? 1 : -1
+        const sorted = [...slots].sort((first, second) => {
+            if (isTrailing(first) !== isTrailing(second)) {
+                return isTrailing(first) ? 1 : -1
             }
             if (first.section !== second.section) {
                 return first.section - second.section
@@ -70,20 +120,31 @@ export class MenuController {
             if (first.rank !== second.rank) {
                 return first.rank - second.rank
             }
+            if (first.lane !== second.lane) {
+                return first.lane - second.lane
+            }
             return first.position - second.position
         })
+        const lines = []
+        sorted.forEach((slot) => {
+            const previous = lines[lines.length - 1]?.[0]
+            if (slot.lane > 0 && previous && previous.section === slot.section && previous.rank === slot.rank) {
+                lines[lines.length - 1].push(slot)
+            } else {
+                lines.push([slot])
+            }
+        })
+        const ordered = lines.flat()
         const rows = []
         const dividers = []
         let top = padding + (title ? titleHeight : 0)
-        ordered.forEach((slot, index) => {
-            if (index > 0) {
-                const previous = ordered[index - 1]
-                if (previous.section !== slot.section || previous.isDestructive !== slot.isDestructive) {
-                    dividers.push(top + (dividerGap - spacing) / 2)
-                    top += dividerGap - spacing
-                }
+        lines.forEach((line, index) => {
+            const previous = lines[index - 1]?.[0]
+            if (previous && (previous.section !== line[0].section || isTrailing(previous) !== isTrailing(line[0]))) {
+                dividers.push(top - spacing + dividerGap / 2)
+                top += dividerGap - spacing
             }
-            rows.push({ x: padding, y: top })
+            rows.push(...lineFrames(line, top))
             top += rowSize[1] + spacing
         })
         const size = [padding * 2 + rowSize[0], top - spacing + padding]
@@ -130,7 +191,7 @@ export class MenuController {
         })
         this.rows = new Map()
         ordered.forEach((slot, index) => {
-            const row = this.makeRow(slot)
+            const row = this.makeRow(slot, rows[index].width)
             row.style.left = `${rows[index].x}px`
             row.style.top = `${rows[index].y}px`
             panel.append(row)
@@ -141,7 +202,6 @@ export class MenuController {
                 delay: duration("rise_delay") + index * duration("rise_stagger"),
             })
         })
-        squircle(panel, { radius: squircleRadius.sheet, fill: tokens.palette.panel_solid, border: tokens.palette.border_strong })
         this.host.append(backdrop, panel)
         this.backdrop = backdrop
         this.panel = panel
@@ -149,9 +209,11 @@ export class MenuController {
         animate(panel, [{ opacity: 0, transform: "scale(0.001)" }, { opacity: 1, transform: "scale(1)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
     }
 
-    makeRow(slot) {
+    makeRow(slot, width) {
         const row = create("button", "menu-row")
-        row.style.width = `${rowSize[0]}px`
+        row.classList.toggle("is-icon-only", slot.isIconOnly)
+        row.setAttribute("aria-label", slot.title)
+        row.style.width = `${width}px`
         row.style.height = `${rowSize[1]}px`
         const inner = create("span", "menu-row-inner")
         row.append(inner)
@@ -178,17 +240,24 @@ export class MenuController {
         }
         const inner = row.inner
         inner.replaceChildren()
-        if (slot.glyph) {
+        if (slot.swatch && slot.isIconOnly) {
+            const dot = create("span", "menu-row-swatch")
+            dot.style.background = slot.swatch
+            dot.style.boxShadow = `inset 0 0 0 1px ${tokens.palette.border_control}`
+            inner.append(dot)
+        } else if (slot.glyph) {
             inner.append(glyph(isArmed ? "check" : slot.glyph, { color: ink, size: 18 }))
         } else {
             const bar = create("span", "menu-row-bar")
             bar.style.background = isArmed || isHighlighted ? ink : color
             inner.append(bar)
         }
-        const text = create("span", "menu-row-title", (isArmed ? "Confirm" : slot.title).toUpperCase())
-        text.style.color = ink
-        inner.append(text)
-        squircle(row, { radius: squircleRadius.slot, fill, border: tokens.palette.border })
+        if (!slot.isIconOnly) {
+            const text = create("span", "menu-row-title", (isArmed ? "Confirm" : slot.title).toUpperCase())
+            text.style.color = ink
+            inner.append(text)
+        }
+        squircle(row, { radius: squircleRadius.slot, fill, border: slot.isActive ? color : tokens.palette.border })
         row.classList.toggle("is-highlighted", isHighlighted)
     }
 

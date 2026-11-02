@@ -7,6 +7,11 @@ struct SelectionMenuRequest: Equatable {
     let frame: CGRect
 }
 
+struct SelectionCommand: Equatable {
+    let ids: [String]
+    let serial: Int
+}
+
 struct CanvasCallbacks {
     var onCameraChange: (CanvasCamera) -> Void
     var onStroke: (Tool, String, [[Point]], Double) -> Void
@@ -18,7 +23,7 @@ struct CanvasCallbacks {
     var onScaleElements: ([String], Point, Double) -> Void
     var onSelectionMenu: (SelectionMenuRequest?) -> Void
     var onInput: () -> Void
-    var onHold: (CGPoint) -> Void
+    var onHold: (CGPoint, Point) -> Void
     var onHoldMove: (CGPoint) -> Void
     var onHoldEnd: (CGPoint) -> Void
     var onUndo: () -> Void
@@ -41,6 +46,7 @@ struct CanvasView: UIViewRepresentable {
     let hiddenElementIds: Set<String>
     let isReadOnly: Bool
     let topInset: CGFloat
+    let selectionCommand: SelectionCommand?
     let callbacks: CanvasCallbacks
 
     func makeUIView(context: Context) -> InkCanvasView {
@@ -67,6 +73,7 @@ struct CanvasView: UIViewRepresentable {
         view.hiddenElementIds = hiddenElementIds
         view.isReadOnly = isReadOnly
         view.topInset = topInset
+        view.selectionCommand = selectionCommand
         view.onCameraChange = callbacks.onCameraChange
         view.onStroke = callbacks.onStroke
         view.onErase = callbacks.onErase

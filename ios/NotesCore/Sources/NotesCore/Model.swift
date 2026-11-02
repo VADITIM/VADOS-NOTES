@@ -239,6 +239,7 @@ public struct PageHeader: Codable, Equatable, Sendable {
     public var device: String
     public var deleted: Bool
     public var extent: Extent
+    public var extentUpdated: Date?
     public var title: String?
     public var color: String?
     public var icon: String?
@@ -252,13 +253,14 @@ public struct PageHeader: Codable, Equatable, Sendable {
         case device
         case deleted
         case extent
+        case extentUpdated = "extent_updated"
         case title
         case color
         case icon
         case order
     }
 
-    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, title: String? = nil, color: String? = nil, icon: String? = nil, order: Int? = nil) {
+    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, extentUpdated: Date? = nil, title: String? = nil, color: String? = nil, icon: String? = nil, order: Int? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.notebook = notebook
@@ -266,6 +268,7 @@ public struct PageHeader: Codable, Equatable, Sendable {
         self.device = device
         self.deleted = deleted
         self.extent = extent
+        self.extentUpdated = extentUpdated
         self.title = title
         self.color = color
         self.icon = icon
@@ -283,6 +286,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
     public var device: String
     public var deleted: Bool
     public var extent: Extent
+    public var extentUpdated: Date?
     public var title: String?
     public var color: String?
     public var icon: String?
@@ -297,6 +301,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         case device
         case deleted
         case extent
+        case extentUpdated = "extent_updated"
         case title
         case color
         case icon
@@ -312,6 +317,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         device = header.device
         deleted = header.deleted
         extent = header.extent
+        extentUpdated = header.extentUpdated
         title = header.title
         color = header.color
         icon = header.icon
@@ -320,7 +326,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var header: PageHeader {
-        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, title: title, color: color, icon: icon, order: order)
+        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, extentUpdated: extentUpdated, title: title, color: color, icon: icon, order: order)
     }
 
     public var liveElements: [Element] {

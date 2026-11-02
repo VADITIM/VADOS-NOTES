@@ -1,5 +1,8 @@
+import { elementBounds } from "./canvas.js"
 import {
+    cellCountAlong,
     cellHeight,
+    cellRemoval,
     cellWidth,
     decodeFile,
     encodeNotebook,
@@ -14,6 +17,7 @@ import {
     nextOrder,
     notebookPath,
     pagePath,
+    removingCell,
     repositoryPathKind,
     scaledElement,
     schemaVersion,
@@ -29,6 +33,7 @@ import { tokens } from "./tokens.js"
 const undoLimit = 200
 const importMarginMillimetres = 5
 const sizeTolerance = 1
+const duplicateOffset = 8
 const writeDelayMilliseconds = 250
 const dirtyPathsKey = "syncDirtyPaths"
 
@@ -69,6 +74,7 @@ export class Library {
         this.undoSteps = new Map()
         this.redoSteps = new Map()
         this.textEditing = null
+        this.clipboard = []
         this.listeners = new Set()
         this.pendingWrites = new Map()
         this.writeTimer = null
@@ -304,6 +310,9 @@ export class Library {
             return
         }
         const next = { ...this.header(page), ...changes, updated: this.timestamp(), device: this.device }
+        if (changes.extent && JSON.stringify(changes.extent) !== JSON.stringify(page.extent)) {
+            next.extent_updated = next.updated
+        }
         for (const [key, value] of Object.entries(changes)) {
             if (value === null || value === undefined) {
                 delete next[key]
@@ -362,6 +371,96 @@ export class Library {
         }
         const extent = isColumns ? { cols: page.extent.cols * 2, rows: page.extent.rows } : { cols: page.extent.cols, rows: page.extent.rows * 2 }
         this.updatePage(pageId, { extent })
+    }
+
+    removeCell(pageId, isColumns, index) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId) || cellCountAlong(page.extent, isColumns) <= 1) {
+            return
+        }
+        this.finishText()
+        const now = this.timestamp()
+        const extent = removingCell(page.extent, isColumns)
+        const outcome = cellRemoval(page.elements.filter((element) => !element.deleted), index, isColumns, (element) => {
+            const bounds = elementBounds(element)
+            return bounds ? [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2] : null
+        })
+        const step = { before: [], after: [], extent: { before: { ...page.extent }, after: extent } }
+        for (const element of outcome.removed) {
+            const removed = tombstone(element, now, this.device)
+            this.applyElement(pageId, removed)
+            step.before.push(element)
+            step.after.push(removed)
+        }
+        for (const moved of outcome.moved) {
+            const original = page.elements.find((candidate) => candidate.id === moved.id)
+            const shifted = { ...moved, updated: now, device: this.device }
+            this.applyElement(pageId, shifted)
+            step.before.push(original)
+            step.after.push(shifted)
+        }
+        this.updatePage(pageId, { extent })
+        this.record(step, pageId)
+    }
+
+    copyElements(elementIds, pageId) {
+        const page = this.page(pageId)
+        if (!page) {
+            return
+        }
+        this.clipboard = page.elements.filter((element) => !element.deleted && elementIds.includes(element.id))
+        this.changed()
+    }
+
+    cutElements(elementIds, pageId) {
+        this.copyElements(elementIds, pageId)
+        this.erase(elementIds, pageId)
+    }
+
+    paste(pageId, centre) {
+        const bounds = this.clipboard.map(elementBounds).filter(Boolean)
+        if (bounds.length === 0) {
+            return []
+        }
+        const left = Math.min(...bounds.map((rect) => rect.x))
+        const top = Math.min(...bounds.map((rect) => rect.y))
+        const right = Math.max(...bounds.map((rect) => rect.x + rect.width))
+        const bottom = Math.max(...bounds.map((rect) => rect.y + rect.height))
+        return this.place(this.clipboard, pageId, [centre[0] - (left + right) / 2, centre[1] - (top + bottom) / 2])
+    }
+
+    duplicate(elementIds, pageId) {
+        const page = this.page(pageId)
+        if (!page) {
+            return []
+        }
+        return this.place(page.elements.filter((element) => !element.deleted && elementIds.includes(element.id)), pageId, [duplicateOffset, duplicateOffset])
+    }
+
+    setColor(elementIds, pageId, color) {
+        this.transformElements(elementIds, pageId, (element) => (element.type !== "import" && element.color !== color ? { ...element, color } : null))
+    }
+
+    place(elements, pageId, offset) {
+        if (!this.page(pageId) || this.isReadOnly(pageId) || elements.length === 0) {
+            return []
+        }
+        this.finishText()
+        const now = this.timestamp()
+        const added = [...elements].sort((first, second) => (isOrderedBefore(first, second) ? -1 : 1)).map((element) => {
+            const copy = {
+                ...translatedElement(element, offset),
+                id: makeIdentifier("e", timestampMilliseconds(now)),
+                order: nextOrder(this.pagesById.get(pageId), element.layer),
+                updated: now,
+                device: this.device,
+                deleted: false,
+            }
+            this.applyElement(pageId, copy)
+            return copy
+        })
+        this.record({ before: [], after: added }, pageId)
+        return added.map((element) => element.id)
     }
 
     addStrokes(pageId, tool, color, pieces, width = tokens.tools[tool].width) {
@@ -651,6 +750,10 @@ export class Library {
                 reverse.before.push(current)
                 reverse.after.push(removed)
             }
+        }
+        if (step.extent) {
+            this.updatePage(pageId, { extent: step.extent.before })
+            reverse.extent = { before: step.extent.after, after: step.extent.before }
         }
         return reverse
     }

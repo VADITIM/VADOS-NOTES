@@ -73,11 +73,30 @@ final class MergeTests: XCTestCase {
         XCTAssertEqual(Merge.page(Merge.page(first, second), second), Merge.page(first, second))
     }
 
-    func testExtentGrowsToTheUnionOfBothSides() {
+    func testUnstampedExtentsGrowToTheUnionOfBothSides() {
         let wide = Fixtures.page(extent: Extent(columns: 2, rows: 1), at: 1)
         let tall = Fixtures.page(extent: Extent(columns: 1, rows: 2), at: 2)
 
         XCTAssertEqual(Merge.page(wide, tall).extent, Extent(columns: 2, rows: 2))
+    }
+
+    func testRemovedCellStaysRemovedWhenTheOtherSideEditsLater() {
+        var wide = Fixtures.page(extent: Extent(columns: 2, rows: 1), at: 5, device: "pc-01")
+        wide.extentUpdated = Fixtures.time(1)
+        var narrowed = Fixtures.page(extent: Extent(columns: 1, rows: 1), at: 2)
+        narrowed.extentUpdated = Fixtures.time(2)
+
+        XCTAssertEqual(Merge.page(wide, narrowed).extent, Extent(columns: 1, rows: 1))
+        XCTAssertEqual(Merge.page(narrowed, wide).extent, Extent(columns: 1, rows: 1))
+        XCTAssertEqual(Merge.page(wide, narrowed).extentUpdated, Fixtures.time(2))
+    }
+
+    func testStampedExtentWinsOverAnUnstampedOne() {
+        let legacy = Fixtures.page(extent: Extent(columns: 2, rows: 1), at: 5)
+        var narrowed = Fixtures.page(extent: Extent(columns: 1, rows: 1), at: 2)
+        narrowed.extentUpdated = Fixtures.time(2)
+
+        XCTAssertEqual(Merge.page(legacy, narrowed).extent, Extent(columns: 1, rows: 1))
     }
 
     func testDeletedPageStaysDeleted() {

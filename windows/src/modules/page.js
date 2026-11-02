@@ -13,8 +13,8 @@ import {
     variationPanel,
     wheelButton,
 } from "./controls.js"
-import { slotsFromTokens } from "./menu.js"
-import { clampBox } from "./model.js"
+import { slotsFromTokens, swatchSlots } from "./menu.js"
+import { cellContaining, clampBox } from "./model.js"
 import { duration, tween } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
@@ -190,12 +190,12 @@ export class PageScreen {
             onTextMove: (elementId, box) => this.library.moveText(elementId, this.pageId, box),
             onMoveElements: (ids, offset) => this.library.moveElements(ids, this.pageId, offset),
             onScaleElements: (ids, anchor, factor) => this.library.scaleElements(ids, this.pageId, anchor, factor),
-            onSelectionMenu: (request) => this.setSelectionMenu(request),
+            onSelectionMenu: (request) => (request ? this.showSelectionMenu(request) : this.setSelectionMenu(null)),
             onInput: () => {
                 this.library.noteInput(this.pageId)
                 this.closePanel()
             },
-            onHold: (point, isPointer) => this.showPageMenu(point, isPointer),
+            onHold: (point, isPointer, pagePoint) => this.showPageMenu(point, isPointer, pagePoint),
             onHoldMove: (point) => this.app.menu.drag(point),
             onHoldEnd: (point) => this.app.menu.release(point),
             onUndo: () => this.library.undo(this.pageId),
@@ -742,24 +742,76 @@ export class PageScreen {
         return [colours, wheel]
     }
 
-    showPageMenu(point, isPointer) {
+    selectPlaced(ids) {
+        this.canvas.select(ids, this.library.page(this.pageId))
+    }
+
+    showSelectionMenu(request) {
+        const page = this.library.page(this.pageId)
+        const selected = page ? page.elements.filter((element) => !element.deleted && request.ids.includes(element.id)) : []
+        const point = [request.frame.x + request.frame.width, request.frame.y]
+        const slots = slotsFromTokens(tokens.menus.selection, {
+            title: (action) => ({
+                cut: "Cut",
+                copy: "Copy",
+                duplicate: "Duplicate",
+                color: "Colour",
+                equal_width: "Equal width",
+            })[action] ?? action,
+            isEnabled: (action) => {
+                switch (action) {
+                case "color": return selected.some((element) => element.type !== "import")
+                case "equal_width": return selected.some((element) => element.type === "stroke")
+                default: return selected.length > 0
+                }
+            },
+            perform: (action) => {
+                switch (action) {
+                case "cut": this.library.cutElements(request.ids, this.pageId); break
+                case "copy": this.library.copyElements(request.ids, this.pageId); break
+                case "duplicate": this.selectPlaced(this.library.duplicate(request.ids, this.pageId)); break
+                case "color": this.showColorMenu(selected, point); break
+                case "equal_width": this.setSelectionMenu(request); break
+                default: break
+                }
+            },
+        })
+        this.app.menu.present(slots, point, "Selection")
+    }
+
+    showColorMenu(elements, point) {
+        const ids = elements.map((element) => element.id)
+        const first = elements.find((element) => element.type !== "import")
+        const colors = first?.tool ? preferences.colorPresets(first.tool) : tokens.text.colors
+        const slots = swatchSlots(colors, first?.color, (color) => this.library.setColor(ids, this.pageId, color.toUpperCase()))
+        setTimeout(() => this.app.menu.present(slots, point, "Colour"), duration("overlay_leave"))
+    }
+
+    showPageMenu(point, isPointer, pagePoint) {
         const page = this.library.page(this.pageId)
         const isReadOnly = this.library.isReadOnly(this.pageId)
         const showsGuides = preferences.showsGuides()
         const showsDividers = preferences.showsDividers()
-        const actions = ["expand_columns", "expand_rows", "toggle_guides", "toggle_dividers", "delete_page"]
+        const hasClipboard = this.library.clipboard.length > 0
+        const actions = ["paste", "expand_columns", "shrink_columns", "expand_rows", "shrink_rows", "toggle_guides", "toggle_dividers", "delete_page"]
         const slots = slotsFromTokens(tokens.menus.page.filter((slot) => actions.includes(slot.action)), {
             title: (action) => ({
+                paste: "Paste",
                 expand_columns: "Add column",
+                shrink_columns: "Remove column",
                 expand_rows: "Add row",
+                shrink_rows: "Remove row",
                 toggle_guides: showsGuides ? "Guides off" : "Guides on",
                 toggle_dividers: showsDividers ? "Cell lines off" : "Cell lines on",
                 delete_page: "Delete note",
             })[action] ?? action,
             isEnabled: (action) => {
                 switch (action) {
+                case "paste": return hasClipboard && Boolean(page) && !isReadOnly
                 case "expand_columns":
                 case "expand_rows": return Boolean(page) && !isReadOnly
+                case "shrink_columns": return Boolean(page) && !isReadOnly && page.extent.cols > 1
+                case "shrink_rows": return Boolean(page) && !isReadOnly && page.extent.rows > 1
                 case "toggle_dividers": return (page ? page.extent.cols * page.extent.rows : 1) > 1
                 case "delete_page": return Boolean(page)
                 default: return true
@@ -767,8 +819,11 @@ export class PageScreen {
             },
             perform: (action) => {
                 switch (action) {
+                case "paste": this.selectPlaced(this.library.paste(this.pageId, pagePoint)); break
                 case "expand_columns": this.library.expand(this.pageId, true); break
+                case "shrink_columns": this.library.removeCell(this.pageId, true, cellContaining(page.extent, pagePoint, true)); break
                 case "expand_rows": this.library.expand(this.pageId, false); break
+                case "shrink_rows": this.library.removeCell(this.pageId, false, cellContaining(page.extent, pagePoint, false)); break
                 case "toggle_guides": preferences.setShowsGuides(!showsGuides); break
                 case "toggle_dividers": preferences.setShowsDividers(!showsDividers); break
                 case "delete_page":

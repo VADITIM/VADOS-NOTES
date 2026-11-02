@@ -1,9 +1,16 @@
+import CoreGraphics
 import Foundation
 import NotesCore
+
+struct ExtentChange {
+    let before: Extent
+    let after: Extent
+}
 
 struct UndoStep {
     var before: [Element]
     var after: [Element]
+    var extent: ExtentChange? = nil
 }
 
 struct TextEditingSession: Equatable {
@@ -28,6 +35,7 @@ final class Library: ObservableObject {
     @Published private(set) var revision = 0
     @Published private(set) var lastError: String?
     @Published var textEditing: TextEditingSession?
+    @Published private(set) var clipboard: [Element] = []
 
     let store: NotesStore
     let sync: SyncCoordinator
@@ -36,6 +44,7 @@ final class Library: ObservableObject {
     private let undoLimit = 200
     private let importMargin = 5.0
     private let sizeTolerance = 1.0
+    private let duplicateOffset = 8.0
 
     init(store: NotesStore) {
         self.store = store
@@ -244,8 +253,12 @@ final class Library: ObservableObject {
 
     func updatePage(_ pageId: String, _ change: (inout PageHeader) -> Void) {
         guard var header = page(pageId)?.header, !isReadOnly(pageId) else { return }
+        let extent = header.extent
         change(&header)
         header.updated = store.timestamp()
+        if header.extent != extent {
+            header.extentUpdated = header.updated
+        }
         header.device = device
         apply(.page(header), page: pageId)
     }
@@ -283,6 +296,109 @@ final class Library: ObservableObject {
         updatePage(pageId) { header in
             header.extent = columns ? header.extent.doublingColumns() : header.extent.doublingRows()
         }
+    }
+
+    func removeCell(_ pageId: String, along axis: CellAxis, at index: Int) {
+        guard let page = page(pageId), !isReadOnly(pageId), page.extent.count(along: axis) > 1 else { return }
+        finishText()
+        let now = store.timestamp()
+        let outcome = CellRemoval.outcome(of: page.liveElements, removing: index, along: axis) { element in
+            Self.elementBounds(element).map { Point(x: Double($0.midX), y: Double($0.midY)) }
+        }
+        var step = UndoStep(before: [], after: [], extent: ExtentChange(before: page.extent, after: page.extent.removing(axis)))
+        for element in outcome.removed {
+            let tombstone = element.tombstone(at: now, device: device)
+            apply(.element(pageId: pageId, element: tombstone), page: pageId)
+            step.before.append(element)
+            step.after.append(tombstone)
+        }
+        for moved in outcome.moved {
+            guard let original = page.element(withId: moved.id) else { continue }
+            var shifted = moved
+            shifted.updated = now
+            shifted.device = device
+            apply(.element(pageId: pageId, element: shifted), page: pageId)
+            step.before.append(original)
+            step.after.append(shifted)
+        }
+        setExtent(page.extent.removing(axis), of: pageId)
+        record(step, on: pageId)
+    }
+
+    func copyElements(_ elementIds: [String], on pageId: String) {
+        guard let page = page(pageId) else { return }
+        clipboard = page.liveElements.filter { elementIds.contains($0.id) }
+    }
+
+    func cutElements(_ elementIds: [String], on pageId: String) {
+        copyElements(elementIds, on: pageId)
+        erase(elementIds, on: pageId)
+    }
+
+    @discardableResult
+    func paste(on pageId: String, centredAt centre: Point) -> [String] {
+        guard let bounds = Self.bounds(of: clipboard) else { return [] }
+        let offset = Point(x: centre.x - Double(bounds.midX), y: centre.y - Double(bounds.midY))
+        return place(clipboard, on: pageId, by: offset)
+    }
+
+    @discardableResult
+    func duplicate(_ elementIds: [String], on pageId: String) -> [String] {
+        guard let page = page(pageId) else { return [] }
+        return place(page.liveElements.filter { elementIds.contains($0.id) }, on: pageId, by: Point(x: duplicateOffset, y: duplicateOffset))
+    }
+
+    func setColor(_ elementIds: [String], on pageId: String, to color: String) {
+        guard let page = page(pageId), !isReadOnly(pageId) else { return }
+        let now = store.timestamp()
+        var step = UndoStep(before: [], after: [])
+        for id in elementIds {
+            guard let element = page.element(withId: id), !element.deleted, element.type != .importPage, element.color != color else { continue }
+            var recolored = element
+            recolored.color = color
+            recolored.updated = now
+            recolored.device = device
+            apply(.element(pageId: pageId, element: recolored), page: pageId)
+            step.before.append(element)
+            step.after.append(recolored)
+        }
+        if !step.after.isEmpty {
+            record(step, on: pageId)
+        }
+    }
+
+    private func place(_ elements: [Element], on pageId: String, by offset: Point) -> [String] {
+        guard page(pageId) != nil, !isReadOnly(pageId), !elements.isEmpty else { return [] }
+        finishText()
+        let now = store.timestamp()
+        var step = UndoStep(before: [], after: [])
+        for element in elements.sorted(by: Element.isOrderedBefore) {
+            guard let current = page(pageId) else { break }
+            var copy = Lasso.translated(element, by: offset)
+            copy.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
+            copy.order = current.nextOrder(in: element.layer)
+            copy.updated = now
+            copy.device = device
+            copy.deleted = false
+            apply(.element(pageId: pageId, element: copy), page: pageId)
+            step.after.append(copy)
+        }
+        record(step, on: pageId)
+        return step.after.map(\.id)
+    }
+
+    private func setExtent(_ extent: Extent, of pageId: String) {
+        updatePage(pageId) { header in
+            header.extent = extent
+        }
+    }
+
+    static func elementBounds(_ element: Element) -> CGRect? {
+        InkCanvasView.elementBounds(element)
+    }
+
+    static func bounds(of elements: [Element]) -> CGRect? {
+        elements.compactMap(elementBounds).reduce(CGRect?.none) { union, rect in union.map { $0.union(rect) } ?? rect }
     }
 
     func addStrokes(to pageId: String, tool: Tool, color: String, width: Double, pieces: [[Point]]) {
@@ -563,6 +679,10 @@ final class Library: ObservableObject {
                 reverse.before.append(current)
                 reverse.after.append(tombstone)
             }
+        }
+        if let change = step.extent {
+            setExtent(change.before, of: pageId)
+            reverse.extent = ExtentChange(before: change.after, after: change.before)
         }
         return reverse
     }

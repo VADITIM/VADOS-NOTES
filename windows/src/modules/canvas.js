@@ -131,6 +131,18 @@ export class InkCanvas {
         this.requestDraw()
     }
 
+    select(ids, page) {
+        if (this.isReadOnly || ids.length === 0) {
+            return
+        }
+        if (page) {
+            this.page = page
+        }
+        this.selectedIds = [...ids]
+        this.refreshSelection()
+        this.requestDraw()
+    }
+
     layout() {
         const rect = this.element.getBoundingClientRect()
         const width = Math.round(rect.width)
@@ -329,7 +341,8 @@ export class InkCanvas {
                 return
             }
             this.callbacks.onInput?.()
-            this.callbacks.onHold?.([event.clientX, event.clientY], true)
+            const bounds = element.getBoundingClientRect()
+            this.callbacks.onHold?.([event.clientX, event.clientY], true, this.camera.toPage(event.clientX - bounds.left, event.clientY - bounds.top))
         })
         element.addEventListener("wheel", (event) => this.wheel(event), { passive: false })
         this.keyDown = (event) => {
@@ -1068,7 +1081,7 @@ export class InkCanvas {
         this.clearPendingFeedback()
         this.requestDraw()
         const bounds = this.element.getBoundingClientRect()
-        this.callbacks.onHold?.([this.gestureStart[0] + bounds.left, this.gestureStart[1] + bounds.top], false)
+        this.callbacks.onHold?.([this.gestureStart[0] + bounds.left, this.gestureStart[1] + bounds.top], false, this.camera.toPage(...this.gestureStart))
     }
 
     cancelActiveGesture() {

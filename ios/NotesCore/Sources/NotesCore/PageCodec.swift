@@ -64,6 +64,9 @@ public enum PageCodec {
         lines.append("  \"deleted\": \(try value(page.deleted)),")
         lines.append("  \"device\": \(try value(page.device)),")
         lines.append("  \"extent\": \(try value(page.extent)),")
+        if let extentUpdated = page.extentUpdated {
+            lines.append("  \"extent_updated\": \(try value(Timestamp.format(extentUpdated))),")
+        }
         if let icon = page.icon {
             lines.append("  \"icon\": \(try value(icon)),")
         }

@@ -163,7 +163,15 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     var onScaleElements: (([String], Point, Double) -> Void)?
     var onSelectionMenu: ((SelectionMenuRequest?) -> Void)?
     var onInput: (() -> Void)?
-    var onHold: ((CGPoint) -> Void)?
+    var selectionCommand: SelectionCommand? {
+        didSet {
+            guard let selectionCommand, selectionCommand != oldValue, !isReadOnly else { return }
+            selectedIds = selectionCommand.ids
+            refreshSelection()
+            setNeedsDisplay()
+        }
+    }
+    var onHold: ((CGPoint, Point) -> Void)?
     var onHoldMove: ((CGPoint) -> Void)?
     var onHoldEnd: ((CGPoint) -> Void)?
     var onUndo: (() -> Void)?
@@ -1038,13 +1046,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         case .stroke:
             return Lasso.touches(polygon, line: element.points ?? [])
         case .text, .importPage:
-            guard let rect = elementBounds(element) else { return false }
+            guard let rect = Self.elementBounds(element) else { return false }
             let corners = [Point(x: rect.minX, y: rect.minY), Point(x: rect.maxX, y: rect.minY), Point(x: rect.maxX, y: rect.maxY), Point(x: rect.minX, y: rect.maxY)]
             return Lasso.touches(polygon, area: corners)
         }
     }
 
-    private func elementBounds(_ element: Element) -> CGRect? {
+    static func elementBounds(_ element: Element) -> CGRect? {
         switch element.type {
         case .stroke:
             guard let points = element.points, let bounds = StrokeGeometry.bounds(of: points) else { return nil }
@@ -1066,7 +1074,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
         let live = page.liveElements.filter { selectedIds.contains($0.id) }
         selectedIds = live.map(\.id)
-        selectionBounds = live.compactMap(elementBounds).reduce(CGRect?.none) { union, rect in union.map { $0.union(rect) } ?? rect }
+        selectionBounds = live.compactMap(Self.elementBounds).reduce(CGRect?.none) { union, rect in union.map { $0.union(rect) } ?? rect }
         showSelection()
     }
 
@@ -1153,7 +1161,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         clearPendingFeedback()
         setNeedsDisplay()
         Haptics.hold()
-        onHold?(convert(gestureStart, to: nil))
+        onHold?(convert(gestureStart, to: nil), camera.toPage(gestureStart))
     }
 
     private func clearPendingFeedback() {
