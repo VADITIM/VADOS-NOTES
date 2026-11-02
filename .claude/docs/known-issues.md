@@ -19,4 +19,5 @@ Deliberate shortcuts, each with its ceiling and upgrade path.
 - **Folder and note groups live on one device.** They are stored in user defaults, not in the repository, so another device and Windows do not see them. Upgrade: an optional `groups` file per folder synced through the journal (a schema addition, to be agreed first).
 - **Holding a preset in the secondary nav both arms it for removal and lifts its group.** Moving on reorders the group while the preset stays armed for its 2.4 s. Upgrade: disarm when a group lift starts.
 - **Closing a note does not shrink back into its tile.** It cuts back to the folder. Upgrade: run the flight backwards from the page's transition, aimed at the tile's last frame.
+- **Windows and Linux are behind the iPad since 2026-10-28.** The `.md` style nav, the code nav, syntax highlighting, text fitted to the guide rows and the later nav and settings passes are iPad only; Windows edits text as raw Markdown in a plain field. Code auto-indent is on both. Upgrade: port the iPad commits after `f4c478b`.
 - **Grouped folders and notes cannot be dragged.** Reordering and moving them goes through ungrouping or the Move sheet.

@@ -64,6 +64,8 @@ struct TextBlockEditor: UIViewRepresentable {
         var color: UIColor = .white
         var paperStyle: PaperStyle = .dark
         private var reported: TextStyleState?
+        private var isIndenting = false
+        private var isCodeKeyboard = false
 
         init(onChange: @escaping (String) -> Void, onStyleState: @escaping (TextStyleState) -> Void) {
             self.onChange = onChange
@@ -77,6 +79,73 @@ struct TextBlockEditor: UIViewRepresentable {
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             report(textView)
+            fitKeyboard(textView)
+        }
+
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard !isIndenting, textView.markedTextRange == nil, let edit = codeEdit(for: text, in: range, view: textView) else { return true }
+            let caret = text.isEmpty ? range.upperBound : range.location
+            let length = text.isEmpty ? 0 : range.length
+            apply(edit, over: NSRange(location: caret - edit.removedBefore, length: length + edit.removedBefore + edit.removedAfter), in: textView)
+            return false
+        }
+
+        private func codeEdit(for text: String, in range: NSRange, view: UITextView) -> CodeEdit? {
+            let string = view.textStorage.string as NSString
+            let texts = view.textStorage.string.components(separatedBy: "\n")
+            let shapes = RichText.shapes(texts)
+            let starts = lineStarts(texts)
+            let anchor = text.isEmpty ? range.upperBound : range.location
+            guard let index = texts.indices.last(where: { starts[$0] <= anchor }) else { return nil }
+            let lineEnd = starts[index] + texts[index].utf16.count
+            guard shapes[index].kind == .code, !Self.isFence(texts[index]), range.location >= starts[index], range.upperBound <= lineEnd else { return nil }
+            var first = index
+            while first > 0, shapes[first - 1].kind == .code, !Self.isFence(texts[first - 1]) {
+                first -= 1
+            }
+            var last = index
+            while last < texts.count - 1, shapes[last + 1].kind == .code, !Self.isFence(texts[last + 1]) {
+                last += 1
+            }
+            let unit = CodeIndentation.unit(Array(texts[first...last]))
+            let language = shapes[index].language
+            switch text {
+            case "\n":
+                let before = string.substring(with: NSRange(location: starts[index], length: range.location - starts[index]))
+                let after = string.substring(with: NSRange(location: range.upperBound, length: lineEnd - range.upperBound))
+                return CodeIndentation.newline(before: before, after: after, language: language, unit: unit)
+            case "\t":
+                return CodeIndentation.tab(before: string.substring(with: NSRange(location: starts[index], length: range.location - starts[index])), unit: unit)
+            case "" where range.length == 1:
+                return CodeIndentation.backspace(before: string.substring(with: NSRange(location: starts[index], length: range.upperBound - starts[index])), unit: unit)
+            default:
+                guard range.length == 0, text.count == 1, let character = text.first else { return nil }
+                return CodeIndentation.closing(before: string.substring(with: NSRange(location: starts[index], length: range.location - starts[index])), character: character, unit: unit)
+            }
+        }
+
+        private func apply(_ edit: CodeEdit, over target: NSRange, in view: UITextView) {
+            guard let start = view.position(from: view.beginningOfDocument, offset: target.location),
+                  let end = view.position(from: start, offset: target.length),
+                  let range = view.textRange(from: start, to: end) else { return }
+            isIndenting = true
+            view.replace(range, withText: edit.replacement)
+            isIndenting = false
+            view.selectedRange = NSRange(location: target.location + edit.caret, length: 0)
+            commit(view)
+        }
+
+        private func fitKeyboard(_ view: UITextView) {
+            let isCode = lineShape(at: view.selectedRange.location, in: view).kind == .code || ((view.typingAttributes[.markdownStyle] as? MarkdownStyleValue)?.style.isCode ?? false)
+            guard isCode != isCodeKeyboard else { return }
+            isCodeKeyboard = isCode
+            view.autocorrectionType = isCode ? .no : .default
+            view.autocapitalizationType = isCode ? .none : .sentences
+            view.smartQuotesType = isCode ? .no : .default
+            view.smartDashesType = isCode ? .no : .default
+            view.smartInsertDeleteType = isCode ? .no : .default
+            view.spellCheckingType = isCode ? .no : .default
+            view.reloadInputViews()
         }
 
         func load(_ markdown: String, into view: UITextView) {

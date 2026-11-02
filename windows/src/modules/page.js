@@ -1,4 +1,5 @@
 import { InkCanvas } from "./canvas.js"
+import { applyCodeEdit, codeKeyEdit, codeTextEdit } from "./codeIndentation.js"
 import { create, pressable } from "./components.js"
 import {
     KeyedList,
@@ -881,6 +882,22 @@ export class PageScreen {
             event.stopPropagation()
             if (event.key === "Escape") {
                 this.library.finishText()
+                return
+            }
+            const edit = codeKeyEdit(textarea.value, textarea.selectionStart, textarea.selectionEnd, event)
+            if (edit) {
+                event.preventDefault()
+                applyCodeEdit(textarea, edit)
+            }
+        })
+        textarea.addEventListener("beforeinput", (event) => {
+            if (event.inputType !== "insertText" || event.isComposing) {
+                return
+            }
+            const edit = codeTextEdit(textarea.value, textarea.selectionStart, textarea.selectionEnd, event.data)
+            if (edit) {
+                event.preventDefault()
+                applyCodeEdit(textarea, edit)
             }
         })
         this.bindTextDrag(frame, (origin, translation) => ({ ...origin, x: origin.x + translation[0], y: origin.y + translation[1] }), true)

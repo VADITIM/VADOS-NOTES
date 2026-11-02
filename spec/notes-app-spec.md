@@ -453,3 +453,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The nav turns only when it is carried against an edge: vertical at the left and right edges, horizontal at the top and bottom.
 - Zooming while text is being edited moves smoothly through the whole range.
 - Text is larger on its rows and stands a little above the ruled line instead of touching it.
+- Code blocks indent like a code editor: Enter keeps the indent and adds a level after an open bracket (or a Python colon), a closing bracket and Backspace take one off, Tab runs to the next stop. The level is read from the block. The keyboard drops autocorrect and smart quotes inside code.
