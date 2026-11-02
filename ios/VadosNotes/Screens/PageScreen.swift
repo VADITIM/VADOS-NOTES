@@ -172,6 +172,7 @@ struct PageScreen: View {
             inkWidth: inkTool.map { preferences.width($0) } ?? 0.5,
             eraserRadius: preferences.eraserRadius,
             paperStyle: preferences.paperStyle,
+            writingFont: preferences.writingFont,
             showsGuides: preferences.showsGuides,
             showsDividers: preferences.showsDividers,
             showsBackdrop: preferences.showsAsciiBackground,

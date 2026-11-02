@@ -39,6 +39,7 @@ struct CanvasView: UIViewRepresentable {
     let inkWidth: Double
     let eraserRadius: Double
     let paperStyle: PaperStyle
+    let writingFont: String
     let showsGuides: Bool
     let showsDividers: Bool
     let showsBackdrop: Bool
@@ -66,6 +67,7 @@ struct CanvasView: UIViewRepresentable {
         view.inkWidth = inkWidth
         view.eraserRadius = eraserRadius
         view.paperStyle = paperStyle
+        view.writingFont = writingFont
         view.showsGuides = showsGuides
         view.showsDividers = showsDividers
         view.showsBackdrop = showsBackdrop

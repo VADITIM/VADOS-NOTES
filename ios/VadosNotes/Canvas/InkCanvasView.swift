@@ -125,6 +125,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     var paperStyle: PaperStyle = .dark {
         didSet { if paperStyle != oldValue { setNeedsDisplay() } }
     }
+    var writingFont = "" {
+        didSet { if writingFont != oldValue { setNeedsDisplay() } }
+    }
     var showsGuides = true {
         didSet { if showsGuides != oldValue { setNeedsDisplay() } }
     }
@@ -187,6 +190,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private let lassoLayer = CAShapeLayer()
     private let selectionLayer = CAShapeLayer()
     private let elementCanvas = ElementCanvasView(frame: .zero)
+    private let lineCanvas = ElementCanvasView(frame: .zero)
+    private let markerCanvas = ElementCanvasView(frame: .zero)
+    private let liveMarkerLayer = CAShapeLayer()
+    private let liveMarkerMask = CAShapeLayer()
     private let importContainer = CALayer()
     private let importMask = CAShapeLayer()
     private var importLayers: [String: CALayer] = [:]
@@ -269,10 +276,24 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         selectionLayer.lineDashPattern = Self.lassoDash
         layer.addSublayer(selectionLayer)
         insertSubview(elementCanvas, at: 0)
+        insertSubview(markerCanvas, at: 0)
+        insertSubview(lineCanvas, at: 0)
         importContainer.mask = importMask
-        layer.insertSublayer(importContainer, below: elementCanvas.layer)
+        layer.insertSublayer(importContainer, below: lineCanvas.layer)
+        markerCanvas.alpha = CGFloat(InkStyle.tokens(for: .marker).opacity)
+        liveMarkerLayer.fillColor = nil
+        liveMarkerLayer.lineCap = .round
+        liveMarkerLayer.lineJoin = .round
+        liveMarkerLayer.mask = liveMarkerMask
+        markerCanvas.layer.addSublayer(liveMarkerLayer)
         elementCanvas.render = { [weak self] context, rect in
             self?.drawElements(in: context, rect: rect)
+        }
+        lineCanvas.render = { [weak self] context, rect in
+            self?.drawLines(in: context, rect: rect)
+        }
+        markerCanvas.render = { [weak self] context, rect in
+            self?.drawMarkers(in: context, rect: rect)
         }
 
         let pencil = UIPencilInteraction()
@@ -350,6 +371,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         lassoLayer.frame = bounds
         selectionLayer.frame = bounds
         elementCanvas.frame = bounds
+        lineCanvas.frame = bounds
+        markerCanvas.frame = bounds
+        liveMarkerLayer.frame = bounds
+        liveMarkerMask.frame = bounds
         importContainer.frame = bounds
         importMask.frame = bounds
         if !hasFitted || fittedSize != bounds.size {
@@ -360,6 +385,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     override func setNeedsDisplay() {
         super.setNeedsDisplay()
         elementCanvas.setNeedsDisplay()
+        lineCanvas.setNeedsDisplay()
+        markerCanvas.setNeedsDisplay()
         layoutImports()
     }
 
@@ -367,15 +394,34 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         guard let context = UIGraphicsGetCurrentContext() else { return }
         var options = renderOptions()
         options.fillsOutside = !showsBackdrop
-        options.drawsElements = !hasImports
+        options.drawsElements = false
+        options.drawsLines = !hasImports
         render(in: context, options: options)
     }
 
     private func drawElements(in context: CGContext, rect: CGRect) {
-        guard hasImports else { return }
         var options = renderOptions()
         options.drawsPaper = false
         options.drawsImports = false
+        options.drawsLines = false
+        options.markerPass = .none
+        render(in: context, options: options)
+    }
+
+    private func drawLines(in context: CGContext, rect: CGRect) {
+        guard hasImports else { return }
+        var options = renderOptions()
+        options.drawsPaper = false
+        options.drawsElements = false
+        render(in: context, options: options)
+    }
+
+    private func drawMarkers(in context: CGContext, rect: CGRect) {
+        var options = renderOptions()
+        options.drawsPaper = false
+        options.drawsImports = false
+        options.drawsLines = false
+        options.markerPass = .only
         render(in: context, options: options)
     }
 
@@ -385,23 +431,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
 
     private func layoutImports() {
         let imports = page?.liveElements.filter { $0.type == .importPage } ?? []
-        elementCanvas.isHidden = imports.isEmpty
+        lineCanvas.isHidden = imports.isEmpty
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         var seen = Set<String>()
         let hidden = hiddenElementIds.union(pendingErased)
         let screenPage = camera.toPage(bounds)
         for element in imports {
-            guard let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { continue }
+            guard let rect = PageRenderer.importRect(for: element) else { continue }
             seen.insert(element.id)
             let sublayer = importLayers[element.id] ?? makeImportLayer(element.id)
-            var rect = CGRect(x: placement.x, y: placement.y, width: size[0] * placement.scale, height: size[1] * placement.scale)
-            if selectedIds.contains(element.id) {
-                rect = rect.offsetBy(dx: selectionOffset.dx, dy: selectionOffset.dy)
-                if let selectionScaleAnchor {
-                    rect = rect.applying(scaling(about: selectionScaleAnchor))
-                }
-            }
             sublayer.bounds = CGRect(origin: .zero, size: rect.size)
             sublayer.position = camera.toScreen(Point(x: Double(rect.minX), y: Double(rect.minY)))
             sublayer.transform = CATransform3DMakeScale(camera.scale, camera.scale, 1)
@@ -630,6 +669,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         if wasPanning {
             endStroke()
             liveLayer.path = nil
+            liveMarkerLayer.path = nil
             if wasMoved {
                 recordPanSample(location, time: touch.timestamp)
                 startGlide(panVelocity())
@@ -683,6 +723,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
         endStroke()
         liveLayer.path = nil
+        liveMarkerLayer.path = nil
         lastErasePoint = nil
         lassoPoints = []
         lassoLayer.path = nil
@@ -845,6 +886,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             CATransaction.setDisableActions(true)
             let paperPath = CGPath(roundedRect: paper, cornerWidth: radius, cornerHeight: radius, transform: nil)
             liveMask.path = paperPath
+            liveMarkerMask.path = paperPath
             importMask.path = paperPath
             CATransaction.commit()
         }
@@ -852,6 +894,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             updateLiveStroke()
         } else {
             liveLayer.path = nil
+            liveMarkerLayer.path = nil
         }
         showLasso()
         showSelection()
@@ -955,9 +998,12 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         let style = InkStyle.tokens(for: inkTool)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        liveLayer.lineWidth = CGFloat(inkWidth) * camera.scale
-        liveLayer.strokeColor = UIColor(hex: Palette.inkOnPaper(inkColor, style: paperStyle)).withAlphaComponent(CGFloat(style.opacity)).cgColor
-        liveLayer.path = StrokePathCache.makePath(points, transform: camera.toScreen)
+        let isMarker = inkTool == .marker
+        let shown = isMarker ? liveMarkerLayer : liveLayer
+        let color = UIColor(hex: Palette.inkOnPaper(inkColor, style: paperStyle))
+        shown.lineWidth = CGFloat(inkWidth) * camera.scale
+        shown.strokeColor = (isMarker ? color : color.withAlphaComponent(CGFloat(style.opacity))).cgColor
+        shown.path = StrokePathCache.makePath(points, transform: camera.toScreen)
         CATransaction.commit()
     }
 
@@ -1045,7 +1091,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         switch element.type {
         case .stroke:
             return Lasso.touches(polygon, line: element.points ?? [])
-        case .text, .importPage:
+        case .importPage:
+            return false
+        case .text:
             guard let rect = Self.elementBounds(element) else { return false }
             let corners = [Point(x: rect.minX, y: rect.minY), Point(x: rect.maxX, y: rect.minY), Point(x: rect.maxX, y: rect.maxY), Point(x: rect.minX, y: rect.maxY)]
             return Lasso.touches(polygon, area: corners)
@@ -1061,8 +1109,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         case .text:
             return PageRenderer.textRect(for: element)
         case .importPage:
-            guard let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { return nil }
-            return CGRect(x: placement.x, y: placement.y, width: size[0] * placement.scale, height: size[1] * placement.scale)
+            return PageRenderer.importRect(for: element)
         }
     }
 
@@ -1156,6 +1203,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         isPanning = false
         endStroke()
         liveLayer.path = nil
+        liveMarkerLayer.path = nil
         lassoPoints = []
         lassoLayer.path = nil
         clearPendingFeedback()
@@ -1172,6 +1220,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         textOffset = .zero
         if stroke == nil {
             liveLayer.path = nil
+            liveMarkerLayer.path = nil
         }
     }
 

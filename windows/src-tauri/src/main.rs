@@ -67,6 +67,20 @@ fn read_sync_state(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn installed_font_families() -> Vec<String> {
+    let mut database = fontdb::Database::new();
+    database.load_system_fonts();
+    let mut families: Vec<String> = database
+        .faces()
+        .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    families.sort_by_key(|name| name.to_lowercase());
+    families.dedup();
+    families
+}
+
+#[tauri::command]
 fn read_token() -> Option<String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
         .ok()
@@ -243,6 +257,7 @@ fn main() {
             load_files,
             write_file,
             read_sync_state,
+            installed_font_families,
             read_token,
             save_token,
             write_asset,

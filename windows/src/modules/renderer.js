@@ -5,10 +5,12 @@ import { writingFont } from "./preferences.js"
 import { inkOnPaper, paperColors, tokens, withAlpha } from "./tokens.js"
 
 export const monoFamily = "\"Space Mono\""
-const writingFamilies = { Mono: monoFamily, Sans: "\"General Sans\", \"Space Mono\"" }
+export function fontFamily(name) {
+    return `"${name.replaceAll("\"", "")}", ${monoFamily}`
+}
 
 export function writingFamily() {
-    return writingFamilies[writingFont()] ?? monoFamily
+    return fontFamily(writingFont())
 }
 export const minimumScale = 0.01
 export const maximumScale = 40
@@ -340,7 +342,31 @@ function drawCellBoundaries(context, extent, camera, colors) {
     context.restore()
 }
 
-function drawStroke(context, element, visible, cache, style) {
+const markerCanvas = document.createElement("canvas")
+
+function isMarker(element) {
+    return element.type === "stroke" && element.tool === "marker"
+}
+
+function drawMarkerLayer(context, draw) {
+    const target = context.canvas
+    if (markerCanvas.width !== target.width || markerCanvas.height !== target.height) {
+        markerCanvas.width = target.width
+        markerCanvas.height = target.height
+    }
+    const layer = markerCanvas.getContext("2d")
+    layer.setTransform(1, 0, 0, 1, 0, 0)
+    layer.clearRect(0, 0, markerCanvas.width, markerCanvas.height)
+    layer.setTransform(context.getTransform())
+    draw(layer)
+    context.save()
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.globalAlpha = tokens.tools.marker.opacity
+    context.drawImage(markerCanvas, 0, 0)
+    context.restore()
+}
+
+function drawStroke(context, element, visible, cache, style, isOpaque = false) {
     const cached = cache.path(element)
     const bounds = cached.bounds
     if (bounds.maximumX < visible.minimumX || bounds.minimumX > visible.maximumX || bounds.maximumY < visible.minimumY || bounds.minimumY > visible.maximumY) {
@@ -349,7 +375,7 @@ function drawStroke(context, element, visible, cache, style) {
     context.lineWidth = element.width ?? 0.5
     context.lineCap = "round"
     context.lineJoin = "round"
-    context.strokeStyle = inkColor(element, style)
+    context.strokeStyle = isOpaque ? inkOnPaper(element.color ?? "#1A1A1A", style) : inkColor(element, style)
     context.stroke(cached.path)
 }
 
@@ -417,7 +443,9 @@ export function importRect(element) {
         return null
     }
     const scale = element.placement.scale ?? 1
-    return { x: element.placement.x, y: element.placement.y, width: element.source_size_mm[0] * scale, height: element.source_size_mm[1] * scale }
+    const centreX = element.placement.x + (element.source_size_mm[0] * scale) / 2
+    const centreY = element.placement.y + (element.source_size_mm[1] * scale) / 2
+    return { x: Math.floor(centreX / cellWidth) * cellWidth, y: Math.floor(centreY / cellHeight) * cellHeight, width: cellWidth, height: cellHeight }
 }
 
 function drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible) {
@@ -475,40 +503,56 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     clipToPaper(context, page.extent)
     context.fillStyle = colors.paper
     context.fillRect(0, 0, paper.maximumX, paper.maximumY)
+    const elements = liveElements(page)
+    for (const element of elements) {
+        if (element.type === "import" && !hiddenElementIds.has(element.id)) {
+            drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible)
+        }
+    }
     if (showsGuides) {
         drawGuides(context, visible, camera, colors)
     }
     if (showsDividers) {
         drawCellBoundaries(context, page.extent, camera, colors)
     }
-    for (const element of liveElements(page)) {
-        if (hiddenElementIds.has(element.id)) {
-            continue
-        }
+    const drawMovedStroke = (target, element, isOpaque) => {
         const offset = elementOffsets.get(element.id)
         const scale = elementScale?.ids.has(element.id) ? elementScale : null
+        target.save()
+        if (offset) {
+            target.translate(offset[0], offset[1])
+        }
+        if (scale) {
+            target.translate(scale.anchor[0], scale.anchor[1])
+            target.scale(scale.factor, scale.factor)
+            target.translate(-scale.anchor[0], -scale.anchor[1])
+        }
+        drawStroke(target, element, offset || scale ? everywhere : visible, cache, paperStyle, isOpaque)
+        target.restore()
+    }
+    const markers = elements.filter((element) => isMarker(element) && !hiddenElementIds.has(element.id))
+    if (markers.length) {
+        drawMarkerLayer(context, (layer) => {
+            for (const element of markers) {
+                drawMovedStroke(layer, element, true)
+            }
+        })
+    }
+    for (const element of elements) {
+        if (hiddenElementIds.has(element.id) || element.type === "import" || isMarker(element)) {
+            continue
+        }
         if (element.type === "text") {
+            const offset = elementOffsets.get(element.id)
+            const scale = elementScale?.ids.has(element.id) ? elementScale : null
             let shown = scale ? scaledElement(element, scale.anchor, scale.factor) : element
             shown = offset ? translatedElement(shown, offset) : shown
             drawText(context, shown, camera, pixelRatio, paperStyle)
             continue
         }
-        context.save()
-        if (offset) {
-            context.translate(offset[0], offset[1])
+        if (element.type === "stroke") {
+            drawMovedStroke(context, element, false)
         }
-        if (scale) {
-            context.translate(scale.anchor[0], scale.anchor[1])
-            context.scale(scale.factor, scale.factor)
-            context.translate(-scale.anchor[0], -scale.anchor[1])
-        }
-        const isMoved = Boolean(offset || scale)
-        if (element.type === "import") {
-            drawImport(context, element, camera, pixelRatio, paperStyle, colors, isMoved ? null : visible)
-        } else if (element.type === "stroke") {
-            drawStroke(context, element, isMoved ? everywhere : visible, cache, paperStyle)
-        }
-        context.restore()
     }
     context.restore()
 }

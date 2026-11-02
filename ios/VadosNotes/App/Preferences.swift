@@ -24,11 +24,6 @@ enum EraserMode: String {
     case area
 }
 
-enum WritingFont: String {
-    case mono = "Mono"
-    case sans = "Sans"
-}
-
 enum NavOrientation: String {
     case horizontal
     case vertical
@@ -88,17 +83,24 @@ final class Preferences: ObservableObject {
         write("paperStyle", style.rawValue)
     }
 
-    nonisolated static var writingFont: WritingFont {
-        let stored = UserDefaults.standard.string(forKey: "writingFont") ?? Tokens.shared.text.font
-        return Tokens.shared.text.fonts.contains(stored) ? WritingFont(rawValue: stored) ?? .mono : .mono
+    private nonisolated static let earlierWritingFonts = ["Mono": "Space Mono", "Sans": "General Sans"]
+
+    nonisolated static var writingFont: String {
+        let fallback = Tokens.shared.text.fonts[0]
+        guard let stored = UserDefaults.standard.string(forKey: "writingFont"), !stored.isEmpty else { return fallback }
+        return earlierWritingFonts[stored] ?? stored
     }
 
-    var writingFont: WritingFont {
+    nonisolated static var isWritingMono: Bool {
+        writingFont == Tokens.shared.text.fonts[0]
+    }
+
+    var writingFont: String {
         Self.writingFont
     }
 
-    func setWritingFont(_ font: WritingFont) {
-        write("writingFont", font.rawValue)
+    func setWritingFont(_ family: String) {
+        write("writingFont", family)
     }
 
     var showsAsciiBackground: Bool {

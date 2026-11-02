@@ -7,6 +7,8 @@ import { animate, curve, duration } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
+import { fontFamily } from "./renderer.js"
+import { installedFontFamilies } from "./storage.js"
 import { syncSettings } from "./sync.js"
 import { tokens } from "./tokens.js"
 
@@ -408,8 +410,32 @@ function settingsSheet(app) {
         preferences.setInkSmoothing(rangeValue(share, smoothingRange))
         return preferences.inkSmoothing().toFixed(1)
     }))
-    const fontToggle = segmented(tokens.text.fonts.map((font) => ({ value: font, title: font })), preferences.writingFont(), (font) => preferences.setWritingFont(font))
-    const textModule = settingsModule("Text", "Code stays Mono", fontToggle)
+    const fontSearch = field({ placeholder: "Search fonts" })
+    const fontList = create("div", "settings-font-list")
+    let installedFonts = []
+    const renderFonts = () => {
+        const query = fontSearch.input.value.trim().toLowerCase()
+        const current = preferences.writingFont()
+        const names = [...tokens.text.fonts, ...installedFonts.filter((name) => !tokens.text.fonts.includes(name))]
+        fontList.replaceChildren(...names.filter((name) => name.toLowerCase().includes(query)).map((name) => {
+            const option = create("button", `settings-font${name === current ? " is-selected" : ""}`, name)
+            option.style.fontFamily = fontFamily(name)
+            pressable(option)
+            option.addEventListener("click", () => {
+                preferences.setWritingFont(name)
+                renderFonts()
+            })
+            return option
+        }))
+    }
+    fontSearch.input.addEventListener("input", renderFonts)
+    fontSearch.input.addEventListener("keydown", (event) => event.stopPropagation())
+    installedFontFamilies().then((families) => {
+        installedFonts = families
+        renderFonts()
+    }).catch(() => {})
+    renderFonts()
+    const textModule = settingsModule("Text", "Code stays Mono", fontSearch, fontList)
     const rightColumn = create("div", "settings-column", paperModule, penModule, textModule)
 
     const settings = syncSettings()
@@ -472,7 +498,6 @@ function settingsSheet(app) {
         renderAscii(false)
         asciiToggle.select(preferences.showsAsciiBackground(), true)
         paperToggle.select(preferences.paperStyle(), true)
-        fontToggle.select(preferences.writingFont(), true)
     }
     sheet.unsubscribe = app.sync.subscribe(() => renderSync())
     return sheet

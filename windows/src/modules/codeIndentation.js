@@ -125,6 +125,29 @@ export function closingEdit(before, character, unit) {
     return { replacement, removedBefore: before.length, removedAfter: 0, caret: replacement.length }
 }
 
+export function openingEdit(after, character) {
+    const closer = pairs[character]
+    if (!closer || !/^($|[\s)\]}])/.test(after)) {
+        return null
+    }
+    return { replacement: character + closer, removedBefore: 0, removedAfter: 0, caret: 1 }
+}
+
+export function overtypeEdit(after, character) {
+    if (!closers.has(character) || after[0] !== character) {
+        return null
+    }
+    return { replacement: character, removedBefore: 0, removedAfter: 1, caret: 1 }
+}
+
+export function pairBackspaceEdit(before, after) {
+    const opener = before.at(-1)
+    if (!opener || !pairs[opener] || pairs[opener] !== after[0]) {
+        return null
+    }
+    return { replacement: "", removedBefore: 1, removedAfter: 1, caret: 0 }
+}
+
 export function backspaceEdit(before, unit) {
     if (!/^ +$/.test(before)) {
         return null
@@ -199,15 +222,18 @@ export function codeKeyEdit(value, selectionStart, selectionEnd, event) {
     if (event.key === "Tab") {
         return placed(tabEdit(context.before, context.unit), selectionStart, selectionEnd)
     }
-    return placed(backspaceEdit(context.before, context.unit), selectionStart, selectionEnd)
+    return placed(pairBackspaceEdit(context.before, context.after) ?? backspaceEdit(context.before, context.unit), selectionStart, selectionEnd)
 }
 
 export function codeTextEdit(value, selectionStart, selectionEnd, text) {
-    if (selectionStart !== selectionEnd || !closers.has(text)) {
+    if (selectionStart !== selectionEnd || !(closers.has(text) || pairs[text])) {
         return null
     }
     const context = codeContext(value, selectionStart, selectionEnd)
-    return context ? placed(closingEdit(context.before, text, context.unit), selectionStart, selectionEnd) : null
+    if (!context) {
+        return null
+    }
+    return placed(overtypeEdit(context.after, text) ?? closingEdit(context.before, text, context.unit) ?? openingEdit(context.after, text), selectionStart, selectionEnd)
 }
 
 export function applyCodeEdit(textarea, edit) {

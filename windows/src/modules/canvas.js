@@ -202,7 +202,15 @@ export class InkCanvas {
         })
     }
 
+    isDrawingMarker() {
+        return Boolean(this.stroke) && this.tool.kind === "ink" && this.tool.tool === "marker"
+    }
+
     requestOverlay() {
+        if (this.isDrawingMarker()) {
+            this.requestDraw()
+            return
+        }
         if (this.overlayRequest || this.frameRequest) {
             return
         }
@@ -213,10 +221,14 @@ export class InkCanvas {
     }
 
     displayPage() {
-        if (!this.page || this.areaErase.size === 0) {
+        if (!this.page || (this.areaErase.size === 0 && !this.isDrawingMarker())) {
             return this.page
         }
         const elements = this.page.elements.filter((element) => !this.areaErase.has(element.id))
+        if (this.isDrawingMarker()) {
+            const points = this.liveStrokePoints()
+            elements.push({ id: "live-marker", type: "stroke", layer: "marker", tool: "marker", color: this.inkColor, width: this.inkWidth, points, updated: `live-${points.length}-${points.at(-1)?.join(",")}`, deleted: false })
+        }
         for (const [elementId, entry] of this.areaErase) {
             entry.pieces.forEach((points, index) => {
                 elements.push({ ...entry.element, id: `${elementId}-piece-${index}-${entry.revision}`, points, updated: `${entry.element.updated}#${entry.revision}` })
@@ -262,7 +274,7 @@ export class InkCanvas {
         if (!this.page) {
             return
         }
-        if (this.stroke && this.tool.kind === "ink") {
+        if (this.stroke && this.tool.kind === "ink" && !this.isDrawingMarker()) {
             const points = this.liveStrokePoints()
             const style = tokens.tools[this.tool.tool]
             context.save()
@@ -923,6 +935,9 @@ export class InkCanvas {
     }
 
     endStroke() {
+        if (this.isDrawingMarker()) {
+            this.requestDraw()
+        }
         if (this.stroke) {
             clearTimeout(this.stroke.stillTimer)
         }
@@ -988,6 +1003,9 @@ export class InkCanvas {
     }
 
     isEnclosed(element, polygon) {
+        if (element.type === "import") {
+            return false
+        }
         if (element.type === "stroke") {
             return lassoTouchesLine(polygon, element.points ?? [])
         }

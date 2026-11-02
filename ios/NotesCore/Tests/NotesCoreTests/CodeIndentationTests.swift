@@ -57,4 +57,21 @@ final class CodeIndentationTests: XCTestCase {
         XCTAssertEqual(CodeIndentation.unit(["if (a) {", "  b();", "    c();", "}"]), 2)
         XCTAssertEqual(CodeIndentation.unit(["x = 1", ""]), 4)
     }
+
+    func testOpenersCloseThemselves() {
+        XCTAssertEqual(CodeIndentation.opening(after: "", character: "{"), CodeEdit(replacement: "{}", caret: 1))
+        XCTAssertEqual(CodeIndentation.opening(after: ")", character: "("), CodeEdit(replacement: "()", caret: 1))
+        XCTAssertNil(CodeIndentation.opening(after: "x", character: "["))
+        XCTAssertNil(CodeIndentation.opening(after: "", character: "a"))
+    }
+
+    func testTypingTheCloserStepsOverIt() {
+        XCTAssertEqual(CodeIndentation.overtype(after: "}", character: "}"), CodeEdit(replacement: "}", removedAfter: 1))
+        XCTAssertNil(CodeIndentation.overtype(after: ")", character: "}"))
+    }
+
+    func testBackspaceBetweenAPairRemovesBoth() {
+        XCTAssertEqual(CodeIndentation.pairBackspace(before: "f(", after: ")"), CodeEdit(replacement: "", removedBefore: 1, removedAfter: 1))
+        XCTAssertNil(CodeIndentation.pairBackspace(before: "f(", after: "]"))
+    }
 }

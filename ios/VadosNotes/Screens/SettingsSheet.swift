@@ -120,6 +120,10 @@ struct SettingsSheet: View {
     @State private var isImporting = false
     @State private var isDeleteArmed = false
     @State private var importFailure: String?
+    @State private var fontQuery = ""
+    @State private var fontFamilies: [String] = []
+    @State private var isImportingFont = false
+    @State private var fontFailure: String?
     @State private var moduleScales: [Module: CGFloat] = [:]
     @Environment(\.accessibilityReduceMotion) private var isMotionReduced
 
@@ -127,6 +131,7 @@ struct SettingsSheet: View {
     private static let smoothingRange = Tokens.shared.ink.smoothingRange
     private static let armedSeconds = 2.4
     private static let contentShare: CGFloat = 0.75
+    private static let fontListHeight: CGFloat = 260
 
     private var pageContext: (notebookId: String, pageId: String)? {
         if case .page(let notebookId, let pageId) = navigator.route {
@@ -344,8 +349,59 @@ struct SettingsSheet: View {
 
     private var textModule: some View {
         SettingsModule(label: "Text", detail: "Code stays Mono") {
-            Segmented(options: Tokens.shared.text.fonts.compactMap(WritingFont.init(rawValue:)).map { SegmentOption(value: $0, title: $0.rawValue) }, selected: preferences.writingFont) { font in
-                preferences.setWritingFont(font)
+            TextField("", text: $fontQuery, prompt: Text("Search fonts").foregroundColor(Palette.textFaint))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .modifier(FieldStyle())
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(fontFamilies.filter { fontQuery.isEmpty || $0.localizedCaseInsensitiveContains(fontQuery) }, id: \.self) { family in
+                        let isSelected = family == preferences.writingFont
+                        Button {
+                            preferences.setWritingFont(family)
+                        } label: {
+                            Text(family)
+                                .font(.custom(family, fixedSize: 16))
+                                .foregroundColor(isSelected ? Palette.textBright : Palette.textBody)
+                                .lineLimit(1)
+                                .padding(.vertical, 9)
+                                .padding(.leading, 14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .overlay(alignment: .leading) {
+                                    Rectangle()
+                                        .fill(Palette.accent)
+                                        .frame(width: 2)
+                                        .opacity(isSelected ? 1 : 0)
+                                }
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PressableStyle())
+                    }
+                }
+            }
+            .frame(height: Self.fontListHeight)
+            .scrollIndicators(.hidden)
+            LinkButton(glyph: "import", title: "Add font", tint: Palette.importAsset) {
+                isImportingFont = true
+            }
+            if let fontFailure {
+                MicroLabel(text: fontFailure, color: Palette.destructive)
+            }
+        }
+        .onAppear {
+            fontFamilies = UserFonts.families
+        }
+        .fileImporter(isPresented: $isImportingFont, allowedContentTypes: [.font]) { result in
+            guard case .success(let url) = result else { return }
+            do {
+                let families = try UserFonts.add(from: url)
+                fontFamilies = UserFonts.families
+                fontFailure = nil
+                if let first = families.first {
+                    preferences.setWritingFont(first)
+                }
+            } catch {
+                fontFailure = "Not a readable font"
             }
         }
     }

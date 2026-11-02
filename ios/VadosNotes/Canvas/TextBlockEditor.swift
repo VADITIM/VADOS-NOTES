@@ -83,7 +83,13 @@ struct TextBlockEditor: UIViewRepresentable {
         }
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-            guard !isIndenting, textView.markedTextRange == nil, let edit = codeEdit(for: text, in: range, view: textView) else { return true }
+            guard !isIndenting, textView.markedTextRange == nil else { return true }
+            if text == "
+", let language = inlineCodeLanguage(at: range, in: textView) {
+                openBlock(language, at: range.location, isBreakingLine: true, in: textView)
+                return false
+            }
+            guard let edit = codeEdit(for: text, in: range, view: textView) else { return true }
             let caret = text.isEmpty ? range.upperBound : range.location
             let length = text.isEmpty ? 0 : range.length
             apply(edit, over: NSRange(location: caret - edit.removedBefore, length: length + edit.removedBefore + edit.removedAfter), in: textView)
@@ -117,11 +123,63 @@ struct TextBlockEditor: UIViewRepresentable {
             case "\t":
                 return CodeIndentation.tab(before: string.substring(with: NSRange(location: starts[index], length: range.location - starts[index])), unit: unit)
             case "" where range.length == 1:
-                return CodeIndentation.backspace(before: string.substring(with: NSRange(location: starts[index], length: range.upperBound - starts[index])), unit: unit)
+                let before = string.substring(with: NSRange(location: starts[index], length: range.upperBound - starts[index]))
+                let after = string.substring(with: NSRange(location: range.upperBound, length: lineEnd - range.upperBound))
+                return CodeIndentation.pairBackspace(before: before, after: after) ?? CodeIndentation.backspace(before: before, unit: unit)
             default:
                 guard range.length == 0, text.count == 1, let character = text.first else { return nil }
-                return CodeIndentation.closing(before: string.substring(with: NSRange(location: starts[index], length: range.location - starts[index])), character: character, unit: unit)
+                let before = string.substring(with: NSRange(location: starts[index], length: range.location - starts[index]))
+                let after = string.substring(with: NSRange(location: range.location, length: lineEnd - range.location))
+                return CodeIndentation.overtype(after: after, character: character)
+                    ?? CodeIndentation.closing(before: before, character: character, unit: unit)
+                    ?? CodeIndentation.opening(after: after, character: character)
             }
+        }
+
+        private func lineBounds(at location: Int, in view: UITextView) -> NSRange {
+            let string = view.textStorage.string as NSString
+            let line = string.lineRange(for: NSRange(location: min(location, string.length), length: 0))
+            let hasBreak = line.length > 0 && string.character(at: line.upperBound - 1) == 10
+            return NSRange(location: line.location, length: line.length - (hasBreak ? 1 : 0))
+        }
+
+        private func inlineCodeLanguage(at range: NSRange, in view: UITextView) -> CodeLanguage? {
+            guard range.length == 0, lineShape(at: range.location, in: view).kind != .code else { return nil }
+            guard let typing = (view.typingAttributes[.markdownStyle] as? MarkdownStyleValue)?.style, typing.isCode, let language = typing.codeLanguage else { return nil }
+            let string = view.textStorage.string as NSString
+            var isAllCode = true
+            view.textStorage.enumerateAttribute(.markdownStyle, in: lineBounds(at: range.location, in: view)) { value, piece, _ in
+                let isCode = (value as? MarkdownStyleValue)?.style.isCode ?? false
+                if !isCode, string.substring(with: piece).contains(where: { !$0.isWhitespace }) {
+                    isAllCode = false
+                }
+            }
+            return isAllCode ? language : nil
+        }
+
+        private func openBlock(_ language: CodeLanguage, at caret: Int, isBreakingLine: Bool, in view: UITextView) {
+            let storage = view.textStorage
+            let string = storage.string as NSString
+            let line = lineBounds(at: caret, in: view)
+            let before = string.substring(with: NSRange(location: line.location, length: caret - line.location))
+            var after = string.substring(with: NSRange(location: caret, length: line.upperBound - caret))
+            var caretInLine = before.utf16.count
+            var middle = ""
+            if isBreakingLine {
+                let edit = CodeIndentation.newline(before: before, after: after, language: language, unit: CodeIndentation.unit([before, after]))
+                after = (after as NSString).substring(from: edit.removedAfter)
+                middle = edit.replacement
+                caretInLine += edit.caret
+            }
+            let opening = "```" + language.rawValue + "
+"
+            let block = opening + before + middle + after + "
+```"
+            storage.beginEditing()
+            storage.replaceCharacters(in: line, with: NSAttributedString(string: block, attributes: [.markdownStyle: MarkdownStyleValue(MarkdownStyle())]))
+            storage.endEditing()
+            view.selectedRange = NSRange(location: line.location + opening.utf16.count + caretInLine, length: 0)
+            commit(view)
         }
 
         private func apply(_ edit: CodeEdit, over target: NSRange, in view: UITextView) {
@@ -297,7 +355,8 @@ struct TextBlockEditor: UIViewRepresentable {
             let storage = view.textStorage
             let string = storage.string as NSString
             let isLineStart = caret == 0 || string.character(at: caret - 1) == 10
-            let typing = isLineStart ? MarkdownStyle() : style(at: caret - 1, in: storage)
+            let isCodeAhead = caret < storage.length && string.character(at: caret) != 10 && style(at: caret, in: storage).isCode
+            let typing = isLineStart ? (isCodeAhead ? style(at: caret, in: storage) : MarkdownStyle()) : style(at: caret - 1, in: storage)
             view.typingAttributes = attributes(typing, shape: lineShape(at: caret, in: view), isPrefix: false)
         }
 
@@ -422,6 +481,10 @@ struct TextBlockEditor: UIViewRepresentable {
             if selection.length == 0 {
                 let isInSpan = selection.location > 0 && style(at: selection.location - 1, in: storage).isCode
                 guard isInSpan, let line = touched.first else {
+                    if let language, let line = touched.first, lineShape(at: selection.location, in: view).kind != .code, texts[line].allSatisfy(\.isWhitespace) {
+                        openBlock(language, at: selection.location, isBreakingLine: false, in: view)
+                        return
+                    }
                     let current = (view.typingAttributes[.markdownStyle] as? MarkdownStyleValue)?.style ?? MarkdownStyle()
                     view.typingAttributes = attributes(coded(current, language), shape: lineShape(at: selection.location, in: view), isPrefix: false)
                     report(view)

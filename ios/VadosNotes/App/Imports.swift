@@ -75,7 +75,7 @@ final class ImportImages {
 
     private func level(for element: Element, pixelsPerMillimetre: Double) -> Double {
         let size = element.sourceSizeMillimetres ?? [210, 297]
-        let needed = pixelsPerMillimetre * (element.placement?.scale ?? 1)
+        let needed = pixelsPerMillimetre * max(PaperGeometry.cellWidth / size[0], PaperGeometry.cellHeight / size[1])
         let level = pow(2, ceil(log2(max(Self.minimumLevel, needed))))
         return min(level, Self.maximumImagePixels / max(size[0], size[1]))
     }

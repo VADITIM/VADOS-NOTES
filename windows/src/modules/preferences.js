@@ -201,15 +201,15 @@ export function setTextFontSize(size) {
     write("textFontSize", clamp(size, tokens.text.font_size_range))
 }
 
+const earlierWritingFonts = { Mono: "Space Mono", Sans: "General Sans" }
+
 export function writingFont() {
-    const font = readSetting("writingFont", tokens.text.font)
-    return tokens.text.fonts.includes(font) ? font : tokens.text.font
+    const font = readSetting("writingFont", tokens.text.fonts[0])
+    return typeof font === "string" && font ? earlierWritingFonts[font] ?? font : tokens.text.fonts[0]
 }
 
 export function setWritingFont(font) {
-    if (tokens.text.fonts.includes(font)) {
-        write("writingFont", font)
-    }
+    write("writingFont", font)
 }
 
 export function toolOrder() {

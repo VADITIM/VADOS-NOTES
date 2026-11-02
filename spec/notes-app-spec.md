@@ -466,4 +466,8 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The hold menus have no container: only their rows, with dividers centred in their gap.
 - Tapping a lasso selection opens a selection menu: Cut and Copy as icons on top, then Duplicate, Colour and Equal width. Paste sits at the top of the page menu and centres the clipboard on the hold point.
 - Settings fill the screen: one container covers the whole window and the modules sit in a column 75% of its width.
-- The writing font is a setting: Mono (Space Mono, the default) or Sans (General Sans). Code blocks and inline code are always Mono. The choice is per device and is not synced; the stored Markdown does not change.
+- The writing font is a setting: any font family installed on the device, with Space Mono (the default) and General Sans bundled first. The iPad can also add a font file. Code blocks and inline code are always Mono. The choice is per device and is not synced; the stored Markdown does not change.
+- An imported PDF page fills its whole cell and behaves as the page itself: it cannot be selected or moved, and the grid and dividers draw over it.
+- Hold menus no longer dim the page behind them.
+- In code blocks, brackets close themselves, typing the closer steps over it, and Backspace between a pair removes both. On the iPad, Enter on a line of inline code turns it into a code block, and choosing a code language on an empty line opens one.
+- Marker strokes never stack: all markers on a page are drawn as one layer, so where two cross the colour stays the same.

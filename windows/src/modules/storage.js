@@ -147,6 +147,14 @@ export async function exportPdf(name, bytes) {
     return true
 }
 
+export async function installedFontFamilies() {
+    if (tauri()) {
+        return tauri().core.invoke("installed_font_families")
+    }
+    const fonts = await window.queryLocalFonts?.().catch(() => []) ?? []
+    return [...new Set(fonts.map((font) => font.family))].sort((first, second) => first.localeCompare(second))
+}
+
 export async function backgroundArt() {
     if (tauri()) {
         return tauri().core.invoke("background_art")

@@ -223,10 +223,9 @@ struct MenuOverlay: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let presentation = controller.presentation {
-                Color.black.opacity(0.35)
+                Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { controller.dismiss() }
-                    .transition(.opacity.animation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)))
                 MenuPanel(presentation: presentation, highlightedPosition: controller.highlightedPosition, armedPosition: controller.armedPosition) { position in
                     controller.activate(position)
                 }

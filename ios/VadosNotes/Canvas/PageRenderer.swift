@@ -67,6 +67,14 @@ enum InkStyle {
         Preferences.inkTokens(tool)
     }
 
+    static func isMarker(_ element: Element) -> Bool {
+        element.type == .stroke && element.tool == .marker
+    }
+
+    static func opaqueColor(for element: Element, style: PaperStyle) -> UIColor {
+        UIColor(hex: Palette.inkOnPaper(element.color ?? "#1A1A1A", style: style))
+    }
+
     static func color(for element: Element, style: PaperStyle) -> UIColor {
         let base = UIColor(hex: Palette.inkOnPaper(element.color ?? "#1A1A1A", style: style))
         guard let tool = element.tool else { return base }
@@ -150,6 +158,12 @@ final class StrokePathCache {
     }
 }
 
+enum MarkerPass {
+    case merged
+    case only
+    case none
+}
+
 struct RenderOptions {
     var showsGuides = true
     var showsDividers = true
@@ -162,6 +176,8 @@ struct RenderOptions {
     var drawsPaper = true
     var drawsElements = true
     var drawsImports = true
+    var drawsLines = true
+    var markerPass = MarkerPass.merged
 }
 
 enum MarkdownText {
@@ -188,21 +204,14 @@ enum MarkdownText {
     }
 
     static func isMono(_ style: MarkdownStyle, isInCodeBlock: Bool) -> Bool {
-        style.isCode || isInCodeBlock || Preferences.writingFont == .mono
+        style.isCode || isInCodeBlock || Preferences.isWritingMono
     }
 
     static func runFont(_ size: CGFloat, style: MarkdownStyle, isInCodeBlock: Bool) -> UIFont {
         guard !isMono(style, isInCodeBlock: isInCodeBlock) else {
             return font(size, isBold: style.isBold)
         }
-        let name: String
-        switch (style.isBold, style.isItalic) {
-        case (true, true): name = Typography.sansBoldItalicName
-        case (true, false): name = Typography.sansBoldName
-        case (false, true): name = Typography.sansItalicName
-        case (false, false): name = Typography.sansName
-        }
-        return UIFont(name: name, size: size) ?? .systemFont(ofSize: size, weight: style.isBold ? .bold : .regular)
+        return UserFonts.font(family: Preferences.writingFont, size: size, isBold: style.isBold, isItalic: style.isItalic) ?? font(size, isBold: style.isBold)
     }
 
     private static func attributed(_ block: MarkdownBlock, size: CGFloat, rows: Int, indent: CGFloat, color: UIColor, paperStyle: PaperStyle, codeTokens: [CodeHighlighting.LineToken]) -> NSAttributedString {
@@ -233,7 +242,7 @@ enum MarkdownText {
             .paragraphStyle: TextRhythm.paragraph(rows: rows, zoom: zoom),
             .baselineOffset: TextRhythm.baselineOffset(font: runFont, rows: rows, zoom: zoom),
         ]
-        if style.isItalic && isMono(style, isInCodeBlock: isInCodeBlock) {
+        if style.isItalic && !runFont.fontDescriptor.symbolicTraits.contains(.traitItalic) {
             attributes[.obliqueness] = 0.2
         }
         if style.isCode && !isInCodeBlock {
@@ -275,7 +284,7 @@ enum MarkdownText {
         let fontSize = TextRhythm.fontSize
         let width = CGFloat(element.box?.width ?? Tokens.shared.text.boxWidth)
         let content = element.content ?? ""
-        let key = "\(Preferences.writingFont.rawValue)|\(fontSize)|\(width)|\(color.description)|\(paperStyle.rawValue)|\(content)"
+        let key = "\(Preferences.writingFont)|\(fontSize)|\(width)|\(color.description)|\(paperStyle.rawValue)|\(content)"
         if let cached = cache[key] {
             return cached
         }
@@ -359,6 +368,14 @@ enum PageRenderer {
         if options.drawsPaper {
             context.setFillColor(UIColor(hex: colors.paper).cgColor)
             context.fill(paperRect)
+        }
+        let elements = options.drawsElements ? page.liveElements : []
+        if options.drawsImports {
+            for element in elements where element.type == .importPage && !options.hiddenElementIds.contains(element.id) {
+                drawImport(element, in: context, camera: camera, visiblePage: visiblePage, options: options, guide: UIColor(hex: colors.guide))
+            }
+        }
+        if options.drawsLines {
             if options.showsGuides {
                 drawGuides(in: context, visiblePage: visiblePage, camera: camera, color: UIColor(hex: colors.guide))
             }
@@ -366,26 +383,59 @@ enum PageRenderer {
                 drawCellBoundaries(in: context, extent: page.extent, camera: camera, color: UIColor(hex: colors.cellBoundary))
             }
         }
-        let elements = options.drawsElements ? page.liveElements : []
-        for element in elements where !options.hiddenElementIds.contains(element.id) && (options.drawsImports || element.type != .importPage) {
-            let offset = options.elementOffsets[element.id] ?? .zero
-            let transform = options.elementTransforms[element.id]
+        let shown = elements.filter { !options.hiddenElementIds.contains($0.id) && $0.type != .importPage }
+        let markers = shown.filter(InkStyle.isMarker)
+        switch options.markerPass {
+        case .merged where !markers.isEmpty:
             context.saveGState()
-            context.translateBy(x: offset.dx, y: offset.dy)
-            if let transform {
-                context.concatenate(transform)
+            context.setAlpha(CGFloat(InkStyle.tokens(for: .marker).opacity))
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            for element in markers {
+                drawPlaced(element, in: context, visiblePage: visiblePage, options: options, cache: cache, isOpaque: true)
             }
-            switch element.type {
-            case .stroke:
-                drawStroke(element, in: context, visiblePage: transform == nil ? visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy) : .infinite, cache: cache, style: options.paperStyle)
-            case .text:
-                drawText(element, in: context, style: options.paperStyle)
-            case .importPage:
-                drawImport(element, in: context, camera: camera, visiblePage: transform == nil ? visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy) : .infinite, options: options, guide: UIColor(hex: colors.guide))
-            }
+            context.endTransparencyLayer()
             context.restoreGState()
+        case .only:
+            for element in markers {
+                drawPlaced(element, in: context, visiblePage: visiblePage, options: options, cache: cache, isOpaque: true)
+            }
+        default:
+            break
+        }
+        if options.markerPass != .only {
+            for element in shown where !InkStyle.isMarker(element) {
+                drawPlaced(element, in: context, visiblePage: visiblePage, options: options, cache: cache, isOpaque: false)
+            }
         }
         context.restoreGState()
+    }
+
+    private static func drawPlaced(_ element: Element, in context: CGContext, visiblePage: CGRect, options: RenderOptions, cache: StrokePathCache, isOpaque: Bool) {
+        let offset = options.elementOffsets[element.id] ?? .zero
+        let transform = options.elementTransforms[element.id]
+        context.saveGState()
+        context.translateBy(x: offset.dx, y: offset.dy)
+        if let transform {
+            context.concatenate(transform)
+        }
+        switch element.type {
+        case .stroke:
+            drawStroke(element, in: context, visiblePage: transform == nil ? visiblePage.offsetBy(dx: -offset.dx, dy: -offset.dy) : .infinite, cache: cache, style: options.paperStyle, isOpaque: isOpaque)
+        case .text:
+            drawText(element, in: context, style: options.paperStyle)
+        case .importPage:
+            break
+        }
+        context.restoreGState()
+    }
+
+    static func importRect(for element: Element) -> CGRect? {
+        guard element.type == .importPage, let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { return nil }
+        let centreX = placement.x + size[0] * placement.scale / 2
+        let centreY = placement.y + size[1] * placement.scale / 2
+        let width = PaperGeometry.cellWidth
+        let height = PaperGeometry.cellHeight
+        return CGRect(x: (centreX / width).rounded(.down) * width, y: (centreY / height).rounded(.down) * height, width: width, height: height)
     }
 
     static func textRect(for element: Element) -> CGRect? {
@@ -395,9 +445,7 @@ enum PageRenderer {
     }
 
     private static func drawImport(_ element: Element, in context: CGContext, camera: CanvasCamera, visiblePage: CGRect, options: RenderOptions, guide: UIColor) {
-        guard let size = element.sourceSizeMillimetres, size.count == 2, let placement = element.placement else { return }
-        let rect = CGRect(x: placement.x, y: placement.y, width: size[0] * placement.scale, height: size[1] * placement.scale)
-        guard rect.intersects(visiblePage) else { return }
+        guard let rect = importRect(for: element), rect.intersects(visiblePage) else { return }
         guard let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * options.pixelScale), isDark: options.paperStyle == .dark) else {
             context.setFillColor(guide.cgColor)
             context.fill(rect)
@@ -411,7 +459,7 @@ enum PageRenderer {
         context.restoreGState()
     }
 
-    private static func drawStroke(_ element: Element, in context: CGContext, visiblePage: CGRect, cache: StrokePathCache, style: PaperStyle) {
+    private static func drawStroke(_ element: Element, in context: CGContext, visiblePage: CGRect, cache: StrokePathCache, style: PaperStyle, isOpaque: Bool) {
         let cached = cache.path(for: element)
         guard cached.bounds.intersects(visiblePage) else { return }
         context.saveGState()
@@ -419,7 +467,7 @@ enum PageRenderer {
         context.setLineWidth(CGFloat(element.width ?? 0.5))
         context.setLineCap(.round)
         context.setLineJoin(.round)
-        context.setStrokeColor(InkStyle.color(for: element, style: style).cgColor)
+        context.setStrokeColor((isOpaque ? InkStyle.opaqueColor(for: element, style: style) : InkStyle.color(for: element, style: style)).cgColor)
         context.strokePath()
         context.restoreGState()
     }

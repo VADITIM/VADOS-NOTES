@@ -1,3 +1,4 @@
+import { cellHeight, cellWidth } from "./model.js"
 import { readAsset, writeAsset } from "./storage.js"
 import { tokens } from "./tokens.js"
 
@@ -119,7 +120,7 @@ function documentFor(asset) {
 
 function levelFor(element, pixelsPerMillimetre) {
     const [width, height] = element.source_size_mm
-    const needed = pixelsPerMillimetre * (element.placement?.scale ?? 1)
+    const needed = pixelsPerMillimetre * Math.max(cellWidth / width, cellHeight / height)
     const level = Math.pow(2, Math.ceil(Math.log2(Math.max(minimumLevel, needed))))
     return Math.min(level, maximumImagePixels / Math.max(width, height))
 }

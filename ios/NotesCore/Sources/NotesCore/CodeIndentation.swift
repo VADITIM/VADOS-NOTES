@@ -61,6 +61,24 @@ public enum CodeIndentation {
         return CodeEdit(replacement: dedented(before, unit: unit) + String(character), removedBefore: before.utf16.count)
     }
 
+    public static func opening(after: String, character: Character) -> CodeEdit? {
+        guard let closer = pairs[character] else { return nil }
+        if let next = after.first, !next.isWhitespace, !closers.contains(next) {
+            return nil
+        }
+        return CodeEdit(replacement: String(character) + String(closer), caret: 1)
+    }
+
+    public static func overtype(after: String, character: Character) -> CodeEdit? {
+        guard closers.contains(character), after.first == character else { return nil }
+        return CodeEdit(replacement: String(character), removedAfter: 1)
+    }
+
+    public static func pairBackspace(before: String, after: String) -> CodeEdit? {
+        guard let opener = before.last, let closer = pairs[opener], after.first == closer else { return nil }
+        return CodeEdit(replacement: "", removedBefore: 1, removedAfter: 1)
+    }
+
     public static func backspace(before: String, unit: Int) -> CodeEdit? {
         guard !before.isEmpty, before.allSatisfy({ $0 == " " }) else { return nil }
         let target = ((before.count - 1) / unit) * unit
