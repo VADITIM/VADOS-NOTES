@@ -2,7 +2,7 @@ import { create, field, linkButton, microLabel, pressable, segmented, setEnabled
 import { colorPanel, sizeSlider, swatchButton, wheelButton } from "./controls.js"
 import { exportNote } from "./exports.js"
 import { folderLook, noteLook } from "./grid.js"
-import { readPdf } from "./imports.js"
+import { importFailureMessage, readPdf } from "./imports.js"
 import { animate, curve, duration } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
@@ -224,9 +224,9 @@ function newNoteSheet(app, request) {
             if (!trimmed || trimmed.startsWith("Note ")) {
                 title.input.value = file.name.replace(/\.pdf$/i, "")
             }
-        } catch {
+        } catch (error) {
             document_ = null
-            fileDetail.textContent = "NOT A READABLE PDF"
+            fileDetail.textContent = importFailureMessage(error)
             fileDetail.style.color = tokens.semantic.destructive
         }
         refresh()
@@ -377,8 +377,8 @@ function settingsSheet(app) {
             library.appendDocument(imported, pageContext.pageId)
             importFailure.hidden = true
             app.navigator.show(null)
-        } catch {
-            importFailure.textContent = "NOT A READABLE PDF"
+        } catch (error) {
+            importFailure.textContent = importFailureMessage(error)
             importFailure.hidden = false
         }
     } })

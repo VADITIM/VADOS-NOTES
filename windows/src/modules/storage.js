@@ -128,6 +128,13 @@ export async function readAsset(path) {
     return bytes.slice()
 }
 
+export async function hasAsset(path) {
+    if (tauri()) {
+        return tauri().core.invoke("has_asset", { path })
+    }
+    return browserAssets.has(path)
+}
+
 export async function exportPdf(name, bytes) {
     if (tauri()) {
         return tauri().core.invoke("export_pdf", bytes, { headers: { "export-name": encodeURIComponent(name) } }).then(() => true)

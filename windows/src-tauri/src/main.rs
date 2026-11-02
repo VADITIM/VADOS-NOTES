@@ -117,6 +117,12 @@ fn read_asset(app: AppHandle, path: String) -> Result<Response, String> {
 }
 
 #[tauri::command]
+fn has_asset(app: AppHandle, path: String) -> Result<bool, String> {
+    let relative = checked_asset_path(&path)?;
+    Ok(store_root(&app)?.join(relative).is_file())
+}
+
+#[tauri::command]
 async fn export_pdf(app: AppHandle, request: Request<'_>) -> Result<Option<String>, String> {
     let InvokeBody::Raw(bytes) = request.body() else {
         return Err("export body must be raw bytes".into());
@@ -241,6 +247,7 @@ fn main() {
             save_token,
             write_asset,
             read_asset,
+            has_asset,
             export_pdf
         ])
         .run(tauri::generate_context!())

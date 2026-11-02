@@ -40,8 +40,27 @@ async function openDocument(bytes) {
     }).promise
 }
 
+class ImportError extends Error {
+    constructor(kind) {
+        super(kind)
+        this.kind = kind
+    }
+}
+
 function hexOf(buffer) {
     return [...new Uint8Array(buffer)].map((value) => value.toString(16).padStart(2, "0")).join("")
+}
+
+export async function assetIdentifier(bytes) {
+    return `sha256:${hexOf(await crypto.subtle.digest("SHA-256", bytes))}`
+}
+
+export function assetByteLimit() {
+    return tokens.sync.asset_limit_megabytes * 1024 * 1024
+}
+
+export function importFailureMessage(error) {
+    return error?.kind === "tooLarge" ? `LARGER THAN ${tokens.sync.asset_limit_megabytes} MB` : "NOT A READABLE PDF"
 }
 
 export function assetPath(asset) {
@@ -60,8 +79,11 @@ function announce() {
 }
 
 export async function readPdf(file) {
+    if (file.size > assetByteLimit()) {
+        throw new ImportError("tooLarge")
+    }
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const asset = `sha256:${hexOf(await crypto.subtle.digest("SHA-256", bytes))}`
+    const asset = await assetIdentifier(bytes)
     const document = await openDocument(bytes.slice())
     const pages = []
     for (let number = 1; number <= document.numPages; number += 1) {
@@ -71,6 +93,21 @@ export async function readPdf(file) {
     await writeAsset(assetPath(asset), bytes)
     documents.set(asset, Promise.resolve(document))
     return { asset, pages }
+}
+
+export function reloadAssets(assets) {
+    if (!assets.length) {
+        return
+    }
+    for (const asset of assets) {
+        documents.delete(asset)
+        for (const key of [...images.keys()]) {
+            if (key.startsWith(`${asset}|`)) {
+                images.delete(key)
+            }
+        }
+    }
+    announce()
 }
 
 function documentFor(asset) {

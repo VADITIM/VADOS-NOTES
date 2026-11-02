@@ -10,8 +10,9 @@ public struct SyncState: Codable, Equatable, Sendable {
     public var blobs: [String: String]
     public var blocked: [String: BlockReason]
     public var lastSynced: Date?
+    public var assetsListed: Bool?
 
-    public static let empty = SyncState(head: nil, blobs: [:], blocked: [:], lastSynced: nil)
+    public static let empty = SyncState(head: nil, blobs: [:], blocked: [:], lastSynced: nil, assetsListed: nil)
 }
 
 final class Snapshot {
@@ -95,16 +96,18 @@ final class Snapshot {
 public final class NotesStore {
     public let device: String
     public let journal: Journal
+    public let assets: AssetStore
     public private(set) var notebooks: [String: Notebook] = [:]
     public private(set) var pages: [String: Page] = [:]
     let snapshot: Snapshot
     private let now: () -> Date
 
-    public init(directory: URL, device: String, now: @escaping () -> Date = Timestamp.now) throws {
+    public init(directory: URL, device: String, assetByteLimit: Int = .max, now: @escaping () -> Date = Timestamp.now) throws {
         self.device = device
         self.now = now
         snapshot = try Snapshot(directory: directory.appendingPathComponent("synced"))
         journal = try Journal(fileURL: directory.appendingPathComponent("journal.jsonl"))
+        assets = try AssetStore(directory: directory.appendingPathComponent(RepositoryPath.assetsDirectory), byteLimit: assetByteLimit)
         rebuild()
     }
 
@@ -122,6 +125,18 @@ public final class NotesStore {
 
     public func livePages(in notebookId: String) -> [Page] {
         pages.values.filter { $0.notebook == notebookId && !$0.deleted }.sorted { $0.id < $1.id }
+    }
+
+    public var referencedAssets: Set<String> {
+        var referenced = Set<String>()
+        for page in pages.values where !page.deleted {
+            for element in page.elements where !element.deleted {
+                if let asset = element.asset {
+                    referenced.insert(asset)
+                }
+            }
+        }
+        return referenced
     }
 
     public func isReadOnly(pageId: String) -> Bool {

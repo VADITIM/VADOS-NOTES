@@ -140,7 +140,8 @@ final class SyncCoordinator: ObservableObject {
         policy.markFlushed()
         var didSucceed = false
         do {
-            _ = try await synchronizer.synchronize()
+            let report = try await synchronizer.synchronize()
+            ImportImages.shared.reload(assets: report.fetchedAssets)
             status = .synced(store.syncState.lastSynced ?? Date())
             didSucceed = true
         } catch SyncError.remote(.unauthorized) {

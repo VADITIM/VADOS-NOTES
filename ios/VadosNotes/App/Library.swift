@@ -31,16 +31,14 @@ final class Library: ObservableObject {
 
     let store: NotesStore
     let sync: SyncCoordinator
-    let assetsDirectory: URL
     private var undoSteps: [String: [UndoStep]] = [:]
     private var redoSteps: [String: [UndoStep]] = [:]
     private let undoLimit = 200
     private let importMargin = 5.0
     private let sizeTolerance = 1.0
 
-    init(store: NotesStore, assetsDirectory: URL) {
+    init(store: NotesStore) {
         self.store = store
-        self.assetsDirectory = assetsDirectory
         sync = SyncCoordinator(store: store)
         sync.onStoreChanged = { [weak self] in
             self?.revision += 1
@@ -50,9 +48,7 @@ final class Library: ObservableObject {
     static func open() -> Library {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("VadosNotes")
         do {
-            let assets = directory.appendingPathComponent("assets")
-            try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
-            return Library(store: try NotesStore(directory: directory, device: DeviceIdentity.current), assetsDirectory: assets)
+            return Library(store: try NotesStore(directory: directory, device: DeviceIdentity.current, assetByteLimit: Tokens.shared.sync.assetByteLimit))
         } catch {
             fatalError("The local notes store cannot be opened: \(error)")
         }
@@ -533,8 +529,8 @@ final class Library: ObservableObject {
         sync.recordInput(page: pageId)
     }
 
-    func assetURL(_ asset: String) -> URL {
-        assetsDirectory.appendingPathComponent("\(asset.replacingOccurrences(of: "sha256:", with: "")).pdf")
+    func assetURL(_ asset: String) -> URL? {
+        store.assets.fileURL(for: asset)
     }
 
     private func revert(_ step: UndoStep, on pageId: String) -> UndoStep {

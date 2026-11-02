@@ -1,11 +1,20 @@
 import CoreImage
-import CryptoKit
 import NotesCore
 import PDFKit
 import UIKit
 
 enum ImportError: Error {
     case unreadable
+    case tooLarge(megabytes: Int)
+
+    static func message(for error: Error) -> String {
+        switch error {
+        case ImportError.tooLarge(let megabytes):
+            return "Larger than \(megabytes) MB"
+        default:
+            return "Not a readable PDF"
+        }
+    }
 }
 
 final class ImportImages {
@@ -34,7 +43,7 @@ final class ImportImages {
     private var entries: [String: Entry] = [:]
     private var documents: [String: PDFDocument] = [:]
     private let imageContext = CIContext()
-    var assetURL: (String) -> URL = { _ in URL(fileURLWithPath: "/") }
+    var assetURL: (String) -> URL? = { _ in nil }
 
     @MainActor
     static func importDocument(from url: URL, into library: Library) throws -> ImportedDocument {
@@ -45,15 +54,14 @@ final class ImportImages {
             }
         }
         let data = try Data(contentsOf: url)
+        let byteLimit = library.store.assets.byteLimit
+        guard data.count <= byteLimit else {
+            throw ImportError.tooLarge(megabytes: byteLimit / (1024 * 1024))
+        }
         guard let document = PDFDocument(data: data), document.pageCount > 0 else {
             throw ImportError.unreadable
         }
-        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let asset = "sha256:\(hash)"
-        let target = library.assetURL(asset)
-        if !FileManager.default.fileExists(atPath: target.path) {
-            try data.write(to: target, options: .atomic)
-        }
+        let asset = try library.store.assets.add(data)
         let pages: [[Double]] = (0..<document.pageCount).compactMap { index in
             guard let page = document.page(at: index) else { return nil }
             let bounds = page.bounds(for: .mediaBox)
@@ -107,7 +115,7 @@ final class ImportImages {
         let url = assetURL(asset)
         queue.async { [weak self] in
             guard let self else { return }
-            let document = self.documents[asset] ?? PDFDocument(url: url)
+            let document = self.documents[asset] ?? url.flatMap { PDFDocument(url: $0) }
             self.documents[asset] = document
             guard let page = document?.page(at: pageIndex) else {
                 self.update(key) { $0.isFailed = true }
@@ -126,6 +134,22 @@ final class ImportImages {
                 entry.isWhite = isWhite
             }
             self.evict()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Self.didRender, object: nil)
+            }
+        }
+    }
+
+    func reload(assets: [String]) {
+        guard !assets.isEmpty else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            for asset in assets {
+                self.documents[asset] = nil
+            }
+            self.lock.lock()
+            self.entries = self.entries.filter { key, _ in !assets.contains { key.hasPrefix("\($0)|") } }
+            self.lock.unlock()
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: Self.didRender, object: nil)
             }

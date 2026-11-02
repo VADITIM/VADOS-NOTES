@@ -36,6 +36,7 @@ public struct SyncReport: Equatable, Sendable {
     public var pulledPaths: [String]
     public var pushedPaths: [String]
     public var blockedPaths: [String]
+    public var fetchedAssets: [String]
     public var attempts: Int
     public var commit: String?
 }
@@ -64,7 +65,7 @@ public final class Synchronizer {
     }
 
     public func synchronize() async throws -> SyncReport {
-        var report = SyncReport(pulledPaths: [], pushedPaths: [], blockedPaths: [], attempts: 0, commit: nil)
+        var report = SyncReport(pulledPaths: [], pushedPaths: [], blockedPaths: [], fetchedAssets: [], attempts: 0, commit: nil)
         var attempt = 0
         while true {
             attempt += 1
@@ -75,6 +76,7 @@ public final class Synchronizer {
                     report.pushedPaths = pushed.paths
                     report.commit = pushed.commit
                 }
+                report.fetchedAssets = try await fetchMissingAssets()
                 report.blockedPaths = Array(store.blockedPaths.keys).sorted()
                 let syncedAt = store.timestamp()
                 try store.snapshot.update { $0.lastSynced = syncedAt }
@@ -97,12 +99,16 @@ public final class Synchronizer {
         }
         guard let head else { throw RemoteError.notFound }
         let snapshot = store.snapshot
-        guard head != snapshot.state.head else { return head }
+        guard head != snapshot.state.head || snapshot.state.assetsListed != true else { return head }
 
         let remoteFiles = try await remote.files(commit: head)
         var blobs = snapshot.state.blobs
         var blocked = snapshot.state.blocked
         for (path, sha) in remoteFiles.sorted(by: { $0.key < $1.key }) {
+            if RepositoryPath.assetIdentifier(at: path) != nil {
+                blobs[path] = sha
+                continue
+            }
             guard RepositoryPath.kind(of: path) != nil, blobs[path] != sha else { continue }
             let data = try await remote.blob(sha: sha)
             blobs[path] = sha
@@ -121,6 +127,7 @@ public final class Synchronizer {
             state.head = head
             state.blobs = pulledBlobs
             state.blocked = pulledBlocked
+            state.assetsListed = true
         }
         store.rebuild()
         return head
@@ -128,8 +135,6 @@ public final class Synchronizer {
 
     private func push(onto head: String) async throws -> (paths: [String], commit: String)? {
         let entries = store.journal.entries
-        guard !entries.isEmpty else { return nil }
-
         var sequencesByPath: [String: Set<Int>] = [:]
         var orphanSequences = Set<Int>()
         for entry in entries {
@@ -155,18 +160,25 @@ public final class Synchronizer {
             }
         }
 
+        let assetFiles = pendingAssets()
+        files.merge(assetFiles) { page, _ in page }
+
         guard !files.isEmpty else {
             try store.journal.remove(sequences: settledSequences)
             return nil
         }
 
         let pageCount = files.keys.filter { $0.contains("/pages/") }.count
-        let message = "Sync \(pageCount) page\(pageCount == 1 ? "" : "s") from \(store.device)"
+        var message = "Sync \(pageCount) page\(pageCount == 1 ? "" : "s")"
+        if !assetFiles.isEmpty {
+            message += " and \(assetFiles.count) asset\(assetFiles.count == 1 ? "" : "s")"
+        }
+        message += " from \(store.device)"
         let result = try await remote.commit(files: files, parent: head, message: message)
         try await remote.moveBranch(branch, to: result.sha)
 
         let snapshot = store.snapshot
-        for (path, data) in files {
+        for (path, data) in files where assetFiles[path] == nil {
             try snapshot.write(data, at: path)
         }
         try snapshot.update { state in
@@ -181,6 +193,35 @@ public final class Synchronizer {
         try store.journal.remove(sequences: settledSequences)
         store.rebuild()
         return (files.keys.sorted(), result.sha)
+    }
+
+    private func pendingAssets() -> [String: Data] {
+        var files: [String: Data] = [:]
+        let assets = store.assets
+        for asset in store.referencedAssets {
+            guard let path = RepositoryPath.asset(asset), store.syncState.blobs[path] == nil else { continue }
+            guard let byteCount = assets.byteCount(of: asset), byteCount <= assets.byteLimit else { continue }
+            guard let data = assets.data(for: asset), AssetStore.identifier(for: data) == asset else { continue }
+            files[path] = data
+        }
+        return files
+    }
+
+    private func fetchMissingAssets() async throws -> [String] {
+        var fetched: [String] = []
+        for asset in store.referencedAssets.sorted() where !store.assets.contains(asset) {
+            guard let path = RepositoryPath.asset(asset), let sha = store.syncState.blobs[path] else { continue }
+            let data: Data
+            do {
+                data = try await remote.blob(sha: sha)
+            } catch RemoteError.notFound {
+                continue
+            }
+            if try store.assets.store(data, as: asset) {
+                fetched.append(asset)
+            }
+        }
+        return fetched
     }
 
     enum Classification {

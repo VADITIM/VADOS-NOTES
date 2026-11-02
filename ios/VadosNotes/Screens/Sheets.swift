@@ -641,7 +641,7 @@ struct NewNoteSheet: View {
                 } catch {
                     document = nil
                     isFailed = true
-                    detail = "Not a readable PDF"
+                    detail = ImportError.message(for: error)
                 }
             case .failure:
                 break

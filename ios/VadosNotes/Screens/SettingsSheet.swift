@@ -171,7 +171,7 @@ struct SettingsSheet: View {
                 importFailure = nil
                 navigator.show(nil)
             } catch {
-                importFailure = "Not a readable PDF"
+                importFailure = ImportError.message(for: error)
             }
         }
         .onAppear {

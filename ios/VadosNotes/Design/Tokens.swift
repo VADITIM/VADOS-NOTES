@@ -216,6 +216,11 @@ struct Tokens: Decodable {
         let idleSeconds: Double
         let maxAgeSeconds: Double
         let backoffSeconds: [Double]
+        let assetLimitMegabytes: Int
+
+        var assetByteLimit: Int {
+            assetLimitMegabytes * 1024 * 1024
+        }
     }
 
     struct MenuSlotToken: Decodable {

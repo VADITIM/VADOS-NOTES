@@ -206,7 +206,7 @@ struct RootView: View {
         .environmentObject(preferences)
         .preferredColorScheme(.dark)
         .onAppear {
-            ImportImages.shared.assetURL = { [library] asset in library.assetsDirectory.appendingPathComponent("\(asset.replacingOccurrences(of: "sha256:", with: "")).pdf") }
+            ImportImages.shared.assetURL = { [library] asset in library.assetURL(asset) }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

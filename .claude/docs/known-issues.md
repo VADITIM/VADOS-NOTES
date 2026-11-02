@@ -7,7 +7,8 @@ Deliberate shortcuts, each with its ceiling and upgrade path.
 - **The keyboard can cover a text block near the bottom of the screen.** Upgrade: offset the camera by the keyboard frame while editing.
 - **Thumbnails render on the main thread.** Ceiling: a notebook with hundreds of pages opens slowly. Upgrade: render off-main into a cache keyed by page `updated`.
 - **The page menu's Import slot is still disabled.** PDFs come in through New note; importing into an existing note is not built.
-- **Assets do not sync yet.** PDF assets stay on the device that imported them; another device shows grey placeholders. Upgrade: upload `assets/` through the journal before the pages that reference them (spec 7.3).
+- **One sync holds every pending asset in memory.** The commit is built from all assets the remote lacks at once. Ceiling: a first sync with many large imports. Upgrade: stream each blob from disk and drop it once it is created.
+- **Assets are never removed from the repository.** An asset whose import elements are all deleted stays in `assets/`. Upgrade: collect unreferenced assets with the tombstone compaction (spec 5.8).
 - **PDF pages render at most 4096 px on their long side.** At extreme zoom they soften.
 - **Dragging a tile does not scroll the grid at the edges**, on the iPad or on Windows. Upgrade: drive the scroll position from the drag location.
 - **The iPad build is only compiled in CI.** It is written on Windows and checked by the `build` workflow on macOS; the first install may still show layout details that differ from Windows.

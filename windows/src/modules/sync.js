@@ -1,5 +1,6 @@
-import { decodeFile, repositoryPathKind, schemaVersion } from "./model.js"
-import { loadSyncedFiles, readSetting, readSyncState, readToken, saveToken, writeSetting, writeSyncedFile, writeSyncState } from "./storage.js"
+import { assetByteLimit, assetIdentifier, assetPath, reloadAssets } from "./imports.js"
+import { assetAtRepositoryPath, decodeFile, repositoryAssetPath, repositoryPathKind, schemaVersion } from "./model.js"
+import { hasAsset, loadSyncedFiles, readAsset, readSetting, readSyncState, readToken, saveToken, writeAsset, writeSetting, writeSyncedFile, writeSyncState } from "./storage.js"
 import { tokens } from "./tokens.js"
 
 const apiUrl = "https://api.github.com"
@@ -16,8 +17,8 @@ class RemoteError extends Error {
     }
 }
 
-function encodeBase64(text) {
-    const bytes = new TextEncoder().encode(text)
+function encodeBase64(contents) {
+    const bytes = typeof contents === "string" ? new TextEncoder().encode(contents) : contents
     let binary = ""
     for (let index = 0; index < bytes.length; index += 0x8000) {
         binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
@@ -27,8 +28,11 @@ function encodeBase64(text) {
 
 function decodeBase64(text) {
     const binary = atob(text.replace(/\s/g, ""))
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-    return new TextDecoder().decode(bytes)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+    }
+    return bytes
 }
 
 class GitHubRemote {
@@ -106,12 +110,16 @@ class GitHubRemote {
         return files
     }
 
-    async blob(sha) {
+    async blobBytes(sha) {
         const blob = await this.request("GET", `git/blobs/${sha}`)
         if (blob.encoding !== "base64") {
             throw new RemoteError("server", 0, `Blob ${sha} is not base64`)
         }
         return decodeBase64(blob.content)
+    }
+
+    async blob(sha) {
+        return new TextDecoder().decode(await this.blobBytes(sha))
     }
 
     async commit(files, parent, message) {
@@ -372,6 +380,7 @@ export class SyncCoordinator {
             try {
                 const head = await this.pull(remote)
                 await this.push(remote, head)
+                reloadAssets(await this.fetchMissingAssets(remote))
                 this.state.lastSynced = new Date().toISOString()
                 await writeSyncState(this.state)
                 return
@@ -392,13 +401,17 @@ export class SyncCoordinator {
         if (!head) {
             head = await remote.initialize(this.settings.branch)
         }
-        if (head === this.state.head) {
+        if (head === this.state.head && this.state.assetsListed) {
             return head
         }
         const remoteFiles = await remote.files(head)
         const blobs = { ...this.state.blobs }
         const blocked = { ...this.state.blocked }
         for (const [path, sha] of [...remoteFiles.entries()].sort(([first], [second]) => (first < second ? -1 : 1))) {
+            if (assetAtRepositoryPath(path)) {
+                blobs[path] = sha
+                continue
+            }
             if (!repositoryPathKind(path) || blobs[path] === sha) {
                 continue
             }
@@ -414,7 +427,7 @@ export class SyncCoordinator {
                 blocked[path] = classification.reason
             }
         }
-        this.state = { ...this.state, head, blobs, blocked }
+        this.state = { ...this.state, head, blobs, blocked, assetsListed: true }
         this.library.blockedPaths = new Map(Object.entries(blocked))
         this.library.refreshReadOnly()
         await writeSyncState(this.state)
@@ -424,9 +437,6 @@ export class SyncCoordinator {
 
     async push(remote, head) {
         const captured = new Map(this.library.dirtyPaths)
-        if (!captured.size) {
-            return
-        }
         const files = new Map()
         const settled = new Map()
         for (const [path, counter] of captured) {
@@ -440,15 +450,24 @@ export class SyncCoordinator {
                 files.set(path, contents)
             }
         }
+        const assetFiles = await this.pendingAssets()
+        for (const [path, bytes] of assetFiles) {
+            files.set(path, bytes)
+        }
         if (!files.size) {
             this.library.settle(settled)
             return
         }
         const pageCount = [...files.keys()].filter((path) => path.includes("/pages/")).length
-        const message = `Sync ${pageCount} page${pageCount === 1 ? "" : "s"} from ${this.library.device}`
+        const assetCount = assetFiles.size
+        const assetPart = assetCount ? ` and ${assetCount} asset${assetCount === 1 ? "" : "s"}` : ""
+        const message = `Sync ${pageCount} page${pageCount === 1 ? "" : "s"}${assetPart} from ${this.library.device}`
         const result = await remote.commit(files, head, message)
         await remote.moveBranch(this.settings.branch, result.sha)
         for (const [path, contents] of files) {
+            if (assetFiles.has(path)) {
+                continue
+            }
             this.snapshot.set(path, contents)
             await writeSyncedFile(path, contents)
             settled.set(path, captured.get(path))
@@ -458,5 +477,45 @@ export class SyncCoordinator {
             this.state.blobs[path] = sha
         }
         this.library.settle(settled)
+    }
+
+    async pendingAssets() {
+        const files = new Map()
+        for (const asset of this.library.referencedAssets()) {
+            const path = repositoryAssetPath(asset)
+            if (!path || this.state.blobs[path] || !(await hasAsset(assetPath(asset)))) {
+                continue
+            }
+            const bytes = await readAsset(assetPath(asset))
+            if (bytes.length <= assetByteLimit() && (await assetIdentifier(bytes)) === asset) {
+                files.set(path, bytes)
+            }
+        }
+        return files
+    }
+
+    async fetchMissingAssets(remote) {
+        const fetched = []
+        for (const asset of [...this.library.referencedAssets()].sort()) {
+            const path = repositoryAssetPath(asset)
+            const sha = path ? this.state.blobs[path] : null
+            if (!sha || (await hasAsset(assetPath(asset)))) {
+                continue
+            }
+            let bytes
+            try {
+                bytes = await remote.blobBytes(sha)
+            } catch (error) {
+                if (error.kind === "notFound") {
+                    continue
+                }
+                throw error
+            }
+            if ((await assetIdentifier(bytes)) === asset) {
+                await writeAsset(assetPath(asset), bytes)
+                fetched.push(asset)
+            }
+        }
+        return fetched
     }
 }

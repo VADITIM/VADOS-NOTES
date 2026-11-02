@@ -769,6 +769,21 @@ export class Library {
         }
     }
 
+    referencedAssets() {
+        const assets = new Set()
+        for (const page of this.pagesById.values()) {
+            if (page.deleted) {
+                continue
+            }
+            for (const element of page.elements ?? []) {
+                if (!element.deleted && element.asset) {
+                    assets.add(element.asset)
+                }
+            }
+        }
+        return assets
+    }
+
     settle(paths) {
         let isChanged = false
         for (const [path, counter] of paths) {

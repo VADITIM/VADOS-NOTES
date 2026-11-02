@@ -388,6 +388,28 @@ public enum RepositoryPath {
         "\(notebooksDirectory)/\(notebookId)/pages/\(pageId).json"
     }
 
+    public static let assetsDirectory = "assets"
+    public static let assetPrefix = "sha256:"
+    private static let hashCharacters = Set("0123456789abcdef")
+
+    public static func assetHash(_ asset: String) -> String? {
+        guard asset.hasPrefix(assetPrefix) else { return nil }
+        let hash = asset.dropFirst(assetPrefix.count)
+        guard hash.count == 64, hash.allSatisfy(hashCharacters.contains) else { return nil }
+        return String(hash)
+    }
+
+    public static func asset(_ asset: String) -> String? {
+        assetHash(asset).map { "\(assetsDirectory)/\($0)" }
+    }
+
+    public static func assetIdentifier(at path: String) -> String? {
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count == 2, parts[0] == assetsDirectory else { return nil }
+        let asset = assetPrefix + parts[1]
+        return assetHash(asset) == nil ? nil : asset
+    }
+
     public enum Kind: Equatable {
         case notebook(notebookId: String)
         case page(notebookId: String, pageId: String)

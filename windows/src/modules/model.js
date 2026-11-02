@@ -561,6 +561,17 @@ export function decodeFile(contents) {
     return { value, isReadOnly: false }
 }
 
+const assetPattern = /^sha256:[0-9a-f]{64}$/
+
+export function repositoryAssetPath(asset) {
+    return typeof asset === "string" && assetPattern.test(asset) ? `assets/${asset.slice("sha256:".length)}` : null
+}
+
+export function assetAtRepositoryPath(path) {
+    const match = /^assets\/([0-9a-f]{64})$/.exec(path)
+    return match ? `sha256:${match[1]}` : null
+}
+
 export function repositoryPathKind(path) {
     const notebook = /^notebooks\/([^/]+)\/notebook\.json$/.exec(path)
     if (notebook) {

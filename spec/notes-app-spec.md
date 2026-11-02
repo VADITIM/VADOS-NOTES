@@ -286,7 +286,9 @@ Teachers often produce worksheets that were scaled on export or print: content s
 - Assets live in `assets/` in the repo, named by content hash. They are immutable, so they never conflict.
 - Assets upload before any page that references them, so no page points to a missing file.
 - Asset uploads go through the journal too. An import made offline syncs once the connection returns.
-- GitHub rejects single files over 100 MB, and large files slow the repo down. v1 caps imports at a size limit (to be decided). Git LFS is the fallback for anything larger.
+- Assets upload in the same atomic commit as the first page that references them (or in an earlier one), never after it.
+- On every sync a device downloads each asset its live pages reference and it does not hold, and checks the bytes against the hash in the name before keeping them.
+- GitHub rejects single files over 100 MB, and large files slow the repo down. v1 caps each imported file at 50 MB (`sync.asset_limit_megabytes`). Git LFS is the fallback for anything larger.
 
 ## 8. Explicit non-features (v1)
 
@@ -375,7 +377,7 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 6. ~~**Text on iPad**~~: decided, fully editable (section 11).
 7. **PDF clipping:** how to split strokes that cross a cell boundary?
 8. ~~**Idle definition**~~: provisionally a full 5 second pause (section 11).
-9. **Import size cap:** what is the maximum file size per imported PDF or image?
+9. ~~**Import size cap**~~: decided, 50 MB per file (section 11).
 10. **Multi-page import placement:** expand the extent automatically to fit all pages, or fill existing empty cells first?
 
 ## 11. Decision log
@@ -454,3 +456,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Zooming while text is being edited moves smoothly through the whole range.
 - Text is larger on its rows and stands a little above the ruled line instead of touching it.
 - Code blocks indent like a code editor: Enter keeps the indent and adds a level after an open bracket (or a Python colon), a closing bracket and Backspace take one off, Tab runs to the next stop. The level is read from the block. The keyboard drops autocorrect and smart quotes inside code.
+- Imported files are capped at 50 MB each, GitHub's own warning size and half its 100 MB limit. Assets sync through `assets/<sha256>` in the same commit as the first page that uses them, and every device fetches the assets its pages reference.
