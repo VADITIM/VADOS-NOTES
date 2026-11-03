@@ -438,8 +438,8 @@ final class NavCarry: ObservableObject {
         morph = morphTarget
         morphVelocity = 0
         let isParked = state == .parking
-        state = isParked ? .parked : .idle
         host?.onLand(isParked ? corner : nil)
+        state = isParked ? .parked : .idle
     }
 }
 
