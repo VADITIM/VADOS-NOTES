@@ -115,6 +115,7 @@ enum NavMetrics {
     static let edgeStripDepth: CGFloat = 28
     static let edgeTouchReach: CGFloat = 4
     static let edgeHandleSize = CGSize(width: 36, height: 4)
+    static let bubbleDiameter = CGFloat(Motion.carry.bubbleDiameter)
     static let pillPanelPrefix = "variations-"
     static let layerSpace = "navLayer"
 
@@ -199,9 +200,10 @@ struct ToolNav<PanelContent: View>: View {
     @State private var subNavSize: CGSize = .zero
     @State private var panelSize: CGSize = .zero
     @State private var groupSizes: [String: CGSize] = [:]
-    @State private var carryPoint: CGPoint?
-    @State private var carryGrab: CGSize?
+    @StateObject private var carry = NavCarry()
     @State private var turningOrientation: NavOrientation?
+    @State private var turnEndsAt: Double = 0
+    @State private var carryOrigin: CGPoint = .zero
     @State private var panelAnchor: CGRect?
     @State private var swallowUntil = Date.distantPast
     @State private var shownSubNavigationKey: String?
@@ -262,7 +264,7 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private var isSubNavigationWanted: Bool {
-        subNavKey != nil && isShown
+        subNavKey != nil && isShown && !carry.isStageCleared
     }
 
     private var wantedPillPanelKey: String? {
@@ -353,14 +355,22 @@ struct ToolNav<PanelContent: View>: View {
                 }
                 .position(edgeStripCenter(center: center, layer: layer, edge: edge))
             }
-            .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: center)
-            .animation(carryPoint == nil && navigationMotion.areElementsShown ? Motion.placement : nil, value: subNavCenter)
+            .animation(!carry.isActive && navigationMotion.areElementsShown ? Motion.placement : nil, value: center)
+            .animation(!carry.isActive && navigationMotion.areElementsShown ? Motion.placement : nil, value: subNavCenter)
             .coordinateSpace(name: NavMetrics.layerSpace)
             .preference(key: NavCoverKey.self, value: covers(navigation: navigationRect.offsetBy(dx: edgeVector(edge, edgeOffset).width, dy: edgeVector(edge, edgeOffset).height), subNavigation: subNavRect, panel: rect(center: panelCenter, size: panelSize)).map { $0.offsetBy(dx: layerOrigin.x, dy: layerOrigin.y) })
             .onPreferenceChange(NavSizeKey.self) { navSize = $0 }
             .onPreferenceChange(SubNavSizeKey.self) { subNavSize = $0 }
             .onPreferenceChange(PanelSizeKey.self) { panelSize = $0 }
             .onPreferenceChange(GroupExtentKey.self) { groupSizes = $0 }
+            .onAppear {
+                carryLayer = layer
+                carryOrigin = layerOrigin
+                connectCarry()
+                carry.restore(corner: placement?.corner)
+            }
+            .onChange(of: layer) { _, size in carryLayer = size }
+            .onChange(of: layerOrigin) { _, origin in carryOrigin = origin }
             .onPreferenceChange(PanelAnchorKey.self) { anchor in
                 if anchor != nil || shownPillPanelKey == nil {
                     panelAnchor = anchor
@@ -375,6 +385,8 @@ struct ToolNav<PanelContent: View>: View {
                 openSubNavigation()
             }
         }
+        .onChange(of: obstacles) { _, _ in connectCarry() }
+        .onChange(of: keyboardHeight) { _, _ in connectCarry() }
         .onChange(of: isShown) { _, shown in
             recoverGestures()
             if shown {
@@ -434,8 +446,10 @@ struct ToolNav<PanelContent: View>: View {
     private func covers(navigation: CGRect, subNavigation: CGRect, panel: CGRect) -> [CGRect] {
         var covers: [CGRect] = []
         if navigationMotion.isPresent {
-            let lift = carryPoint == nil ? 1 : CGFloat(Motion.scales.held)
-            covers.append(navigation.insetBy(dx: navigation.width * (1 - lift) / 2, dy: navigation.height * (1 - lift) / 2))
+            let lift = carry.state == .carried ? CGFloat(Motion.scales.held) : 1
+            let shown = shownSize(carry.morph)
+            let body = CGRect(x: navigation.midX - shown.width / 2, y: navigation.midY - shown.height / 2, width: shown.width, height: shown.height)
+            covers.append(body.insetBy(dx: body.width * (1 - lift) / 2, dy: body.height * (1 - lift) / 2))
         }
         if shownSubNavigationKey != nil {
             covers.append(subNavigation)
@@ -519,7 +533,9 @@ struct ToolNav<PanelContent: View>: View {
         }
         finishToolReordering()
         finishGroupReordering()
-        finishCarry()
+        if carry.state == .carried {
+            carry.release()
+        }
         if swallowUntil == .distantFuture {
             swallowUntil = Date().addingTimeInterval(0.6)
         }
@@ -529,7 +545,7 @@ struct ToolNav<PanelContent: View>: View {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .updating($isEdgeGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
-                guard sizingDrag == nil, toolReordering == nil, carryPoint == nil, !isEdgeHidden else { return }
+                guard sizingDrag == nil, toolReordering == nil, !carry.isStageCleared, !isEdgeHidden else { return }
                 let travel = outwardTravel(value.translation, edge)
                 if edgeDragStart == nil {
                     guard shownSubNavigationKey != nil, abs(travel.outward) > abs(travel.across) * NavMetrics.navSizingDominance else { return }
@@ -619,6 +635,9 @@ struct ToolNav<PanelContent: View>: View {
     private func navBody(layer: CGSize, center: CGPoint) -> some View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
         let isSizing = sizingDrag != nil
+        let isBubble = carry.morph >= 0.5
+        let contentShare = min(1, max(0, 1 - carry.morph * 2))
+        let bubbleShare = NavMetrics.bubbleDiameter / max(1, max(navSize.width, navSize.height))
         return layout {
             grip(layer: layer, center: center)
                 .revealedElement()
@@ -652,15 +671,24 @@ struct ToolNav<PanelContent: View>: View {
         }
         .animation(Motion.wash, value: selectedId)
         .padding(NavMetrics.padding)
-        .background(PillShell(scale: navigationMotion.shellScale, spread: navigationMotion.shellSpread, isWide: orientation == .horizontal, stroke: carryPoint == nil ? Palette.border : Palette.accent))
+        .opacity(contentShare)
+        .scaleEffect(1 - (1 - bubbleShare) * min(1, carry.morph))
+        .background(PillShell(scale: navigationMotion.shellScale, spread: navigationMotion.shellSpread, isWide: orientation == .horizontal, stroke: carry.state == .carried ? Palette.accent : Palette.border, morph: carry.morph, bubbleDiameter: NavMetrics.bubbleDiameter, stretchAmount: carry.stretchAmount, stretchAngle: carry.stretchAngle))
         .contentShape(Capsule())
         .simultaneousGesture(sizableItem == nil ? nil : sizingGesture())
+        .allowsHitTesting(!isBubble && !carry.isActive)
+        .overlay(alignment: grabberAlignment(center: center, layer: layer)) {
+            grabber(center: center)
+        }
+        .overlay {
+            bubbleFace(center: center)
+        }
         .fixedSize()
         .background(GeometryReader { navProxy in Color.clear.preference(key: NavSizeKey.self, value: navProxy.size) })
-        .scaleEffect(carryPoint == nil ? 1 : CGFloat(Motion.scales.held))
-        .allowsHitTesting(navigationMotion.areElementsShown || carryPoint != nil)
+        .scaleEffect(carry.state == .carried ? CGFloat(Motion.scales.held) : 1)
+        .allowsHitTesting(navigationMotion.areElementsShown || carry.isStageCleared)
         .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: face)
-        .animation(Motion.backOut(Motion.stateMilliseconds), value: carryPoint == nil)
+        .animation(Motion.backOut(Motion.stateMilliseconds), value: carry.state == .carried)
     }
 
     private func grip(layer: CGSize, center: CGPoint) -> some View {
@@ -668,7 +696,7 @@ struct ToolNav<PanelContent: View>: View {
         return Color.clear
             .frame(width: orientation == .horizontal ? NavMetrics.gripLength : size.width, height: orientation == .horizontal ? size.height : NavMetrics.gripLength)
             .contentShape(Rectangle())
-            .gesture(carryGesture(layer: layer, center: center))
+            .gesture(carryGesture(center: center, waitsForTravel: false))
             .accessibilityLabel("Move the nav")
     }
 
@@ -771,7 +799,7 @@ struct ToolNav<PanelContent: View>: View {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .updating($isCollapseGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
-                guard !isCollapseSwiped, !isCollapseSwipeRejected, groupReordering == nil, carryPoint == nil else { return }
+                guard !isCollapseSwiped, !isCollapseSwipeRejected, groupReordering == nil, !carry.isStageCleared else { return }
                 let along = orientation == .horizontal ? value.translation.width : value.translation.height
                 let across = orientation == .horizontal ? value.translation.height : value.translation.width
                 guard abs(along) > abs(across) * NavMetrics.navSizingDominance else {
@@ -801,7 +829,7 @@ struct ToolNav<PanelContent: View>: View {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .updating($isSizingGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
-                guard !isSizingRejected, toolReordering == nil, carryPoint == nil, let item = sizingItem ?? sizableItem, let sizing = item.sizing else { return }
+                guard !isSizingRejected, toolReordering == nil, !carry.isStageCleared, let item = sizingItem ?? sizableItem, let sizing = item.sizing else { return }
                 let along = orientation == .horizontal ? value.translation.width : -value.translation.height
                 if sizingDrag == nil {
                     let across = orientation == .horizontal ? value.translation.height : value.translation.width
@@ -980,8 +1008,11 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private func navCenter(in layer: CGSize, blocked: [CGRect]) -> CGPoint {
-        if let carryPoint {
-            return clamped(carryPoint, size: navSize, layer: layer)
+        if carry.isActive, let point = carry.center {
+            return point
+        }
+        if carry.state == .parked, let corner = placement?.corner {
+            return cornerSpot(corner, layer: layer, blocked: blocked)
         }
         let wanted: CGPoint
         if let placement {
@@ -1012,76 +1043,160 @@ struct ToolNav<PanelContent: View>: View {
         avoiding(beside(anchor, size: size, side: side), size: size, layer: layer, blocked: blocked)
     }
 
-    private func edgeOrientation(of point: CGPoint, layer: CGSize, current: NavOrientation) -> NavOrientation {
-        let size = current == orientation ? navSize : CGSize(width: navSize.height, height: navSize.width)
-        let frame = rect(center: clamped(point, size: size, layer: layer), size: size)
-        let reach = NavMetrics.edgeMargin + NavMetrics.edgeTouchReach
-        let isAtSide = frame.minX <= reach || frame.maxX >= layer.width - reach
-        let isAtEnd = frame.minY <= reach || frame.maxY >= layer.height - reach
-        if isAtSide && !isAtEnd {
-            return .vertical
+    private func connectCarry() {
+        carry.host = NavCarryHost(
+            bounds: { carryLayer },
+            orientation: { orientation },
+            shownSize: { shownSize($0) },
+            clamped: { clamped($0, size: $1, layer: carryLayer) },
+            turnTo: { turnTo($0, isInstant: $1) },
+            dockSpot: { dockSpot($0, from: $1) },
+            cornerSpot: { cornerSpot($0, layer: carryLayer, blocked: localObstacles(origin: carryOrigin, layer: carryLayer)) },
+            onLand: { land(corner: $0) }
+        )
+    }
+
+    private func shownSize(_ morph: CGFloat) -> CGSize {
+        CGSize(width: navSize.width + (NavMetrics.bubbleDiameter - navSize.width) * morph, height: navSize.height + (NavMetrics.bubbleDiameter - navSize.height) * morph)
+    }
+
+    private func dockSpot(_ edge: NavEdge?, from point: CGPoint) -> CGPoint {
+        let layer = carryLayer
+        let margin = NavMetrics.edgeMargin
+        var spot = point
+        switch edge {
+        case .left: spot.x = margin + navSize.width / 2
+        case .right: spot.x = layer.width - margin - navSize.width / 2
+        case .top: spot.y = margin + navSize.height / 2
+        case .bottom: spot.y = layer.height - margin - navSize.height / 2
+        case nil: break
         }
-        if isAtEnd && !isAtSide {
-            return .horizontal
-        }
-        return current
+        return avoiding(spot, size: navSize, layer: layer, blocked: localObstacles(origin: carryOrigin, layer: layer))
+    }
+
+    private func cornerSpot(_ corner: String, layer: CGSize, blocked: [CGRect]) -> CGPoint {
+        let diameter = NavMetrics.bubbleDiameter
+        let reach = NavMetrics.edgeMargin + diameter / 2
+        let parts = corner.split(separator: "-")
+        let point = CGPoint(x: parts.last == "left" ? reach : layer.width - reach, y: parts.first == "top" ? reach : layer.height - reach)
+        return avoiding(point, size: CGSize(width: diameter, height: diameter), layer: layer, blocked: blocked)
     }
 
     private func turnCarried() {
         guard let wanted = turningOrientation else { return }
         turningOrientation = nil
         guard wanted != orientation else { return }
-        if let grab = carryGrab, let point = carryPoint {
-            let turned = CGSize(width: grab.height, height: grab.width)
-            carryGrab = turned
-            carryPoint = CGPoint(x: point.x + grab.width - turned.width, y: point.y + grab.height - turned.height)
-        }
+        carry.swapGrab()
         withAnimation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)) {
             orientation = wanted
         }
     }
 
-    private func carryGesture(layer: CGSize, center: CGPoint) -> some Gesture {
-        LongPressGesture(minimumDuration: Motion.seconds(Motion.navigationGripHoldMilliseconds), maximumDistance: 10)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
-            .updating($isCarryGestureActive) { _, isActive, _ in isActive = true }
-            .onChanged { value in
-                guard case .second(true, let drag) = value, sizingDrag == nil else { return }
-                if carryPoint == nil {
-                    swallowUntil = .distantFuture
-                    carryLayer = layer
-                    Haptics.hold()
-                    carryGrab = nil
-                    carryPoint = center
-                }
-                guard let drag else { return }
-                let grab = carryGrab ?? CGSize(width: drag.startLocation.x - center.x, height: drag.startLocation.y - center.y)
-                carryGrab = grab
-                let point = CGPoint(x: drag.location.x - grab.width, y: drag.location.y - grab.height)
-                carryPoint = point
-                let current = turningOrientation ?? orientation
-                let wanted = edgeOrientation(of: point, layer: layer, current: current)
-                if wanted != current {
-                    turningOrientation = wanted
-                    Haptics.tick()
-                    navigationMotion.mutate(turnCarried)
-                }
+    private func turnTo(_ wanted: NavOrientation, isInstant: Bool) -> Double {
+        let now = CACurrentMediaTime() * 1000
+        if turningOrientation != nil {
+            turningOrientation = wanted
+            return max(0, turnEndsAt - now)
+        }
+        guard wanted != orientation else { return 0 }
+        if isInstant {
+            carry.swapGrab()
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                orientation = wanted
             }
-            .onEnded { _ in finishCarry() }
+            return Double(Motion.pressMilliseconds)
+        }
+        let changeAt = Double(Motion.navigationMutateLeaveMilliseconds) * 3 / 2
+        let total = changeAt + Double(Motion.navigationSwitchMilliseconds * 2)
+        turningOrientation = wanted
+        turnEndsAt = now + total
+        Haptics.tick()
+        navigationMotion.mutate(turnCarried)
+        return total
     }
 
-    private func finishCarry() {
-        guard let point = carryPoint else { return }
+    private func land(corner: String?) {
+        guard let point = carry.center else { return }
         let layer = carryLayer
-        let nextOrientation = edgeOrientation(of: point, layer: layer, current: turningOrientation ?? orientation)
-        let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: nextOrientation.rawValue)
+        let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: orientation.rawValue, corner: corner)
         Preferences.shared.setNavPlacement(next)
-        turningOrientation = nil
-        withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2)) {
-            orientation = nextOrientation
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
             placement = next
-            carryPoint = nil
         }
         swallowUntil = Date().addingTimeInterval(0.6)
+        Haptics.landed()
+    }
+
+    private func grabberAlignment(center: CGPoint, layer: CGSize) -> Alignment {
+        guard orientation == .vertical else { return .top }
+        return center.x > layer.width / 2 ? .leading : .trailing
+    }
+
+    private func grabber(center: CGPoint) -> some View {
+        let isVertical = orientation == .vertical
+        let settings = Motion.carry
+        let length = CGFloat(settings.grabberLength)
+        let thickness = CGFloat(settings.grabberThickness)
+        let reach = CGFloat(settings.grabberReach)
+        let edgeLine = CGFloat(settings.grabberInset) + thickness / 2
+        let facesLeading = isVertical && center.x > carryLayer.width / 2
+        let crossOffset = isVertical ? (facesLeading ? edgeLine - reach : reach - edgeLine) : 0
+        return Capsule()
+            .fill(Palette.borderHover)
+            .frame(width: isVertical ? thickness : length, height: isVertical ? length : thickness)
+            .opacity(min(1, max(0, 1 - carry.morph * 2)))
+            .frame(width: isVertical ? reach * 2 : length + reach * 2, height: isVertical ? length + reach * 2 : reach * 2)
+            .contentShape(Rectangle())
+            .offset(x: crossOffset, y: isVertical ? 0 : edgeLine - reach)
+            .opacity(navigationMotion.areElementsShown ? 1 : 0)
+            .animation(Motion.powerTwoOut(Motion.navigationElementMilliseconds), value: navigationMotion.areElementsShown)
+            .gesture(carryGesture(center: center, waitsForTravel: false))
+            .allowsHitTesting(carry.morph < 0.5 && navigationMotion.areElementsShown)
+            .accessibilityLabel("Move the nav")
+    }
+
+    private func bubbleFace(center: CGPoint) -> some View {
+        let selected = groups.joined().first { $0.id == selectedId }
+        let glyphName = selected.map { $0.glyph.isEmpty ? "move" : $0.glyph } ?? "move"
+        let shown = shownSize(carry.morph)
+        let isReachable = carry.morph >= 0.5 || carry.isActive
+        return GlyphView(name: glyphName, color: selected?.tint ?? Palette.textBody, size: NavMetrics.glyphSize)
+            .opacity(min(1, max(0, carry.morph * 2 - 1)))
+            .scaleEffect(0.6 + 0.4 * min(1, max(0, carry.morph)))
+            .frame(width: shown.width, height: shown.height)
+            .contentShape(Capsule())
+            .gesture(carryGesture(center: center, waitsForTravel: carry.state == .parked))
+            .allowsHitTesting(isReachable)
+            .accessibilityLabel("Expand the nav")
+            .accessibilityAction { carry.expand() }
+    }
+
+    private func carryGesture(center: CGPoint, waitsForTravel: Bool) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace))
+            .updating($isCarryGestureActive) { _, isActive, _ in isActive = true }
+            .onChanged { value in
+                if carry.state != .carried {
+                    let travel = hypot(value.translation.width, value.translation.height)
+                    guard !waitsForTravel || travel >= CGFloat(Motion.carry.tapSlop), sizingDrag == nil, toolReordering == nil, !isEdgeHidden, navigationMotion.isPresent else { return }
+                    let current = carry.isStageCleared ? (carry.center ?? center) : center
+                    swallowUntil = .distantFuture
+                    edgeOffset = 0
+                    Haptics.hold()
+                    carry.grab(finger: value.startLocation, center: current)
+                }
+                carry.drag(finger: value.location)
+            }
+            .onEnded { _ in
+                if carry.state == .carried {
+                    carry.release()
+                    swallowUntil = Date().addingTimeInterval(0.6)
+                } else if waitsForTravel, carry.state == .parked {
+                    carry.expand()
+                }
+            }
     }
 }

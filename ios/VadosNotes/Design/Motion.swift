@@ -6,6 +6,7 @@ enum Motion {
     private static let springs = Tokens.shared.motion.springs
     static let scales = Tokens.shared.motion.scales
     static let shares = Tokens.shared.motion.shares
+    static let carry = Tokens.shared.motion.carry
 
     static let pressMilliseconds = durations.press
     static let releaseMilliseconds = durations.release
@@ -18,7 +19,6 @@ enum Motion {
     static let sweepGrowMilliseconds = durations.sweepGrow
     static let sweepRetractMilliseconds = durations.sweepRetract
     static let menuHoldMilliseconds = durations.menuHold
-    static let navigationGripHoldMilliseconds = durations.navigationGripHold
     static let textMoveHoldMilliseconds = durations.textMoveHold
     static let viewerEnterMilliseconds = durations.viewerEnter
     static let viewerCloseMilliseconds = durations.viewerClose
@@ -47,6 +47,9 @@ enum Motion {
     static var wash: Animation { spring(springs.wash) }
     static var selection: Animation { spring(springs.selection) }
     static var settingsPop: Animation { spring(springs.settingsPop) }
+    static let morphSpring = springs.morph
+    static let bubbleFollowSpring = springs.bubbleFollow
+    static let dockSpring = springs.dock
 
     static func backOut(_ milliseconds: Int, delay: Int = 0) -> Animation {
         animation(curves.backOut, milliseconds, delay)
@@ -414,16 +417,24 @@ struct PillShell: View {
     let spread: CGFloat
     let isWide: Bool
     var stroke: Color = Palette.border
+    var morph: CGFloat = 0
+    var bubbleDiameter: CGFloat = 0
+    var stretchAmount: CGFloat = 0
+    var stretchAngle: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
-            let full = proxy.size
+            let full = CGSize(width: proxy.size.width + (bubbleDiameter - proxy.size.width) * morph, height: proxy.size.height + (bubbleDiameter - proxy.size.height) * morph)
             let thickness = isWide ? full.height : full.width
             let along = thickness + ((isWide ? full.width : full.height) - thickness) * spread
+            let stretch = 1 + stretchAmount
             Capsule()
                 .fill(Palette.panelSolid)
                 .overlay(Capsule().stroke(stroke, lineWidth: 1))
                 .frame(width: isWide ? along : thickness, height: isWide ? thickness : along)
+                .rotationEffect(.radians(-stretchAngle))
+                .scaleEffect(x: stretch, y: 1 / stretch)
+                .rotationEffect(.radians(stretchAngle))
                 .scaleEffect(scale)
                 .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
                 .frame(width: full.width, height: full.height)

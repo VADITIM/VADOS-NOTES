@@ -40,6 +40,7 @@ struct NavPlacement: Codable, Equatable {
     var x: Double
     var y: Double
     var orientation: String
+    var corner: String? = nil
 }
 
 @MainActor

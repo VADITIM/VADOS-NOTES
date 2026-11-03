@@ -2,6 +2,7 @@ import { create } from "./components.js"
 import { KeyedList, itemSize, navMetrics, navSizeSlider, separator, separatorExtent } from "./controls.js"
 import { animate, duration, tween } from "./motion.js"
 import { PillMotion, hideTurned, popTogether, revealElement, shapePillShell, spring, springAnimate, switchOut, turnOut } from "./pill.js"
+import { NavigationCarry } from "./navigationCarry.js"
 import { navPlacement, setNavPlacement } from "./preferences.js"
 import { glyph } from "./shapes.js"
 import { tokens, withAlpha } from "./tokens.js"
@@ -88,6 +89,25 @@ class PillBody {
         this.sizeTween = null
         this.motion = new PillMotion(() => this.paint())
         this.isWide = true
+        this.morph = 0
+        this.bubbleDiameter = 0
+        this.stretch = { amount: 0, angle: 0 }
+        this.afterPaint = null
+    }
+
+    morphSizeFrom(shown) {
+        this.sizeTween?.stop()
+        const from = [...shown]
+        const next = [...this.size]
+        this.shownSize = [...from]
+        this.sizeTween = tween({
+            milliseconds: duration("navigation_switch") * 2,
+            curveName: "power_three_in_out",
+            onFrame: (eased) => {
+                this.shownSize = [from[0] + (next[0] - from[0]) * eased, from[1] + (next[1] - from[1]) * eased]
+                this.paint()
+            },
+        })
     }
 
     measure() {
@@ -120,14 +140,27 @@ class PillBody {
     }
 
     paint() {
-        const [width, height] = this.shownSize ?? this.size
+        const [barWidth, barHeight] = this.shownSize ?? this.size
+        const morph = Math.max(0, this.morph)
+        const width = barWidth + (this.bubbleDiameter - barWidth) * morph
+        const height = barHeight + (this.bubbleDiameter - barHeight) * morph
         const offsetX = (this.size[0] - width) / 2
         const offsetY = (this.size[1] - height) / 2
         shapePillShell(this.shell, { width, height, isWide: this.isWide, scale: this.motion.shellScale, spread: this.motion.shellSpread })
         this.shell.style.left = `${parseFloat(this.shell.style.left) + offsetX}px`
         this.shell.style.top = `${parseFloat(this.shell.style.top) + offsetY}px`
+        if (this.stretch.amount > 0.001) {
+            const along = 1 + this.stretch.amount
+            this.shell.style.transform = `rotate(${this.stretch.angle}rad) scale(${along}, ${1 / along}) rotate(${-this.stretch.angle}rad) scale(${this.motion.shellScale})`
+        }
+        const contentShare = Math.min(1, Math.max(0, 1 - morph * 2))
+        this.content.style.opacity = contentShare < 1 ? String(contentShare) : ""
+        const bubbleShare = this.bubbleDiameter / Math.max(1, Math.max(barWidth, barHeight))
+        this.content.style.scale = morph > 0.001 ? String(1 - (1 - bubbleShare) * Math.min(1, morph)) : ""
         this.element.style.visibility = this.motion.isPresent ? "visible" : "hidden"
         this.element.classList.toggle("is-interactive", this.motion.areElementsShown)
+        this.element.classList.toggle("is-bubble", morph >= 0.5)
+        this.afterPaint?.()
     }
 }
 
@@ -137,9 +170,9 @@ export class ToolNav {
         this.props = null
         this.orientation = navPlacement()?.orientation === "vertical" ? "vertical" : "horizontal"
         this.placement = navPlacement()
-        this.carryPoint = null
-        this.carryGrab = null
         this.swallowUntil = 0
+        this.turning = null
+        this.isSubNavigationWanted = false
         this.toolReordering = null
         this.groupReordering = null
         this.sizingDrag = null
@@ -167,6 +200,27 @@ export class ToolNav {
         this.startGrip = this.makeGrip()
         this.endGrip = this.makeGrip()
         this.navigation.content.append(this.startGrip, this.endGrip)
+        this.grabber = create("span", "navigation-grabber", create("span", "navigation-grabber-bar"))
+        this.grabber.addEventListener("pointerdown", (event) => this.startCarry(event))
+        this.bubbleFace = create("span", "navigation-bubble")
+        this.navigation.element.append(this.grabber, this.bubbleFace)
+        this.navigation.element.addEventListener("pointerdown", (event) => this.activePointerDown(event), true)
+        this.navigation.bubbleDiameter = tokens.motion.carry.bubble_diameter
+        this.navigation.afterPaint = () => this.paintCarry()
+        this.carry = new NavigationCarry({
+            bounds: () => ({ width: window.innerWidth, height: window.innerHeight }),
+            orientation: () => this.orientation,
+            edgeMargin: () => navMetrics.edgeMargin,
+            shownSize: (morph) => this.shownSize(morph),
+            clamped: (point, size) => this.clamped(point, size),
+            turnTo: (orientation, isInstant) => this.turnTo(orientation, isInstant),
+            dockSpot: (edge, center) => this.dockSpot(edge, center),
+            cornerSpot: (corner) => this.cornerSpot(corner),
+            onFrame: () => this.carryFrame(),
+            onLand: (corner) => this.land(corner),
+        })
+        this.carry.restore(this.placement?.corner)
+        this.navigation.morph = this.carry.morph
         this.items = new KeyedList(this.navigation.content, {
             make: (entry) => (entry.isSeparator ? separator(this.orientation) : this.makeItem(entry.item)),
             update: (element, entry) => {
@@ -178,7 +232,7 @@ export class ToolNav {
             isRevealed: () => this.navigation.motion.areElementsShown,
         })
         this.navigation.motion.onElements = (shown, isInstant) => {
-            for (const element of [...this.items.elements.values(), this.startGrip, this.endGrip]) {
+            for (const element of [...this.items.elements.values(), this.startGrip, this.endGrip, this.grabber]) {
                 if (isInstant) {
                     hideTurned(element)
                 } else {
@@ -306,8 +360,17 @@ export class ToolNav {
                 this.navigation.motion.leave()
             }
         }
-        const isWanted = props.subNavKey !== null && props.isShown
-        const wasWanted = Boolean(previous && previous.subNavKey !== null && previous.isShown)
+        this.syncStage()
+    }
+
+    syncStage() {
+        const props = this.props
+        if (!props) {
+            return
+        }
+        const isWanted = props.subNavKey !== null && props.isShown && !this.carry.isStageCleared
+        const wasWanted = this.isSubNavigationWanted
+        this.isSubNavigationWanted = isWanted
         if (isWanted && !wasWanted) {
             this.shownSubNavigationKey = props.subNavKey
             this.syncGroups(false)
@@ -646,10 +709,13 @@ export class ToolNav {
 
     navCenter(blocked) {
         const size = this.navigation.size
-        if (this.carryPoint) {
-            return this.clamped(this.carryPoint, size)
+        if (this.carry.isActive) {
+            return [...this.carry.center]
         }
         const placement = this.placement
+        if (placement?.corner && this.carry.state === "parked") {
+            return this.cornerSpot(placement.corner)
+        }
         const wanted = placement && Number.isFinite(placement.x) && Number.isFinite(placement.y)
             ? [placement.x * window.innerWidth, placement.y * window.innerHeight]
             : [window.innerWidth / 2, window.innerHeight - navMetrics.bottomGap - size[1] / 2]
@@ -697,7 +763,7 @@ export class ToolNav {
         }
         const panelSize = this.shownPillPanelKey ? this.pillPanel.size : [this.wheelHost.offsetWidth, this.wheelHost.offsetHeight]
         const panelCenter = this.avoiding(this.beside(this.lastAnchor ?? subRect, panelSize, side), panelSize, [...blocked, navigationRect, subRect])
-        const isSettled = !this.carryPoint && this.navigation.motion.areElementsShown
+        const isSettled = !this.carry.isActive && this.navigation.motion.areElementsShown
         this.navigationCenter.set(center, isAnimated && isSettled)
         this.subNavigationCenter.set(subCenter, isAnimated && isSettled)
         this.panelCenter.set(panelCenter, isAnimated && Boolean(this.shownPillPanelKey) && this.pillPanel.motion.areElementsShown)
@@ -707,7 +773,7 @@ export class ToolNav {
     placeNavigation(center) {
         const [x, y] = this.edgeVector(this.edge ?? "down", this.edgeOffset)
         placeAt(this.navigation.element, [center[0] + x, center[1] + y], this.navigation.size)
-        this.navigation.element.classList.toggle("is-carried", Boolean(this.carryPoint))
+        this.navigation.element.classList.toggle("is-carried", this.carry.state === "carried")
         this.placeFollowers()
     }
 
@@ -858,7 +924,7 @@ export class ToolNav {
     }
 
     navPointerDown(event) {
-        if (event.button !== 0 || this.carryPoint || this.toolReordering) {
+        if (event.button !== 0 || this.carry.isStageCleared || this.toolReordering) {
             return
         }
         this.navGesture = { pointerId: event.pointerId, start: [event.clientX, event.clientY], isRejected: false }
@@ -866,7 +932,7 @@ export class ToolNav {
 
     navPointerMove(event) {
         const gesture = this.navGesture
-        if (!gesture || gesture.pointerId !== event.pointerId || this.carryPoint || this.toolReordering) {
+        if (!gesture || gesture.pointerId !== event.pointerId || this.carry.isStageCleared || this.toolReordering) {
             return
         }
         const translation = [event.clientX - gesture.start[0], event.clientY - gesture.start[1]]
@@ -929,48 +995,42 @@ export class ToolNav {
     }
 
     gripDown(event) {
+        this.startCarry(event)
+    }
+
+    activePointerDown(event) {
         if (event.button !== 0) {
             return
         }
-        const grip = event.currentTarget
-        const start = [event.clientX, event.clientY]
+        if (this.carry.isActive) {
+            this.startCarry(event)
+            return
+        }
+        if (this.carry.state !== "parked" || !event.target.closest(".navigation-bubble")) {
+            return
+        }
+        event.stopPropagation()
         const pointerId = event.pointerId
-        let isCarrying = false
-        const timer = setTimeout(() => {
-            isCarrying = true
-            this.swallowUntil = Infinity
-            const center = this.navigationCenter.value
-            this.carryGrab = [start[0] - center[0], start[1] - center[1]]
-            this.carryPoint = [...center]
-            grip.setPointerCapture(pointerId)
-            this.navigation.element.classList.add("is-carried")
-            animate(this.navigation.element, [{ scale: "1" }, { scale: String(tokens.motion.scales.held) }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
-            this.layout(false)
-        }, duration("navigation_grip_hold"))
+        const start = [event.clientX, event.clientY]
+        const finish = () => {
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", end)
+            window.removeEventListener("pointercancel", end)
+        }
         const move = (moveEvent) => {
-            if (moveEvent.pointerId !== pointerId) {
+            if (moveEvent.pointerId !== pointerId || Math.hypot(moveEvent.clientX - start[0], moveEvent.clientY - start[1]) < tokens.motion.carry.tap_slop) {
                 return
             }
-            if (!isCarrying) {
-                if (Math.hypot(moveEvent.clientX - start[0], moveEvent.clientY - start[1]) > 10) {
-                    clearTimeout(timer)
-                }
-                return
-            }
-            this.carryPoint = [moveEvent.clientX - this.carryGrab[0], moveEvent.clientY - this.carryGrab[1]]
-            this.turnWhileCarried([moveEvent.clientX, moveEvent.clientY])
-            this.layout(false)
+            finish()
+            this.startCarry(moveEvent, start)
         }
         const end = (endEvent) => {
             if (endEvent.pointerId !== pointerId) {
                 return
             }
-            clearTimeout(timer)
-            window.removeEventListener("pointermove", move)
-            window.removeEventListener("pointerup", end)
-            window.removeEventListener("pointercancel", end)
-            if (isCarrying) {
-                this.finishCarry()
+            finish()
+            if (endEvent.type === "pointerup") {
+                this.carry.expand()
             }
         }
         window.addEventListener("pointermove", move)
@@ -978,70 +1038,175 @@ export class ToolNav {
         window.addEventListener("pointercancel", end)
     }
 
-    touchedOrientation(point) {
-        const size = this.navigation.size
-        const center = this.clamped(point, size)
-        const reach = navMetrics.edgeMargin + navMetrics.edgeTouchReach
-        const isAtSide = center[0] - size[0] / 2 <= reach || center[0] + size[0] / 2 >= window.innerWidth - reach
-        const isAtEnd = center[1] - size[1] / 2 <= reach || center[1] + size[1] / 2 >= window.innerHeight - reach
-        if (isAtSide === isAtEnd) {
-            return this.orientation
-        }
-        return isAtSide ? "vertical" : "horizontal"
-    }
-
-    turnWhileCarried(finger) {
-        const next = this.touchedOrientation(this.carryPoint)
-        if (next === this.orientation || this.isMutating) {
+    startCarry(event, grabPoint = null) {
+        if (event.button > 0 || this.sizingDrag || this.toolReordering || this.isEdgeHidden || !this.navigation.motion.isPresent) {
             return
         }
-        this.isMutating = true
+        event.stopPropagation()
+        const pointerId = event.pointerId
+        const finger = grabPoint ?? [event.clientX, event.clientY]
+        const center = this.carry.isStageCleared && this.carry.center ? this.carry.center : this.navigationCenter.value ?? this.navCenter(this.obstacles())
+        this.navGesture = null
+        this.swallowUntil = Infinity
+        this.setEdgeOffset(0)
+        this.carry.grab(finger, center, performance.now())
+        if (grabPoint) {
+            this.carry.drag([event.clientX, event.clientY], performance.now())
+        }
+        this.liftNavigation(true)
+        this.syncStage()
+        const move = (moveEvent) => {
+            if (moveEvent.pointerId === pointerId) {
+                this.carry.drag([moveEvent.clientX, moveEvent.clientY], performance.now())
+            }
+        }
+        const end = (endEvent) => {
+            if (endEvent.pointerId !== pointerId) {
+                return
+            }
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", end)
+            window.removeEventListener("pointercancel", end)
+            this.carry.release(performance.now())
+            this.liftNavigation(false)
+            this.swallowUntil = performance.now() + swallowMilliseconds
+        }
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", end)
+        window.addEventListener("pointercancel", end)
+    }
+
+    liftNavigation(isLifted) {
+        const held = String(tokens.motion.scales.held)
+        const current = getComputedStyle(this.navigation.element).scale
+        const from = current && current !== "none" ? current : "1"
+        this.navigation.element.getAnimations().filter((running) => running.id === "lift").forEach((running) => running.cancel())
+        const running = animate(this.navigation.element, [{ scale: from }, { scale: isLifted ? held : "1" }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
+        running.id = "lift"
+    }
+
+    shownSize(morph) {
+        const size = this.navigation.size
+        const diameter = this.navigation.bubbleDiameter
+        return [size[0] + (diameter - size[0]) * morph, size[1] + (diameter - size[1]) * morph]
+    }
+
+    dockSpot(edge, center) {
+        const size = this.navigation.size
+        const margin = navMetrics.edgeMargin
+        const point = [...center]
+        switch (edge) {
+        case "left": point[0] = margin + size[0] / 2; break
+        case "right": point[0] = window.innerWidth - margin - size[0] / 2; break
+        case "top": point[1] = margin + size[1] / 2; break
+        case "bottom": point[1] = window.innerHeight - margin - size[1] / 2; break
+        default: break
+        }
+        return this.avoiding(point, size, this.obstacles())
+    }
+
+    cornerSpot(corner) {
+        const diameter = this.navigation.bubbleDiameter
+        const reach = navMetrics.edgeMargin + diameter / 2
+        const [vertical, horizontal] = corner.split("-")
+        const point = [horizontal === "left" ? reach : window.innerWidth - reach, vertical === "top" ? reach : window.innerHeight - reach]
+        return this.avoiding(point, [diameter, diameter], this.obstacles())
+    }
+
+    turnTo(orientation, isInstant) {
+        if (this.turning) {
+            this.turning.orientation = orientation
+            return Math.max(0, this.turning.endsAt - performance.now())
+        }
+        if (orientation === this.orientation) {
+            return 0
+        }
+        if (isInstant) {
+            this.orientation = orientation
+            this.carry.swapGrab()
+            this.rebuildForOrientation()
+            return duration("press")
+        }
         for (const element of this.items.elements.values()) {
             turnOut(element, { milliseconds: duration("navigation_mutate_leave") })
         }
+        const changeAt = (duration("navigation_mutate_leave") * 3) / 2
+        const total = changeAt + duration("navigation_switch") * 2
+        this.turning = { orientation, endsAt: performance.now() + total }
         setTimeout(() => {
-            this.isMutating = false
-            if (!this.carryPoint) {
-                return
-            }
-            const turned = this.touchedOrientation(this.carryPoint)
-            if (turned === this.orientation) {
+            const wanted = this.turning.orientation
+            this.turning = null
+            if (wanted === this.orientation) {
                 this.items.reveal(true)
                 return
             }
-            const before = this.navigation.element.getBoundingClientRect()
-            this.orientation = turned
-            this.carryGrab = [this.carryGrab[1], this.carryGrab[0]]
-            this.carryPoint = [finger[0] - this.carryGrab[0], finger[1] - this.carryGrab[1]]
+            const shown = this.navigation.shownSize ?? this.navigation.size
+            this.orientation = wanted
+            this.carry.swapGrab()
             this.rebuildForOrientation()
+            this.navigation.morphSizeFrom([shown[1], shown[0]])
             this.layout(false)
-            morphFrom(this.navigation.element, before)
-        }, duration("navigation_mutate_leave"))
+        }, changeAt)
+        return total
     }
 
-    finishCarry() {
-        const point = this.clamped(this.carryPoint, this.navigation.size)
-        const width = window.innerWidth
-        const height = window.innerHeight
-        const nextOrientation = this.orientation
-        const next = { x: point[0] / Math.max(1, width), y: point[1] / Math.max(1, height), orientation: nextOrientation }
-        setNavPlacement(next)
-        const before = this.navigation.element.getBoundingClientRect()
-        const subBefore = this.subNavigation.element.getBoundingClientRect()
-        this.placement = next
-        this.carryPoint = null
-        this.navigation.element.classList.remove("is-carried")
-        animate(this.navigation.element, [{ scale: String(tokens.motion.scales.held) }, { scale: "1" }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
-        if (nextOrientation !== this.orientation) {
-            this.orientation = nextOrientation
-            this.rebuildForOrientation()
-        }
+    carryFrame() {
+        this.navigation.morph = this.carry.morph
+        this.navigation.stretch = this.carry.stretch
         this.layout(false)
-        morphFrom(this.navigation.element, before)
-        if (this.shownSubNavigationKey) {
-            morphFrom(this.subNavigation.element, subBefore)
+        this.navigation.paint()
+    }
+
+    land(corner) {
+        const center = this.carry.center
+        const next = { x: center[0] / Math.max(1, window.innerWidth), y: center[1] / Math.max(1, window.innerHeight), orientation: this.orientation, corner }
+        setNavPlacement(next)
+        this.placement = next
+        this.navigation.morph = this.carry.morph
+        this.navigation.stretch = { amount: 0, angle: 0 }
+        this.swallowUntil = Math.min(this.swallowUntil, performance.now() + swallowMilliseconds)
+        this.syncStage()
+        this.navigation.paint()
+    }
+
+    paintCarry() {
+        const size = this.navigation.size
+        const morph = this.navigation.morph
+        const diameter = this.navigation.bubbleDiameter
+        const face = this.bubbleFace
+        face.style.width = `${diameter}px`
+        face.style.height = `${diameter}px`
+        face.style.left = `${(size[0] - diameter) / 2}px`
+        face.style.top = `${(size[1] - diameter) / 2}px`
+        face.style.opacity = String(Math.min(1, Math.max(0, morph * 2 - 1)))
+        face.style.scale = String(0.6 + 0.4 * Math.min(1, Math.max(0, morph)))
+        const selected = this.props?.groups.flat().find((item) => item.id === this.props.selectedId)
+        const glyphName = selected?.glyph ?? "move"
+        const color = selected?.tint ?? tokens.palette.text_body
+        if (face.dataset.glyph !== `${glyphName}${color}`) {
+            face.dataset.glyph = `${glyphName}${color}`
+            face.replaceChildren(glyph(glyphName, { color, size: navMetrics.glyphSize }))
         }
-        this.swallowUntil = performance.now() + swallowMilliseconds
+        const carry = tokens.motion.carry
+        const isVertical = this.orientation === "vertical"
+        const bar = this.grabber.firstElementChild
+        const crossLength = carry.grabber_reach * 2
+        const alongLength = carry.grabber_length + carry.grabber_reach * 2
+        this.grabber.style.width = `${isVertical ? crossLength : alongLength}px`
+        this.grabber.style.height = `${isVertical ? alongLength : crossLength}px`
+        bar.style.width = `${isVertical ? carry.grabber_thickness : carry.grabber_length}px`
+        bar.style.height = `${isVertical ? carry.grabber_length : carry.grabber_thickness}px`
+        const edgeLine = carry.grabber_inset + carry.grabber_thickness / 2
+        if (isVertical) {
+            const facesLeft = (this.navigationCenter?.value?.[0] ?? 0) > window.innerWidth / 2
+            const line = facesLeft ? edgeLine : size[0] - edgeLine
+            this.grabber.style.left = `${line - crossLength / 2}px`
+            this.grabber.style.top = `${size[1] / 2 - alongLength / 2}px`
+        } else {
+            this.grabber.style.left = `${size[0] / 2 - alongLength / 2}px`
+            this.grabber.style.top = `${edgeLine - crossLength / 2}px`
+        }
+        bar.style.opacity = String(Math.min(1, Math.max(0, 1 - morph * 2)))
     }
 
     rebuildForOrientation() {
@@ -1078,7 +1243,7 @@ export class ToolNav {
         const extent = along(itemSize(this.orientation), this.orientation) + navMetrics.spacing
         let reordering = null
         const timer = setTimeout(() => {
-            if (this.sizingDrag || this.carryPoint || this.edgeDragStart) {
+            if (this.sizingDrag || this.carry.isActive || this.edgeDragStart) {
                 return
             }
             this.swallowUntil = Infinity
@@ -1185,7 +1350,7 @@ export class ToolNav {
                 if (Math.hypot(...travel) > 10) {
                     clearTimeout(timer)
                 }
-                if (onCollapse && !collapseJudged && !this.carryPoint && Math.hypot(...travel) >= navMetrics.navSizingSlop) {
+                if (onCollapse && !collapseJudged && !this.carry.isActive && Math.hypot(...travel) >= navMetrics.navSizingSlop) {
                     collapseJudged = true
                     const alongTravel = this.orientation === "horizontal" ? travel[0] : travel[1]
                     const acrossTravel = this.orientation === "horizontal" ? travel[1] : travel[0]
@@ -1279,16 +1444,6 @@ function stepReordering(reordering, extent) {
 function placeAt(element, center, size) {
     element.style.left = `${center[0] - size[0] / 2}px`
     element.style.top = `${center[1] - size[1] / 2}px`
-}
-
-function morphFrom(element, before) {
-    const after = element.getBoundingClientRect()
-    if (!before.width || !after.width) {
-        return
-    }
-    const deltaX = before.left + before.width / 2 - (after.left + after.width / 2)
-    const deltaY = before.top + before.height / 2 - (after.top + after.height / 2)
-    animate(element, [{ translate: `${deltaX}px ${deltaY}px` }, { translate: "0px 0px" }], { milliseconds: duration("state") * 2, curveName: "power_three_in_out" })
 }
 
 function leaveGroup(element, position = [element.offsetLeft, element.offsetTop]) {

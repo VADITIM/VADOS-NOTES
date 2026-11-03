@@ -1186,6 +1186,46 @@ textarea.inline-title-field {
     border-color: var(--palette-accent);
 }
 
+.navigation.is-bubble,
+.navigation.is-bubble > .pill-content {
+    pointer-events: none;
+}
+
+.navigation-grabber {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    cursor: grab;
+}
+
+.navigation.is-bubble .navigation-grabber {
+    pointer-events: none;
+}
+
+.navigation-grabber-bar {
+    border-radius: 999px;
+    background: var(--palette-border-hover);
+    pointer-events: none;
+}
+
+.navigation-bubble {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    pointer-events: none;
+    touch-action: none;
+    cursor: grab;
+}
+
+.navigation.is-bubble .navigation-bubble {
+    pointer-events: auto;
+}
+
 .navigation-wash,
 .mode-wash {
     position: absolute;

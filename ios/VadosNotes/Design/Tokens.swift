@@ -142,7 +142,6 @@ struct Tokens: Decodable {
         let strokeStraightenHold: Int
         let strokeStraightenSnap: Int
         let undo: Int
-        let navigationGripHold: Int
         let textMoveHold: Int
         let viewerEnter: Int
         let viewerClose: Int
@@ -177,6 +176,9 @@ struct Tokens: Decodable {
         let wash: SpringToken
         let selection: SpringToken
         let settingsPop: SpringToken
+        let morph: SpringToken
+        let bubbleFollow: SpringToken
+        let dock: SpringToken
     }
 
     struct ScaleTokens: Decodable {
@@ -197,12 +199,34 @@ struct Tokens: Decodable {
         let navEdgeRubber: Double
     }
 
+    struct CarryTokens: Decodable {
+        let morphStart: Double
+        let morphFull: Double
+        let throwVelocity: Double
+        let throwVelocityLimit: Double
+        let restVelocity: Double
+        let throwDecay: Double
+        let bounce: Double
+        let bubbleDiameter: Double
+        let cornerZone: Double
+        let edgeZone: Double
+        let stretchPerVelocity: Double
+        let stretchLimit: Double
+        let velocityWindow: Double
+        let tapSlop: Double
+        let grabberLength: Double
+        let grabberThickness: Double
+        let grabberInset: Double
+        let grabberReach: Double
+    }
+
     struct MotionTokens: Decodable {
         let curves: CurveTokens
         let durations: DurationTokens
         let springs: SpringTokens
         let scales: ScaleTokens
         let shares: ShareTokens
+        let carry: CarryTokens
     }
 
     struct BackgroundTokens: Decodable {
