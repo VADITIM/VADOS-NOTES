@@ -231,6 +231,7 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             ImportImages.shared.assetURL = { [library] asset in library.assetURL(asset) }
+            library.adoptDeviceGroups(preferences.takeDeviceGroups())
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

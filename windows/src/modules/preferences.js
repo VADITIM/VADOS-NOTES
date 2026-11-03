@@ -161,6 +161,25 @@ export function removeColorPreset(tool, color) {
     write(`${tool}Presets`, colorPresets(tool).filter((candidate) => candidate !== color))
 }
 
+const folderColorPresetsKey = "folderPresets"
+
+export function folderColorPresets() {
+    const stored = readSetting(folderColorPresetsKey, null)
+    return Array.isArray(stored) ? stored : [...tokens.folders.colors]
+}
+
+export function addFolderColorPreset(color) {
+    const normalized = color.toUpperCase()
+    const presets = folderColorPresets()
+    if (!presets.includes(normalized)) {
+        write(folderColorPresetsKey, [...presets, normalized])
+    }
+}
+
+export function removeFolderColorPreset(color) {
+    write(folderColorPresetsKey, folderColorPresets().filter((candidate) => candidate !== color))
+}
+
 export function replaceColorPreset(tool, color, replacement) {
     const normalized = replacement.toUpperCase()
     const presets = colorPresets(tool)
@@ -194,14 +213,6 @@ export function setEraserMode(mode) {
     write("eraserMode", mode)
 }
 
-export function textFontSize() {
-    return clamp(readSetting("textFontSize", tokens.text.font_size), tokens.text.font_size_range)
-}
-
-export function setTextFontSize(size) {
-    write("textFontSize", clamp(size, tokens.text.font_size_range))
-}
-
 const earlierWritingFonts = { Mono: "Space Mono", Sans: "General Sans" }
 
 export function writingFont() {
@@ -232,49 +243,31 @@ export function setSubNavigationOrder(order, key) {
     write(`subNavigationOrder.${key}`, order)
 }
 
-export function groups(parentId) {
-    const stored = readSetting(`groups.${parentId ?? "root"}`, [])
-    return Array.isArray(stored) ? stored : []
+export function isSubNavigationGroupCollapsed(id) {
+    return readSetting(`subNavigationCollapsed.${id}`, false) === true
 }
 
-function setGroups(list, parentId) {
-    write(`groups.${parentId ?? "root"}`, list.filter((group) => group.members.length > 0))
+export function setSubNavigationGroupCollapsed(isCollapsed, id) {
+    write(`subNavigationCollapsed.${id}`, isCollapsed)
 }
 
-function withoutMember(memberId, parentId) {
-    return groups(parentId).map((group) => ({ ...group, members: group.members.filter((member) => member !== memberId) }))
-}
-
-export function groupOf(memberId, parentId) {
-    return groups(parentId).find((group) => group.members.includes(memberId)) ?? null
-}
-
-export function addToGroup(memberId, groupId, parentId) {
-    const list = withoutMember(memberId, parentId)
-    const group = list.find((candidate) => candidate.id === groupId)
-    if (!group) {
-        return
+export function takeDeviceGroups() {
+    const prefix = "groups."
+    const taken = []
+    try {
+        const keys = Object.keys(localStorage).filter((key) => key.startsWith(prefix))
+        for (const key of keys) {
+            const stored = readSetting(key, [])
+            const parent = key.slice(prefix.length)
+            if (Array.isArray(stored)) {
+                taken.push({ parentId: parent === "root" ? null : parent, groups: stored })
+            }
+            localStorage.removeItem(key)
+        }
+    } catch {
+        return taken
     }
-    group.members.push(memberId)
-    setGroups(list, parentId)
-}
-
-export function createGroup(title, isFolders, memberId, parentId) {
-    const list = withoutMember(memberId, parentId)
-    list.push({ id: crypto.randomUUID().toUpperCase(), title, isFolders, members: [memberId] })
-    setGroups(list, parentId)
-}
-
-export function removeFromGroup(memberId, parentId) {
-    setGroups(withoutMember(memberId, parentId), parentId)
-}
-
-export function renameGroup(groupId, title, parentId) {
-    setGroups(groups(parentId).map((group) => (group.id === groupId ? { ...group, title } : group)), parentId)
-}
-
-export function ungroup(groupId, parentId) {
-    setGroups(groups(parentId).filter((group) => group.id !== groupId), parentId)
+    return taken
 }
 
 export function navPlacement() {

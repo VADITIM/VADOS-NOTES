@@ -1,5 +1,6 @@
 import { elementBounds } from "./canvas.js"
 import {
+    addingCell,
     cellCountAlong,
     cellHeight,
     cellRemoval,
@@ -8,11 +9,13 @@ import {
     decodeFile,
     encodeNotebook,
     encodePage,
+    groupPath,
     isNewer,
     isOrderedBefore,
     layerForTool,
     makeIdentifier,
     mergeElement,
+    mergeGroup,
     mergeHeader,
     mergeNotebook,
     nextOrder,
@@ -24,10 +27,10 @@ import {
     schemaVersion,
     sortedByOrder,
     timestampMilliseconds,
-    timestampNow,
     tombstone,
     translatedElement,
 } from "./model.js"
+import { fittedText, rhythmFontSize } from "./renderer.js"
 import { deviceIdentity, loadFiles, readSetting, readSyncState, writeFile, writeSetting } from "./storage.js"
 import { tokens } from "./tokens.js"
 
@@ -70,11 +73,13 @@ export class Library {
         this.device = deviceIdentity()
         this.notebooks = new Map()
         this.pagesById = new Map()
+        this.groupsById = new Map()
         this.readOnlyPages = new Set()
         this.blockedPaths = new Map()
         this.undoSteps = new Map()
         this.redoSteps = new Map()
         this.textEditing = null
+        this.lastIssued = 0
         this.clipboard = []
         this.listeners = new Set()
         this.pendingWrites = new Map()
@@ -91,10 +96,13 @@ export class Library {
         for (const file of files) {
             try {
                 const { value } = decodeFile(file.contents)
-                if (file.path.endsWith("/notebook.json")) {
+                const kind = repositoryPathKind(file.path)?.kind
+                if (kind === "notebook") {
                     this.notebooks.set(value.id, value)
-                } else if (file.path.includes("/pages/")) {
+                } else if (kind === "page") {
                     this.pagesById.set(value.id, value)
+                } else if (kind === "group") {
+                    this.groupsById.set(value.id, value)
                 }
             } catch (error) {
                 this.lastError = `${file.path}: ${error.message}`
@@ -139,7 +147,9 @@ export class Library {
     }
 
     timestamp() {
-        return timestampNow()
+        const now = Date.now()
+        this.lastIssued = Math.max(now, (this.lastIssued ?? 0) + 1)
+        return new Date(this.lastIssued).toISOString()
     }
 
     liveNotebooks() {
@@ -220,7 +230,7 @@ export class Library {
 
     moveNotebook(notebookId, parentId) {
         if (this.canMoveNotebook(notebookId, parentId) && this.parentOf(notebookId) !== parentId) {
-            this.updateNotebook(notebookId, { parent: parentId, order: endOrder(this.folders(parentId)) })
+            this.updateNotebook(notebookId, { parent: parentId, order: endOrder(this.folders(parentId)), group: null })
         }
     }
 
@@ -348,7 +358,7 @@ export class Library {
         }
         this.finishText()
         const now = this.timestamp()
-        const { elements, ...header } = page
+        const { elements, group, ...header } = page
         const moved = { ...header, id: makeIdentifier("p", timestampMilliseconds(now)), notebook: notebookId, order: endOrder(this.pages(notebookId)), updated: now, device: this.device }
         this.applyHeader(moved)
         for (const element of elements) {
@@ -389,8 +399,7 @@ export class Library {
         if (!page || this.isReadOnly(pageId)) {
             return
         }
-        const extent = isColumns ? { cols: page.extent.cols + 1, rows: page.extent.rows } : { cols: page.extent.cols, rows: page.extent.rows + 1 }
-        this.updatePage(pageId, { extent })
+        this.updatePage(pageId, { extent: addingCell(page.extent, isColumns) })
     }
 
     swapCells(pageId, first, second) {
@@ -591,12 +600,12 @@ export class Library {
         if (!page || !element || element.deleted || this.isReadOnly(pageId)) {
             return
         }
-        const moved = { ...element, box, updated: this.timestamp(), device: this.device }
+        const moved = { ...fittedText({ ...element, box }, page.extent), updated: this.timestamp(), device: this.device }
         this.applyElement(pageId, moved)
         this.record({ before: [element], after: [moved] }, pageId)
     }
 
-    transformElements(elementIds, pageId, transform) {
+    transformElements(elementIds, pageId, transform, isFitted = true) {
         const page = this.page(pageId)
         if (!page || this.isReadOnly(pageId)) {
             return
@@ -608,7 +617,8 @@ export class Library {
             if (!element || element.deleted) {
                 continue
             }
-            const changed = transform(element)
+            const transformed = transform(element)
+            const changed = transformed && transformed.type === "text" && isFitted ? fittedText(transformed, page.extent) : transformed
             if (!changed) {
                 continue
             }
@@ -635,7 +645,7 @@ export class Library {
     }
 
     setStrokeWidth(elementIds, pageId, width) {
-        this.transformElements(elementIds, pageId, (element) => (element.type === "stroke" && element.width !== width ? { ...element, width } : null))
+        this.transformElements(elementIds, pageId, (element) => (element.type === "stroke" && element.width !== width ? { ...element, width } : null), false)
     }
 
     placeText(box) {
@@ -651,7 +661,7 @@ export class Library {
         }
     }
 
-    beginText(pageId, point, fontSize = tokens.text.font_size) {
+    beginText(pageId, point) {
         const page = this.page(pageId)
         if (!page || this.isReadOnly(pageId)) {
             return
@@ -666,7 +676,7 @@ export class Library {
             color: tokens.text.color,
             content: "",
             box: { x: point[0], y: point[1], width: tokens.text.box_width },
-            font_size: fontSize,
+            font_size: rhythmFontSize(),
             updated: now,
             device: this.device,
             deleted: false,
@@ -676,12 +686,18 @@ export class Library {
     }
 
     editText(elementId, pageId) {
-        const element = this.page(pageId)?.elements.find((candidate) => candidate.id === elementId)
+        const page = this.page(pageId)
+        const element = page?.elements.find((candidate) => candidate.id === elementId)
         if (!element || element.deleted || this.isReadOnly(pageId)) {
             return
         }
         this.finishText()
-        this.textEditing = { pageId, element, original: element, isApplied: true }
+        let fitted = fittedText(element, page.extent)
+        if (JSON.stringify(fitted) !== JSON.stringify(element)) {
+            fitted = { ...fitted, updated: this.timestamp(), device: this.device }
+            this.applyElement(pageId, fitted)
+        }
+        this.textEditing = { pageId, element: fitted, original: element, isApplied: true }
         this.changed()
     }
 
@@ -829,6 +845,105 @@ export class Library {
         this.changed()
     }
 
+    groups(parentId) {
+        const records = sortedByOrder([...this.groupsById.values()].filter((group) => !group.deleted && (group.parent ?? null) === (parentId ?? null)))
+        return records.map((record) => ({ id: record.id, title: record.title, isFolders: record.kind === "folders", members: this.groupMembers(record, parentId) })).filter((group) => group.members.length > 0)
+    }
+
+    groupMembers(record, parentId) {
+        if (record.kind === "folders") {
+            return this.folders(parentId ?? null).filter((folder) => folder.group === record.id).map((folder) => folder.id)
+        }
+        return parentId ? this.pages(parentId).filter((page) => page.group === record.id).map((page) => page.id) : []
+    }
+
+    setGroup(groupId, memberId) {
+        if (this.notebook(memberId)) {
+            this.updateNotebook(memberId, { group: groupId })
+        } else if (this.page(memberId)) {
+            this.updatePage(memberId, { group: groupId })
+        }
+    }
+
+    updateGroup(groupId, changes) {
+        const group = this.groupsById.get(groupId)
+        if (!group || group.deleted) {
+            return
+        }
+        this.applyGroup({ ...group, ...changes, updated: this.timestamp(), device: this.device })
+    }
+
+    addToGroup(memberId, groupId, parentId) {
+        if (!this.groupsById.has(groupId) || this.groupsById.get(groupId).deleted) {
+            return
+        }
+        const previous = this.groups(parentId).find((group) => group.members.includes(memberId))
+        this.setGroup(groupId, memberId)
+        if (previous && previous.id !== groupId && previous.members.length === 1) {
+            this.updateGroup(previous.id, { deleted: true })
+        }
+    }
+
+    createGroup(title, isFolders, memberId, parentId) {
+        const now = this.timestamp()
+        const siblings = [...this.groupsById.values()].filter((group) => !group.deleted && (group.parent ?? null) === (parentId ?? null))
+        const group = {
+            schema_version: schemaVersion,
+            id: makeIdentifier("g", timestampMilliseconds(now)),
+            title,
+            kind: isFolders ? "folders" : "notes",
+            order: endOrder(siblings),
+            updated: now,
+            device: this.device,
+            deleted: false,
+        }
+        if (parentId) {
+            group.parent = parentId
+        }
+        this.applyGroup(group)
+        this.addToGroup(memberId, group.id, parentId)
+        return group.id
+    }
+
+    removeFromGroup(memberId, parentId) {
+        const group = this.groups(parentId).find((candidate) => candidate.members.includes(memberId))
+        if (!group) {
+            return
+        }
+        this.setGroup(null, memberId)
+        if (group.members.length === 1) {
+            this.updateGroup(group.id, { deleted: true })
+        }
+    }
+
+    renameGroup(groupId, title) {
+        this.updateGroup(groupId, { title })
+    }
+
+    ungroup(groupId) {
+        this.updateGroup(groupId, { deleted: true })
+    }
+
+    adoptDeviceGroups(taken) {
+        for (const { parentId, groups } of taken) {
+            for (const deviceGroup of groups) {
+                const live = (deviceGroup.members ?? []).filter((id) => (deviceGroup.isFolders ? this.notebook(id) && this.parentOf(id) === parentId : parentId && this.page(id)?.notebook === parentId))
+                if (!live.length) {
+                    continue
+                }
+                const groupId = this.createGroup(deviceGroup.title, deviceGroup.isFolders, live[0], parentId)
+                live.slice(1).forEach((memberId) => this.setGroup(groupId, memberId))
+            }
+        }
+    }
+
+    applyGroup(group) {
+        const existing = this.groupsById.get(group.id)
+        this.groupsById.set(group.id, existing ? mergeGroup(existing, group) : group)
+        this.scheduleGroup(group.id, true)
+        this.changed()
+    }
+
     header(page) {
         const { elements, ...header } = page
         return header
@@ -875,7 +990,11 @@ export class Library {
 
     absorbRemote(path, value) {
         const kind = repositoryPathKind(path)
-        if (kind?.kind === "notebook") {
+        if (kind?.kind === "group") {
+            const existing = this.groupsById.get(value.id)
+            this.groupsById.set(value.id, existing ? mergeGroup(existing, value) : value)
+            this.scheduleGroup(value.id, false)
+        } else if (kind?.kind === "notebook") {
             const existing = this.notebooks.get(value.id)
             this.notebooks.set(value.id, existing ? mergeNotebook(existing, value) : value)
             this.scheduleNotebook(value.id, false)
@@ -906,6 +1025,10 @@ export class Library {
 
     encodedFile(path) {
         const kind = repositoryPathKind(path)
+        if (kind?.kind === "group") {
+            const group = this.groupsById.get(kind.groupId)
+            return group ? encodeNotebook(group) : null
+        }
         if (kind?.kind === "notebook") {
             const notebook = this.notebooks.get(kind.notebookId)
             return notebook ? encodeNotebook(notebook) : null
@@ -961,6 +1084,15 @@ export class Library {
             this.onChange?.(notebookId)
         }
         this.schedule(path, () => encodeNotebook(this.notebooks.get(notebookId)))
+    }
+
+    scheduleGroup(groupId, isLocal) {
+        const path = groupPath(groupId)
+        if (isLocal) {
+            this.markDirty(path)
+            this.onChange?.(groupId)
+        }
+        this.schedule(path, () => encodeNotebook(this.groupsById.get(groupId)))
     }
 
     schedulePage(page, isLocal) {

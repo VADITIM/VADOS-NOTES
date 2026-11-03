@@ -54,6 +54,7 @@
 :root {
     color-scheme: dark;
     --palette-ground: #0E0E0E;
+    --top-bar-control-height: 48px;
 }
 
 * {
@@ -88,6 +89,14 @@ button {
 button:focus-visible {
     outline: 1px solid var(--palette-accent);
     outline-offset: 3px;
+}
+
+* {
+    scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+    display: none;
 }
 
 button:disabled,
@@ -181,7 +190,7 @@ svg.squircle ~ * {
 }
 
 .nav-layer {
-    z-index: 4;
+    z-index: 6;
 }
 
 .overlay-host {
@@ -209,15 +218,18 @@ svg.squircle ~ * {
 .folder-titles {
     position: relative;
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 10px;
-    padding: 9px 20px 11px;
-    border-radius: 24px;
-    background: var(--palette-panel);
-    border: 1px solid var(--palette-border);
+    align-items: baseline;
+    gap: 10px;
+    height: var(--top-bar-control-height);
+    padding: 0 20px;
+    box-sizing: border-box;
+    line-height: var(--top-bar-control-height);
     pointer-events: auto;
     max-width: 100%;
+}
+
+.folder-titles > :not(.pill-shell) {
+    position: relative;
 }
 
 .page-titles {
@@ -286,8 +298,8 @@ svg.squircle ~ * {
 
 .back-button,
 .round-icon-button {
-    width: 48px;
-    height: 48px;
+    width: var(--top-bar-control-height);
+    height: var(--top-bar-control-height);
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -308,7 +320,7 @@ svg.squircle ~ * {
 .search-field {
     position: relative;
     width: 260px;
-    height: 48px;
+    height: var(--top-bar-control-height);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -461,6 +473,7 @@ textarea.inline-title-field {
 }
 
 .group-row {
+    position: relative;
     padding: 18px 28px 0;
 }
 
@@ -632,9 +645,17 @@ textarea.inline-title-field {
 .tile-ghost {
     position: fixed;
     pointer-events: none;
-    scale: 1.04;
     filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.6));
     z-index: 20;
+}
+
+.group-row.is-drop-target::after {
+    content: "";
+    position: absolute;
+    inset: 10px 20px -8px;
+    border: 2px solid var(--palette-accent);
+    border-radius: 24px;
+    pointer-events: none;
 }
 
 .tile-ghost.is-into {
@@ -659,7 +680,6 @@ textarea.inline-title-field {
     top: 0;
     overflow: hidden;
     display: flex;
-    justify-content: flex-end;
 }
 
 .stack-shut-label {
@@ -921,6 +941,7 @@ textarea.inline-title-field {
 
 .appearance-swatches {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
 }
 
@@ -993,6 +1014,12 @@ textarea.inline-title-field {
 .settings-column {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.settings-unit {
     display: flex;
     flex-direction: column;
     gap: 18px;
@@ -1349,6 +1376,22 @@ textarea.inline-title-field {
     flex: none;
 }
 
+.group-end-button path {
+    fill: none;
+    stroke: var(--palette-text-body);
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.nav-icon-button.is-washed.is-selected::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: var(--palette-pressed-wash);
+}
+
 .nav-icon-button.is-selected .glyph {
     scale: 1.06;
 }
@@ -1588,6 +1631,14 @@ textarea.inline-title-field {
     border-radius: 50%;
 }
 
+.size-preview-dot {
+    position: fixed;
+    border-radius: 50%;
+    border: 1.5px solid transparent;
+    box-sizing: border-box;
+    pointer-events: none;
+}
+
 .nav-size-slider {
     position: absolute;
     left: 5px;
@@ -1597,28 +1648,37 @@ textarea.inline-title-field {
 
 .nav-size-track {
     position: absolute;
-    border-radius: 3px;
-    background: var(--palette-border-strong);
 }
 
 .nav-size-slider.is-horizontal .nav-size-track {
     left: 17px;
-    top: calc(50% - 3px);
-    height: 6px;
+    top: 50%;
+    translate: 0 -50%;
 }
 
 .nav-size-slider.is-vertical .nav-size-track {
     bottom: 17px;
-    left: calc(50% - 3px);
-    width: 6px;
+    left: 50%;
+    translate: -50% 0;
+}
+
+.nav-size-cone {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    display: block;
+    fill: var(--palette-border-strong);
 }
 
 .nav-size-fill {
     position: absolute;
     left: 0;
     bottom: 0;
-    border-radius: 3px;
-    background: var(--palette-accent);
+    overflow: hidden;
+}
+
+.nav-size-fill .nav-size-cone {
+    fill: var(--palette-accent);
 }
 
 .nav-size-slider.is-horizontal .nav-size-fill {

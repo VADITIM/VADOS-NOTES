@@ -1,9 +1,9 @@
 import { create, field, linkButton, microLabel, pressable, segmented, setEnabled, slabButton } from "./components.js"
-import { colorPanel, sizeSlider, swatchButton, wheelButton } from "./controls.js"
+import { colorPanel, groupEndButton, sizeSlider, swatchButton, wheelButton } from "./controls.js"
 import { folderLook, noteLook } from "./grid.js"
 import { importFailureMessage, readPdf } from "./imports.js"
 import { animate, curve, duration } from "./motion.js"
-import { popTogether } from "./pill.js"
+import { popScale, popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { fontFamily } from "./renderer.js"
@@ -71,13 +71,13 @@ function nameSheet({ heading, initial, confirmTitle, confirmColor, selectsAll = 
 function groupSheet(app, request) {
     const memberId = request.target.id
     const isFolders = request.target.kind === "folder"
-    const groups = preferences.groups(request.parentId).filter((group) => group.isFolders === isFolders)
+    const groups = app.library.groups(request.parentId).filter((group) => group.isFolders === isFolders)
     const rows = create("div", "sheet-rows")
     for (const group of groups) {
         const row = create("button", "sheet-row", glyph("stack", { color: tokens.palette.accent, size: 18 }), create("span", "sheet-row-title", group.title), create("span", "sheet-row-spacer"), microLabel(String(group.members.length)))
         pressable(row)
         row.addEventListener("click", () => {
-            preferences.addToGroup(memberId, group.id, request.parentId)
+            app.library.addToGroup(memberId, group.id, request.parentId)
             app.navigator.show(null)
         })
         rows.append(row)
@@ -88,7 +88,7 @@ function groupSheet(app, request) {
         if (!trimmed) {
             return
         }
-        preferences.createGroup(trimmed, isFolders, memberId, request.parentId)
+        app.library.createGroup(trimmed, isFolders, memberId, request.parentId)
         app.navigator.show(null)
     }
     const button = slabButton("Create group", tokens.semantic.create, create_)
@@ -112,7 +112,12 @@ function appearanceSheet(app, request) {
     const name = create("span", "appearance-name")
     header.append(preview, name)
     const swatches = create("div", "appearance-swatches")
+    const wheelHost = create("div", "settings-panel-host")
     const icons = create("div", "appearance-icons")
+    const wheelWriteDelay = 250
+    let isWheelOpen = false
+    let wheelColor = null
+    let wheelTimer = null
     const details = () => {
         if (target.kind === "folder") {
             const notebook = library.notebook(target.id)
@@ -129,11 +134,44 @@ function appearanceSheet(app, request) {
         }
         render()
     }
-    const colorButtons = tokens.folders.colors.map((color) => {
-        const swatch = swatchButton({ color, orientation: "horizontal", onSelect: () => apply({ color }) })
-        swatches.append(swatch)
-        return { color, swatch }
-    })
+    const writeWheelColor = () => {
+        clearTimeout(wheelTimer)
+        wheelTimer = null
+        if (wheelColor) {
+            const color = wheelColor
+            wheelColor = null
+            apply({ color })
+        }
+    }
+    const pickFromWheel = (hex) => {
+        wheelColor = hex.toUpperCase()
+        clearTimeout(wheelTimer)
+        wheelTimer = setTimeout(writeWheelColor, wheelWriteDelay)
+        render()
+    }
+    const wheel = wheelButton({ orientation: "horizontal", action: () => {
+        isWheelOpen = !isWheelOpen
+        if (isWheelOpen) {
+            const panel = colorPanel({ color: shownColor() ?? tokens.folders.colors[0], onChange: pickFromWheel })
+            wheelHost.replaceChildren(panel)
+            popTogether(panel, true)
+        } else {
+            const panel = wheelHost.firstElementChild
+            if (panel) {
+                popTogether(panel, false).finished.then(() => panel.remove(), () => panel.remove())
+            }
+        }
+        render()
+    } })
+    const plus = groupEndButton({ orientation: "horizontal", action: () => {
+        const color = shownColor()
+        if (color) {
+            preferences.addFolderColorPreset(color)
+            render()
+        }
+    } })
+    const presetButtons = new Map()
+    const shownColor = () => (wheelColor ?? details()?.color ?? null)?.toUpperCase() ?? null
     const iconButtons = tokens.folders.icons.map((icon) => {
         const button = create("button", "appearance-icon")
         pressable(button)
@@ -146,19 +184,47 @@ function appearanceSheet(app, request) {
         if (!current) {
             return
         }
-        preview.replaceChildren(glyph(current.icon, { color: current.color, size: 28 }))
+        const color = shownColor()
+        preview.replaceChildren(glyph(current.icon, { color, size: 28 }))
         name.textContent = current.title
-        for (const { color, swatch } of colorButtons) {
-            swatch.update({ color, isSelected: color.toUpperCase() === current.color.toUpperCase() })
+        const presets = preferences.folderColorPresets()
+        for (const [preset, swatch] of presetButtons) {
+            if (!presets.includes(preset)) {
+                swatch.remove()
+                presetButtons.delete(preset)
+            }
         }
+        const ordered = [wheel]
+        for (const preset of presets) {
+            let swatch = presetButtons.get(preset)
+            if (!swatch) {
+                swatch = swatchButton({ color: preset, orientation: "horizontal", onSelect: () => {
+                    wheelColor = null
+                    clearTimeout(wheelTimer)
+                    apply({ color: preset })
+                }, onRemove: () => {
+                    preferences.removeFolderColorPreset(preset)
+                    render()
+                } })
+                presetButtons.set(preset, swatch)
+            }
+            swatch.update({ color: preset, isSelected: preset.toUpperCase() === color })
+            ordered.push(swatch)
+        }
+        ordered.push(plus)
+        swatches.replaceChildren(...ordered)
+        wheel.update({ isOpen: isWheelOpen })
+        plus.update({ isEnabled: !presets.map((preset) => preset.toUpperCase()).includes(color) })
         for (const { icon, button } of iconButtons) {
             const isSelected = icon === current.icon
-            button.replaceChildren(glyph(icon, { color: isSelected ? current.color : tokens.palette.text_muted }))
-            button.style.borderColor = isSelected ? current.color : "transparent"
+            button.replaceChildren(glyph(icon, { color: isSelected ? color : tokens.palette.text_muted }))
+            button.style.borderColor = isSelected ? color : "transparent"
         }
     }
     render()
-    return sheetPanel("Icon & colour", header, swatches, icons, slabButton("Done", tokens.semantic.create, () => app.navigator.show(null)))
+    const panel = sheetPanel("Icon & colour", header, swatches, wheelHost, icons, slabButton("Done", tokens.semantic.create, () => app.navigator.show(null)))
+    panel.unsubscribe = writeWheelColor
+    return panel
 }
 
 function moveSheet(app, request) {
@@ -501,6 +567,18 @@ function settingsSheet(app) {
         paperToggle.select(preferences.paperStyle(), true)
     }
     sheet.unsubscribe = app.sync.subscribe(() => renderSync())
+    const units = [asciiModule, transferUnit, paperModule, penModule, textModule, syncModule, deleteButton]
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    sheet.popModules = (isShown) => {
+        if (reducedMotion.matches) {
+            for (const unit of units) {
+                animate(unit, [{ opacity: isShown ? 0 : 1 }, { opacity: isShown ? 1 : 0 }], { milliseconds: duration("state"), curveName: isShown ? "power_two_out" : "power_two_in", fill: "forwards" })
+            }
+            return
+        }
+        const shuffled = [...units].sort(() => Math.random() - 0.5)
+        shuffled.forEach((unit, position) => popScale(unit, isShown ? 1 : 0, { name: "settings_pop", delay: position * duration("settings_stagger") }))
+    }
     return sheet
 }
 
@@ -526,8 +604,8 @@ function buildContent(app, request) {
         } })
     }
     case "renameGroup":
-        return nameSheet({ heading: "Rename group", initial: preferences.groups(request.parentId).find((group) => group.id === request.groupId)?.title ?? "", confirmTitle: "Rename", confirmColor: tokens.semantic.edit, confirm: (title) => {
-            preferences.renameGroup(request.groupId, title, request.parentId)
+        return nameSheet({ heading: "Rename group", initial: library.groups(request.parentId).find((group) => group.id === request.groupId)?.title ?? "", confirmTitle: "Rename", confirmColor: tokens.semantic.edit, confirm: (title) => {
+            library.renameGroup(request.groupId, title)
             app.navigator.show(null)
         } })
     case "pickGroup":
@@ -595,7 +673,9 @@ export class SheetHost {
             return
         }
         animate(this.backdrop, [{ opacity: 0 }, { opacity: 1 }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
-        if (this.isFullScreen) {
+        if (this.request.kind === "settings") {
+            this.content.popModules?.(true)
+        } else if (this.isFullScreen) {
             animate(this.content, [{ transform: `translateY(${-this.frame.offsetHeight}px)` }, { transform: "translateY(0)" }], { milliseconds: duration("sheet_drop"), curveName: "power_two_out" })
             this.content.riseParts?.()
         } else {
@@ -650,8 +730,9 @@ export class SheetHost {
             this.backdrop.style.opacity = "0"
         } else if (this.isFullScreen) {
             milliseconds = duration("sheet_drop")
-            animate(this.content, [{ transform: "translateY(0)" }, { transform: `translateY(${-this.frame.offsetHeight}px)` }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
-            animate(this.backdrop, [{ opacity: 1 }, { opacity: 0 }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
+            this.backdrop.getAnimations().forEach((running) => running.cancel())
+            this.backdrop.style.opacity = "0"
+            this.content.popModules?.(false)
         } else {
             animate(this.content, [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.96)" }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
             animate(this.backdrop, [{ opacity: 1 }, { opacity: 0 }], { milliseconds, curveName: "power_two_in", fill: "forwards" })

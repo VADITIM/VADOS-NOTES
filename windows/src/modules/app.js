@@ -226,6 +226,7 @@ async function start() {
     await document.fonts.load(`16px "My Handwriting"`)
     const library = new Library()
     await library.open()
+    library.adoptDeviceGroups(preferences.takeDeviceGroups())
     const sync = new SyncCoordinator(library)
     await sync.open()
     new App(document.getElementById("root"), library, sync)

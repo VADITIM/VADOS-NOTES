@@ -50,6 +50,13 @@ struct PagePlacement: Hashable {
     let index: Int
 }
 
+struct TileGroup: Equatable, Identifiable {
+    var id: String
+    var title: String
+    var isFolders: Bool
+    var members: [String]
+}
+
 @MainActor
 final class Library: ObservableObject {
     @Published private(set) var revision = 0
@@ -222,6 +229,7 @@ final class Library: ObservableObject {
         updateNotebook(notebookId) { notebook in
             notebook.parent = parentId
             notebook.order = order
+            notebook.group = nil
         }
     }
 
@@ -358,6 +366,7 @@ final class Library: ObservableObject {
         header.id = Identifier.make(prefix: Identifier.pagePrefix, date: now)
         header.notebook = notebookId
         header.order = Arrangement.endOrder(after: pages(in: notebookId))
+        header.group = nil
         header.updated = now
         header.device = device
         apply(.page(header), page: header.id)
@@ -856,6 +865,89 @@ final class Library: ObservableObject {
             try store.journal.grouped(work)
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    func groups(in parentId: String?) -> [TileGroup] {
+        let records = store.liveGroups(in: parentId).enumerated().sorted { first, second in
+            (first.element.order ?? first.offset, first.element.id) < (second.element.order ?? second.offset, second.element.id)
+        }.map(\.element)
+        return records.map { record in
+            TileGroup(id: record.id, title: record.title, isFolders: record.kind == .folders, members: members(of: record, in: parentId))
+        }.filter { !$0.members.isEmpty }
+    }
+
+    private func members(of record: GroupRecord, in parentId: String?) -> [String] {
+        if record.kind == .folders {
+            return folders(in: parentId).filter { $0.group == record.id }.map(\.id)
+        }
+        guard let parentId else { return [] }
+        return pages(in: parentId).filter { $0.group == record.id }.map(\.id)
+    }
+
+    private func setGroup(_ groupId: String?, of memberId: String) {
+        if notebook(memberId) != nil {
+            updateNotebook(memberId) { $0.group = groupId }
+        } else if page(memberId) != nil {
+            updatePage(memberId) { $0.group = groupId }
+        }
+    }
+
+    private func updateGroup(_ groupId: String, _ change: (inout GroupRecord) -> Void) {
+        guard var group = store.groups[groupId], !group.deleted else { return }
+        change(&group)
+        group.updated = store.timestamp()
+        group.device = device
+        apply(.group(group), page: nil)
+    }
+
+    func addToGroup(_ memberId: String, groupId: String, in parentId: String?) {
+        guard store.groups[groupId]?.deleted == false else { return }
+        let previous = groups(in: parentId).first { $0.members.contains(memberId) }
+        setGroup(groupId, of: memberId)
+        if let previous, previous.id != groupId, previous.members == [memberId] {
+            updateGroup(previous.id) { $0.deleted = true }
+        }
+    }
+
+    @discardableResult
+    func createGroup(_ title: String, isFolders: Bool, with memberId: String, in parentId: String?) -> String {
+        let now = store.timestamp()
+        let order = (store.liveGroups(in: parentId).compactMap(\.order).max() ?? -1) + 1
+        let group = GroupRecord(id: Identifier.make(prefix: Identifier.groupPrefix, date: now), parent: parentId, title: title, kind: isFolders ? .folders : .notes, order: order, updated: now, device: device)
+        apply(.group(group), page: nil)
+        addToGroup(memberId, groupId: group.id, in: parentId)
+        return group.id
+    }
+
+    func removeFromGroup(_ memberId: String, in parentId: String?) {
+        guard let group = groups(in: parentId).first(where: { $0.members.contains(memberId) }) else { return }
+        setGroup(nil, of: memberId)
+        if group.members == [memberId] {
+            updateGroup(group.id) { $0.deleted = true }
+        }
+    }
+
+    func renameGroup(_ groupId: String, to title: String) {
+        updateGroup(groupId) { $0.title = title }
+    }
+
+    func ungroup(_ groupId: String) {
+        updateGroup(groupId) { $0.deleted = true }
+    }
+
+    func adoptDeviceGroups(_ taken: [(parentId: String?, groups: [DeviceGroup])]) {
+        for (parentId, deviceGroups) in taken {
+            for deviceGroup in deviceGroups {
+                let live = deviceGroup.members.filter { id in
+                    deviceGroup.isFolders ? notebook(id) != nil && parent(of: id) == parentId : parentId != nil && page(id)?.notebook == parentId
+                }
+                guard let first = live.first else { continue }
+                let groupId = createGroup(deviceGroup.title, isFolders: deviceGroup.isFolders, with: first, in: parentId)
+                for memberId in live.dropFirst() {
+                    setGroup(groupId, of: memberId)
+                }
+            }
         }
     }
 

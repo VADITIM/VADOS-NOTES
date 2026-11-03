@@ -51,6 +51,20 @@ public enum PageCodec {
         }
     }
 
+    public static func decodeGroup(_ data: Data) throws -> GroupRecord {
+        try checkVersion(data, supported: GroupRecord.currentSchemaVersion)
+        let group: GroupRecord
+        do {
+            group = try makeDecoder().decode(GroupRecord.self, from: data)
+        } catch {
+            throw CodecError.malformed(String(describing: error))
+        }
+        guard Identifier.hasPrefix(Identifier.groupPrefix, group.id) else {
+            throw CodecError.invalid("group id \(group.id)")
+        }
+        return group
+    }
+
     public static func encodePage(_ page: Page) throws -> Data {
         let encoder = makeEncoder()
         func value<Value: Encodable>(_ value: Value) throws -> String {
@@ -66,6 +80,9 @@ public enum PageCodec {
         lines.append("  \"extent\": \(try value(page.extent)),")
         if let extentUpdated = page.extentUpdated {
             lines.append("  \"extent_updated\": \(try value(Timestamp.format(extentUpdated))),")
+        }
+        if let group = page.group {
+            lines.append("  \"group\": \(try value(group)),")
         }
         if let icon = page.icon {
             lines.append("  \"icon\": \(try value(icon)),")
@@ -97,6 +114,14 @@ public enum PageCodec {
         let encoder = makeEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes, .prettyPrinted]
         var data = try encoder.encode(notebook)
+        data.append(Data("\n".utf8))
+        return data
+    }
+
+    public static func encodeGroup(_ group: GroupRecord) throws -> Data {
+        let encoder = makeEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes, .prettyPrinted]
+        var data = try encoder.encode(group)
         data.append(Data("\n".utf8))
         return data
     }
