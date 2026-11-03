@@ -324,6 +324,7 @@ struct Tokens: Decodable {
         case background
         case sync
         case memory
+        case imports
         case title
         case menus
         case folders
