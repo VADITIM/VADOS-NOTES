@@ -110,6 +110,12 @@ struct PageScreen: View {
                     }
                 }
                 .modifier(TileFlight(progress: flightProgress, tile: flightTile))
+                EraserEdges()
+                    .fill(Palette.destructive.opacity(Tokens.shared.tools.eraser.edgeOpacity))
+                    .opacity(activeTool == .eraser ? 1 : 0)
+                    .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: activeTool)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 ZStack {
                     if let selectionMenu {
                         selectionNav(selectionMenu, layer: proxy.size, origin: proxy.frame(in: .global).origin)
@@ -992,5 +998,21 @@ private struct KeyboardCommands: View {
         .opacity(0)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+struct EraserEdges: Shape {
+    func path(in rect: CGRect) -> Path {
+        let reach = CGFloat(Tokens.shared.tools.eraser.edgeReach)
+        var path = Path()
+        path.addLines([CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX + reach, y: rect.minY), CGPoint(x: rect.minX, y: rect.minY + reach)])
+        path.closeSubpath()
+        path.addLines([CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY + reach), CGPoint(x: rect.maxX - reach, y: rect.minY)])
+        path.closeSubpath()
+        path.addLines([CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.maxX - reach, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY - reach)])
+        path.closeSubpath()
+        path.addLines([CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY - reach), CGPoint(x: rect.minX + reach, y: rect.maxY)])
+        path.closeSubpath()
+        return path
     }
 }

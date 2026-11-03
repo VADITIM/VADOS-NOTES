@@ -3,7 +3,7 @@ import { colorPanel, groupEndButton, sizeSlider, swatchButton, wheelButton } fro
 import { folderLook, noteLook } from "./grid.js"
 import { importFailureMessage, readPdf } from "./imports.js"
 import { animate, curve, duration } from "./motion.js"
-import { popScale, popTogether } from "./pill.js"
+import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { fontFamily } from "./renderer.js"
@@ -567,18 +567,6 @@ function settingsSheet(app) {
         paperToggle.select(preferences.paperStyle(), true)
     }
     sheet.unsubscribe = app.sync.subscribe(() => renderSync())
-    const units = [asciiModule, transferUnit, paperModule, penModule, textModule, syncModule, deleteButton]
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
-    sheet.popModules = (isShown) => {
-        if (reducedMotion.matches) {
-            for (const unit of units) {
-                animate(unit, [{ opacity: isShown ? 0 : 1 }, { opacity: isShown ? 1 : 0 }], { milliseconds: duration("state"), curveName: isShown ? "power_two_out" : "power_two_in", fill: "forwards" })
-            }
-            return
-        }
-        const shuffled = [...units].sort(() => Math.random() - 0.5)
-        shuffled.forEach((unit, position) => popScale(unit, isShown ? 1 : 0, { name: "settings_pop", delay: position * duration("settings_stagger") }))
-    }
     return sheet
 }
 
@@ -632,8 +620,9 @@ export class SheetHost {
         this.isNaming = isNaming(request)
         this.isFullScreen = isFullScreen(request)
         this.isReplacing = isReplacing
+        this.isPushed = request.kind === "settings"
         this.isRaised = false
-        this.element = create("div", `sheet-host ${this.isNaming ? "is-naming" : this.isFullScreen ? "is-settings" : "is-overlay"}`)
+        this.element = create("div", `sheet-host ${this.isNaming ? "is-naming" : this.isFullScreen ? "is-settings" : "is-overlay"}${this.isPushed ? " is-pushed" : ""}`)
         this.backdrop = create("div", "sheet-backdrop")
         this.backdrop.addEventListener("pointerdown", () => app.navigator.show(null))
         this.content = buildContent(app, request)
@@ -665,6 +654,10 @@ export class SheetHost {
             this.raiseTimer = setTimeout(() => this.raise(), duration("keyboard") * 2)
             return
         }
+        if (this.isPushed) {
+            this.push(true)
+            return
+        }
         this.backdrop.style.opacity = "1"
         if (this.isReplacing && this.isFullScreen) {
             animate(this.content, [{ opacity: 0 }, { opacity: 1 }], { milliseconds: duration("overlay_leave"), curveName: "power_two_out" })
@@ -673,14 +666,26 @@ export class SheetHost {
             return
         }
         animate(this.backdrop, [{ opacity: 0 }, { opacity: 1 }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
-        if (this.request.kind === "settings") {
-            this.content.popModules?.(true)
-        } else if (this.isFullScreen) {
+        if (this.isFullScreen) {
             animate(this.content, [{ transform: `translateY(${-this.frame.offsetHeight}px)` }, { transform: "translateY(0)" }], { milliseconds: duration("sheet_drop"), curveName: "power_two_out" })
             this.content.riseParts?.()
         } else {
             animate(this.content, [{ opacity: 0, transform: "translateY(24px) scale(0.94)" }, { opacity: 1, transform: "translateY(0) scale(1)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out" })
         }
+    }
+
+    push(isEntering) {
+        const height = window.innerHeight
+        const options = { milliseconds: duration("sheet_drop"), curveName: "power_three_in_out", fill: "forwards" }
+        const sheetTravel = [this.frame, isEntering ? -height : 0, isEntering ? 0 : -height]
+        const pushed = [this.app.screenHost, this.app.navLayer, this.app.topBarHost].map((element) => [element, isEntering ? 0 : height, isEntering ? height : 0])
+        this.pushAnimations?.forEach((running) => running.cancel())
+        this.pushAnimations = [sheetTravel, ...pushed].map(([element, from, to]) => animate(element, [{ transform: `translateY(${from}px)` }, { transform: `translateY(${to}px)` }], options))
+        return Promise.all(this.pushAnimations.map((running) => running.finished)).then(() => {
+            if (!isEntering) {
+                this.pushAnimations.forEach((running) => running.cancel())
+            }
+        })
     }
 
     raise(milliseconds = duration("keyboard")) {
@@ -710,6 +715,10 @@ export class SheetHost {
         this.isLeaving = true
         this.content.unsubscribe?.()
         this.element.style.pointerEvents = "none"
+        if (this.isPushed) {
+            this.push(false).then(() => this.element.remove())
+            return
+        }
         const milliseconds = duration("overlay_leave")
         animate(this.content.firstElementChild ?? this.content, [{ opacity: 1, transform: "translateY(0) scale(1)" }, { opacity: 0, transform: "translateY(-24px) scale(0.98)" }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
         setTimeout(() => this.element.remove(), milliseconds / 2 + duration("overlay_enter"))
@@ -721,6 +730,9 @@ export class SheetHost {
         this.content.unsubscribe?.()
         this.element.style.pointerEvents = "none"
         let milliseconds = duration("overlay_leave")
+        if (this.isPushed) {
+            return this.push(false).then(() => this.element.remove())
+        }
         if (this.isNaming) {
             milliseconds = duration("keyboard")
             document.activeElement?.blur?.()
@@ -732,7 +744,6 @@ export class SheetHost {
             milliseconds = duration("sheet_drop")
             this.backdrop.getAnimations().forEach((running) => running.cancel())
             this.backdrop.style.opacity = "0"
-            this.content.popModules?.(false)
         } else {
             animate(this.content, [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.96)" }], { milliseconds, curveName: "power_two_in", fill: "forwards" })
             animate(this.backdrop, [{ opacity: 1 }, { opacity: 0 }], { milliseconds, curveName: "power_two_in", fill: "forwards" })

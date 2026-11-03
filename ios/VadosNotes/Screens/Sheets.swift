@@ -14,12 +14,17 @@ struct SheetHost: View {
     @State private var keyboardHeight: CGFloat = 0
     @State private var panelHeight: CGFloat = 0
 
-    private var seeThroughWindow: some View {
+    private var isPushed: Bool {
+        request.pushEdge != nil
+    }
+
+    private var pushedWindow: some View {
         GeometryReader { proxy in
+            let entry = navigator.windowPush - 1
             content
                 .padding(.top, insets.top)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .offset(x: (navigator.windowPush - 1) * proxy.size.width)
+                .offset(x: request.pushEdge == .leading ? entry * proxy.size.width : 0, y: request.pushEdge == .top ? entry * proxy.size.height : 0)
         }
         .ignoresSafeArea()
     }
@@ -34,8 +39,8 @@ struct SheetHost: View {
 
     var body: some View {
         ZStack(alignment: request.isNaming ? .bottom : .top) {
-            if request.isSeeThrough {
-                seeThroughWindow
+            if isPushed {
+                pushedWindow
             } else {
                 (request.isFullScreen ? Palette.ground : Color.black.opacity(0.45))
                     .opacity(isBackdropShown ? 1 : 0)
@@ -43,7 +48,7 @@ struct SheetHost: View {
                     .onTapGesture { navigator.show(nil) }
             }
             if request.isFullScreen {
-                if !request.isSeeThrough {
+                if !isPushed {
                     content
                         .padding(.top, insets.top)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -81,24 +86,21 @@ struct SheetHost: View {
                 }
                 return
             }
-            guard !(request.isFullScreen && navigator.isHandedOff) else {
+            guard !(request.isFullScreen && navigator.isHandedOff && !isPushed) else {
                 isShown = true
-                if request.isSeeThrough {
-                    navigator.windowPush = 1
-                }
                 return
             }
             withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
                 isShown = true
             }
-            if request.isSeeThrough {
+            if isPushed {
                 withAnimation(Motion.powerThreeInOut(Motion.sheetDropMilliseconds)) {
                     navigator.windowPush = 1
                 }
             }
         }
         .onDisappear {
-            if request.isSeeThrough {
+            if isPushed {
                 navigator.windowPush = 0
             }
         }
@@ -112,6 +114,12 @@ struct SheetHost: View {
                 }
             }
         }
+        .onChange(of: navigator.isSheetHandingOff) { _, isHandingOff in
+            guard isHandingOff, isPushed else { return }
+            withAnimation(Motion.powerThreeInOut(Motion.sheetDropMilliseconds)) {
+                navigator.windowPush = 0
+            }
+        }
         .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
             guard isLeaving else { return }
             guard !request.isNaming else {
@@ -121,7 +129,7 @@ struct SheetHost: View {
                 }
                 return
             }
-            guard !request.isSeeThrough else {
+            guard !isPushed else {
                 withAnimation(Motion.powerThreeInOut(Motion.sheetDropMilliseconds)) {
                     isShown = false
                     navigator.windowPush = 0

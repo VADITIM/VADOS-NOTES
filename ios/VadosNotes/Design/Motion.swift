@@ -41,12 +41,10 @@ enum Motion {
     static let typeMilliseconds = durations.type
     static let undoTapMilliseconds = durations.undoTap
     static let navigationEdgeHideMilliseconds = durations.navEdgeHide
-    static let settingsStaggerMilliseconds = durations.settingsStagger
 
     static var placement: Animation { spring(springs.placement) }
     static var wash: Animation { spring(springs.wash) }
     static var selection: Animation { spring(springs.selection) }
-    static var settingsPop: Animation { spring(springs.settingsPop) }
     static let morphSpring = springs.morph
     static let bubbleFollowSpring = springs.bubbleFollow
     static let dockSpring = springs.dock

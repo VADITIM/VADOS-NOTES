@@ -79,6 +79,8 @@ struct Tokens: Decodable {
         let radius: Double
         let radiusRange: [Double]
         let modes: [String]
+        let edgeReach: Double
+        let edgeOpacity: Double
     }
 
     struct ToolTokens: Decodable {
@@ -163,7 +165,6 @@ struct Tokens: Decodable {
         let type: Int
         let undoTap: Int
         let navEdgeHide: Int
-        let settingsStagger: Int
     }
 
     struct SpringToken: Decodable {
@@ -175,7 +176,6 @@ struct Tokens: Decodable {
         let placement: SpringToken
         let wash: SpringToken
         let selection: SpringToken
-        let settingsPop: SpringToken
         let morph: SpringToken
         let bubbleFollow: SpringToken
         let dock: SpringToken

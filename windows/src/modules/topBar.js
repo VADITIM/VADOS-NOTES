@@ -306,7 +306,8 @@ export class TopBar {
     fitPageTitles() {
         const left = this.pageTitles.getBoundingClientRect().left
         const right = this.controls.getBoundingClientRect().left
-        this.pageTitles.style.width = `${Math.max(0, right - left - titleSpacing)}px`
+        this.pageTitles.style.maxWidth = `${Math.max(0, right - left - titleSpacing)}px`
+        this.pageContent.classList.toggle("is-overflowing", this.pageContent.scrollWidth > this.pageContent.clientWidth)
     }
 
     report() {

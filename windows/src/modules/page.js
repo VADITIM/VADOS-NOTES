@@ -81,7 +81,10 @@ export class PageScreen {
         this.flightInner.append(this.canvasHost, this.missing)
         this.flightLayer.append(this.flightInner)
         this.selectionLayer = create("div", "selection-layer")
-        this.element.append(this.flightLayer, this.selectionLayer)
+        this.eraserEdges = create("div", "eraser-edges", ...["top-left", "top-right", "bottom-right", "bottom-left"].map((corner) => create("span", `eraser-edge is-${corner}`)))
+        this.eraserEdges.style.setProperty("--eraser-edge-reach", `${tokens.tools.eraser.edge_reach}px`)
+        this.eraserEdges.style.setProperty("--eraser-edge-opacity", tokens.tools.eraser.edge_opacity)
+        this.element.append(this.flightLayer, this.eraserEdges, this.selectionLayer)
         this.subNavKey = null
         this.lastSubNavKey = null
         this.panelKey = null
@@ -257,6 +260,7 @@ export class PageScreen {
         if (this.subNavKey) {
             this.lastSubNavKey = this.subNavKey
         }
+        this.eraserEdges.classList.toggle("is-shown", this.activeTool === "eraser")
         const inkTool = this.canvasTool().kind === "ink" ? this.activeTool : null
         if (page) {
             this.canvas.configure({

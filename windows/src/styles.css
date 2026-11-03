@@ -254,6 +254,53 @@ svg.squircle ~ * {
     align-items: baseline;
     gap: 10px;
     overflow: hidden;
+}
+
+.eraser-edges {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--duration-state) var(--curve-power-two-out);
+}
+
+.eraser-edges.is-shown {
+    opacity: 1;
+}
+
+.eraser-edge {
+    position: absolute;
+    width: var(--eraser-edge-reach);
+    height: var(--eraser-edge-reach);
+    background: var(--semantic-destructive);
+    opacity: var(--eraser-edge-opacity);
+}
+
+.eraser-edge.is-top-left {
+    left: 0;
+    top: 0;
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.eraser-edge.is-top-right {
+    right: 0;
+    top: 0;
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.eraser-edge.is-bottom-right {
+    right: 0;
+    bottom: 0;
+    clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+.eraser-edge.is-bottom-left {
+    left: 0;
+    bottom: 0;
+    clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
+
+.page-titles-content.is-overflowing {
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
 }
@@ -809,6 +856,14 @@ textarea.inline-title-field {
 
 .sheet-frame > * {
     width: min(560px, 100%);
+}
+
+.sheet-host.is-pushed .sheet-backdrop {
+    display: none;
+}
+
+.sheet-host.is-pushed .settings-sheet {
+    background: transparent;
 }
 
 .sheet-host.is-settings .sheet-frame {

@@ -74,6 +74,14 @@ enum SheetRequest: Identifiable, Equatable {
         }
         return false
     }
+
+    var pushEdge: Edge? {
+        switch self {
+        case .transfer: return .leading
+        case .settings: return .top
+        default: return nil
+        }
+    }
 }
 
 @MainActor
@@ -210,7 +218,7 @@ struct RootView: View {
                     .transition(isFlight ? .flight : navigator.isReturningFromPage ? .returning : .section)
                     .environment(\.chromeLayout, chromeLayout)
                     .onPreferenceChange(NavCoverKey.self) { navCovers = $0 }
-                    .offset(x: navigator.windowPush * proxy.size.width)
+                    .offset(pushOffset(proxy.size))
                 VStack {
                     TopBar(titleCutouts: titleCutouts)
                         .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 }
@@ -218,6 +226,7 @@ struct RootView: View {
                         .onPreferenceChange(ChromeFramesKey.self) { chromeLayout.frames = $0 }
                     Spacer(minLength: 0)
                 }
+                .offset(y: navigator.sheet?.pushEdge == .top ? navigator.windowPush * proxy.size.height : 0)
                 .zIndex(navigator.sheet?.isSeeThrough == true ? 3 : 1)
                 MenuOverlay(controller: menu)
                     .zIndex(1)
@@ -259,6 +268,14 @@ struct RootView: View {
             menu.dismiss()
             library.finishText()
             library.sync.flush()
+        }
+    }
+
+    private func pushOffset(_ size: CGSize) -> CGSize {
+        switch navigator.sheet?.pushEdge {
+        case .top: return CGSize(width: 0, height: navigator.windowPush * size.height)
+        case .leading: return CGSize(width: navigator.windowPush * size.width, height: 0)
+        default: return .zero
         }
     }
 
@@ -384,6 +401,7 @@ struct TopBar: View {
     @EnvironmentObject private var transferBar: TransferBar
     @Environment(\.screenInsets) private var insets
     @State private var headFolderId: String?
+    @State private var pageTitleWidth: CGFloat = 0
     var titleCutouts: [CGRect] = []
 
     static let controlHeight: CGFloat = 48
@@ -550,7 +568,7 @@ struct TopBar: View {
     }
 
     private var pageTitles: some View {
-        let isShown = isPage && navigator.isPageChromeShown && !isTransferring
+        let isShown = isPage && navigator.isPageChromeShown
         let stagger = Motion.chromeStaggerMilliseconds
         let page = navigator.lastPage
         let note = page.flatMap { library.page($0.pageId) }
@@ -573,6 +591,12 @@ struct TopBar: View {
                     .labelReveal(isShown, delay: stagger * 2)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { pageTitleWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { _, width in pageTitleWidth = width }
+        })
         .frame(maxWidth: .infinity, alignment: .leading)
         .mask(
             HStack(spacing: 0) {
@@ -583,11 +607,12 @@ struct TopBar: View {
         )
         .padding(.horizontal, CGFloat(backdrop.backdropPaddingHorizontal))
         .padding(.vertical, CGFloat(backdrop.backdropPaddingVertical))
-        .background(
+        .background(alignment: .leading) {
             RoundedRectangle(cornerRadius: CGFloat(backdrop.backdropRadius), style: .continuous)
                 .fill(Color.black.opacity(isShown ? backdrop.backdropOpacity : 0))
+                .frame(width: pageTitleWidth + CGFloat(backdrop.backdropPaddingHorizontal) * 2)
                 .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isShown)
-        )
+        }
         .mask(CutoutShape(holes: titleCutouts).fill(style: FillStyle(eoFill: true)))
         .contentShape(CutoutShape(holes: titleCutouts), eoFill: true)
     }

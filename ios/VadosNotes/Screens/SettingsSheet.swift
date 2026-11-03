@@ -79,33 +79,7 @@ struct SettingsSlider: View {
     }
 }
 
-struct ModulePop: ViewModifier, Animatable {
-    var scale: CGFloat
-    let isScaling: Bool
-
-    private static let smallestScale: CGFloat = 0.001
-
-    var animatableData: CGFloat {
-        get { scale }
-        set { scale = newValue }
-    }
-
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(isScaling ? max(Self.smallestScale, scale) : 1)
-            .opacity(min(1, max(0, scale)))
-    }
-}
-
 struct SettingsSheet: View {
-    private enum Module: CaseIterable {
-        case ascii
-        case paper
-        case pen
-        case text
-        case sync
-    }
-
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
@@ -116,8 +90,6 @@ struct SettingsSheet: View {
     @State private var hasStoredToken = false
     @State private var isAsciiWheelOpen = false
     @State private var isFontListOpen = false
-    @State private var moduleScales: [Module: CGFloat] = [:]
-    @Environment(\.accessibilityReduceMotion) private var isMotionReduced
 
     private static let asciiOpacityRange = Tokens.shared.background.opacityRange
     private static let smoothingRange = Tokens.shared.ink.smoothingRange
@@ -168,36 +140,6 @@ struct SettingsSheet: View {
             repository = library.sync.settings.repository
             branch = library.sync.settings.branch
             hasStoredToken = Keychain.readToken() != nil
-            popModules(isShown: true)
-        }
-        .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
-            popModules(isShown: !isLeaving)
-        }
-        .onChange(of: navigator.isSheetHandingOff) { _, isHandingOff in
-            if isHandingOff {
-                popModules(isShown: false)
-            }
-        }
-    }
-
-    private func popped(_ module: Module) -> ModulePop {
-        ModulePop(scale: moduleScales[module] ?? 0, isScaling: !isMotionReduced)
-    }
-
-    private func popModules(isShown: Bool) {
-        let target: CGFloat = isShown ? 1 : 0
-        guard !isMotionReduced else {
-            withAnimation(isShown ? Motion.powerTwoOut(Motion.stateMilliseconds) : Motion.powerTwoIn(Motion.stateMilliseconds)) {
-                for module in Module.allCases {
-                    moduleScales[module] = target
-                }
-            }
-            return
-        }
-        for (position, module) in Module.allCases.shuffled().enumerated() {
-            withAnimation(Motion.settingsPop.delay(Motion.seconds(position * Motion.settingsStaggerMilliseconds))) {
-                moduleScales[module] = target
-            }
         }
     }
 
@@ -220,20 +162,15 @@ struct SettingsSheet: View {
     private var firstColumn: some View {
         VStack(spacing: 18) {
             asciiModule
-                .modifier(popped(.ascii))
             syncModule
-                .modifier(popped(.sync))
         }
     }
 
     private var secondColumn: some View {
         VStack(spacing: 18) {
             paperModule
-                .modifier(popped(.paper))
             penModule
-                .modifier(popped(.pen))
             textModule
-                .modifier(popped(.text))
                 .zIndex(1)
         }
     }
