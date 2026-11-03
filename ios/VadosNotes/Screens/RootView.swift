@@ -95,6 +95,7 @@ final class Navigator: ObservableObject {
     @Published private(set) var isPageChromeShown = false
     @Published var query = ""
     @Published var windowPush: CGFloat = 0
+    @Published private(set) var isExplorerOpen = false
     private(set) var isReturningFromPage = false
     private(set) var lastPage: (notebookId: String, pageId: String)?
     var openingTile: CGRect?
@@ -142,6 +143,14 @@ final class Navigator: ObservableObject {
             self?.switchRoute(route, from: tile)
             self?.isChromeLeaving = false
         }
+    }
+
+    func toggleExplorer() {
+        isExplorerOpen.toggle()
+    }
+
+    func closeExplorer() {
+        isExplorerOpen = false
     }
 
     func showPageChrome(_ shown: Bool) {
@@ -238,6 +247,8 @@ struct RootView: View {
                 }
                 .offset(y: pushOffset(fullSize(proxy)).height)
                 .zIndex(navigator.sheet?.isSeeThrough == true ? 3 : 1)
+                ExplorerOverlay(screenSize: fullSize(proxy))
+                    .zIndex(1)
                 MenuOverlay(controller: menu)
                     .zIndex(1)
                 if let sheet = navigator.sheet {
@@ -444,8 +455,21 @@ struct TopBar: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             ZStack(alignment: .topLeading) {
-                folderTitles
-                    .reportsChrome("title", isActive: isHeadShown)
+                VStack(alignment: .leading, spacing: 6) {
+                    if isHeadShown, let headFolderId {
+                        let segments = library.depth(of: headFolderId)
+                        DepthLine(segments: segments) { notebookId in
+                            navigator.go(.notebook(notebookId))
+                        }
+                        .labelReveal(true)
+                        .padding(.leading, 20)
+                        .id(library.depthText(of: headFolderId))
+                        .reportsChrome("depth")
+                        .transition(.opacity.animation(Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds)))
+                    }
+                    folderTitles
+                        .reportsChrome("title", isActive: isHeadShown)
+                }
                 pageTitles
                     .allowsHitTesting(isPage && !isTransferring)
                     .reportsChrome("title", isActive: isPage)
@@ -463,6 +487,11 @@ struct TopBar: View {
                 HStack(spacing: 14) {
                     if isTransferring {
                         transferExtras
+                    }
+                    if !isTransferring {
+                        control(ControlFace(glyph: "explorer", color: navigator.isExplorerOpen ? Palette.accent : Palette.textBody, isTinted: navigator.isExplorerOpen, title: "Explorer") { navigator.toggleExplorer() })
+                            .keyboardShortcut("e", modifiers: .command)
+                            .transition(.popTogether)
                     }
                     control(firstFace)
                     if isPage {
@@ -625,6 +654,38 @@ struct TopBar: View {
         }
         .mask(CutoutShape(holes: titleCutouts).fill(style: FillStyle(eoFill: true)))
         .contentShape(CutoutShape(holes: titleCutouts), eoFill: true)
+    }
+}
+
+struct DepthLine: View {
+    let segments: [DepthSegment]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                if index > 0 {
+                    Text("/")
+                        .foregroundColor(Palette.textFaint)
+                        .padding(.horizontal, 5)
+                }
+                if let group = segment.group {
+                    Text("\(group) - ")
+                        .foregroundColor(Palette.textFaint)
+                }
+                Button {
+                    onSelect(segment.id)
+                } label: {
+                    Text(segment.title)
+                        .foregroundColor(index == segments.count - 1 ? Palette.accent : Palette.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .font(Typography.mono(11))
+        .tracking(0.5)
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 

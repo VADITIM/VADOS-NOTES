@@ -1,10 +1,11 @@
 import { create, pressable } from "./components.js"
 import { animate, duration, tween } from "./motion.js"
-import { hideTurned, popTogether, revealElement, springAnimate, switchOut } from "./pill.js"
+import { hideTurned, popTogether, revealElement, springAnimate, switchOut, turnIn, turnOut } from "./pill.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { componentsToHex, hexComponents, tokens } from "./tokens.js"
 
-const copiedMilliseconds = 1400
+const armedMilliseconds = 2400
+const holdSlop = 10
 
 export const navMetrics = {
     edgeMargin: 16,
@@ -143,7 +144,7 @@ export class SelectionRing {
     }
 }
 
-export function swatchButton({ color, diameter = 26, isSizePreset = false, caption = null, orientation, onSelect, onRemove }) {
+export function swatchButton({ color, diameter = 26, isSizePreset = false, caption = null, orientation, onSelect, onRemove, onHold }) {
     const button = create("button", `swatch-button is-${orientation}`)
     const well = create("span", "swatch-well")
     const dot = create("span", isSizePreset ? "swatch-size" : "swatch-dot")
@@ -176,29 +177,49 @@ export function swatchButton({ color, diameter = 26, isSizePreset = false, capti
             animate(cross, [{ transform: "scale(0.001)", opacity: 0 }, { transform: "scale(1)", opacity: 1 }], { milliseconds: duration("state"), curveName: "back_out" })
         }
     }
-    pressable(button)
+    button.setArmed = (armed) => {
+        clearTimeout(armTimer)
+        if (armed !== isArmed) {
+            setArmed(armed)
+        }
+        if (armed) {
+            armTimer = setTimeout(() => setArmed(false), armedMilliseconds)
+        }
+    }
+    if (onHold) {
+        button.dataset.preset = ""
+    }
+    pressable(button, { isHoldable: Boolean(onHold) })
     let holdTimer = null
+    let holdStart = null
     let isConsumed = false
     button.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || !onRemove) {
             return
         }
+        holdStart = [event.clientX, event.clientY]
+        const pointerId = event.pointerId
         holdTimer = setTimeout(() => {
             isConsumed = true
-            setArmed(true)
-            clearTimeout(armTimer)
-            armTimer = setTimeout(() => setArmed(false), 2400)
+            button.setArmed(true)
+            onHold?.({ pointerId, point: holdStart })
         }, duration("menu_hold"))
     })
+    button.addEventListener("pointermove", (event) => {
+        if (holdStart && Math.hypot(event.clientX - holdStart[0], event.clientY - holdStart[1]) > holdSlop) {
+            clearTimeout(holdTimer)
+        }
+    })
     for (const name of ["pointerup", "pointercancel", "pointerleave"]) {
-        button.addEventListener(name, () => clearTimeout(holdTimer))
+        button.addEventListener(name, () => {
+            clearTimeout(holdTimer)
+            holdStart = null
+        })
     }
     button.addEventListener("contextmenu", (event) => {
         event.preventDefault()
         if (onRemove) {
-            setArmed(true)
-            clearTimeout(armTimer)
-            armTimer = setTimeout(() => setArmed(false), 2400)
+            button.setArmed(true)
         }
     })
     button.addEventListener("click", () => {
@@ -207,7 +228,7 @@ export function swatchButton({ color, diameter = 26, isSizePreset = false, capti
             return
         }
         if (isArmed) {
-            setArmed(false)
+            button.setArmed(false)
             onRemove?.()
         } else {
             onSelect()
@@ -518,31 +539,30 @@ export function colorVariations(hex) {
     })
 }
 
-export function colorPanel({ color, onChange }) {
+export function colorPanel({ color, onChange, onPick }) {
     const wheelSize = 184
     const panel = create("div", "color-panel")
     squircle(panel, { radius: squircleRadius.panel, fill: tokens.palette.panel_solid, border: tokens.palette.border })
     const heading = create("span", "micro-label", "COLOUR")
-    const copyTitle = create("span", "color-panel-copy-title", "COPY")
-    const copyButton = create("button", "color-panel-copy", glyph("copy", { size: 16 }), copyTitle)
-    pressable(copyButton)
-    let copiedTimer = null
-    copyButton.addEventListener("click", async () => {
-        try {
-            await navigator.clipboard.writeText(hexFromHsv(hsv))
-        } catch {
+    const pickTitle = create("span", "color-panel-copy-title", "PICK")
+    const pickButton = create("button", "color-panel-copy", glyph("eyedropper", { size: 16 }), pickTitle)
+    pickButton.setAttribute("aria-label", "Pick a colour from the canvas")
+    pressable(pickButton)
+    let isPicking = false
+    panel.setPicking = (picking) => {
+        if (picking === isPicking) {
             return
         }
-        copyButton.classList.add("is-copied")
-        copyTitle.textContent = "COPIED"
-        animate(copyTitle, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "translateY(0)" }], { milliseconds: duration("state"), curveName: "power_two_out" })
-        clearTimeout(copiedTimer)
-        copiedTimer = setTimeout(() => {
-            copyButton.classList.remove("is-copied")
-            copyTitle.textContent = "COPY"
-        }, copiedMilliseconds)
-    })
-    const header = create("div", "color-panel-header", heading, copyButton)
+        isPicking = picking
+        pickButton.classList.toggle("is-copied", picking)
+        turnOut(pickTitle, { milliseconds: duration("navigation_mutate_leave") })
+        setTimeout(() => {
+            pickTitle.textContent = isPicking ? "PICKING" : "PICK"
+            turnIn(pickTitle, { milliseconds: duration("navigation_switch") })
+        }, duration("navigation_mutate_leave"))
+    }
+    pickButton.addEventListener("click", () => onPick?.())
+    const header = create("div", "color-panel-header", heading, pickButton)
     const wheel = create("div", "color-wheel")
     wheel.style.width = `${wheelSize}px`
     wheel.style.height = `${wheelSize}px`

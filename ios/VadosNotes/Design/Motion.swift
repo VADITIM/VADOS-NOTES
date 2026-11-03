@@ -41,6 +41,9 @@ enum Motion {
     static let typeMilliseconds = durations.type
     static let undoTapMilliseconds = durations.undoTap
     static let navigationEdgeHideMilliseconds = durations.navEdgeHide
+    static let explorerEnterMilliseconds = durations.explorerEnter
+    static let explorerLeaveMilliseconds = durations.explorerLeave
+    static let explorerRowStaggerMilliseconds = durations.explorerRowStagger
 
     static var placement: Animation { spring(springs.placement) }
     static var wash: Animation { spring(springs.wash) }
@@ -416,6 +419,7 @@ struct PillShell: View {
     let spread: CGFloat
     let isWide: Bool
     var stroke: Color = Palette.border
+    var fill: Color = Palette.panelSolid
     var morph: CGFloat = 0
     var bubbleDiameter: CGFloat = 0
     var stretchAmount: CGFloat = 0
@@ -428,7 +432,7 @@ struct PillShell: View {
             let along = thickness + ((isWide ? full.width : full.height) - thickness) * spread
             let stretch = 1 + stretchAmount
             Capsule()
-                .fill(Palette.panelSolid)
+                .fill(fill)
                 .overlay(Capsule().stroke(stroke, lineWidth: 1))
                 .frame(width: isWide ? along : thickness, height: isWide ? thickness : along)
                 .rotationEffect(.radians(-stretchAngle))

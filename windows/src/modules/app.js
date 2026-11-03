@@ -1,5 +1,6 @@
 import { AsciiBackground } from "./ascii.js"
 import { create } from "./components.js"
+import { Explorer } from "./explorer.js"
 import { GridScreen } from "./grid.js"
 import { Library } from "./library.js"
 import { MenuController } from "./menu.js"
@@ -109,6 +110,7 @@ class App {
         this.topBarHost.append(this.topBar.element)
         this.nav = new ToolNav(this.navLayer)
         this.menu = new MenuController(this.overlayHost)
+        this.explorer = new Explorer(this)
         this.lastNavProps = null
         this.refreshRequest = null
         library.subscribe(() => this.refresh())
@@ -210,6 +212,7 @@ class App {
             this.nav.update({ ...this.nav.props, isShown: false, subNavKey: null, panelKey: null })
         }
         this.navigator.sheet?.refresh()
+        this.explorer.update()
     }
 }
 

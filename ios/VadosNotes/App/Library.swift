@@ -51,6 +51,12 @@ struct PagePlacement: Hashable {
     let index: Int
 }
 
+struct DepthSegment: Equatable, Identifiable {
+    var id: String
+    var title: String
+    var group: String?
+}
+
 struct TileGroup: Equatable, Identifiable {
     var id: String
     var title: String
@@ -172,6 +178,29 @@ final class Library: ObservableObject {
             current = parent(of: candidate)
         }
         return names.joined(separator: " / ")
+    }
+
+    func group(of memberId: String, in parentId: String?) -> TileGroup? {
+        groups(in: parentId).first { $0.members.contains(memberId) }
+    }
+
+    func depth(of notebookId: String) -> [DepthSegment] {
+        var segments: [DepthSegment] = []
+        var visited: Set<String> = []
+        var current: String? = notebookId
+        while let candidate = current, !visited.contains(candidate), let notebook = notebook(candidate) {
+            visited.insert(candidate)
+            let parentId = parent(of: candidate)
+            segments.insert(DepthSegment(id: candidate, title: notebook.title, group: group(of: candidate, in: parentId)?.title), at: 0)
+            current = parentId
+        }
+        return segments
+    }
+
+    func depthText(of notebookId: String) -> String {
+        depth(of: notebookId).map { segment in
+            segment.group.map { "\($0) - \(segment.title)" } ?? segment.title
+        }.joined(separator: "/")
     }
 
     func pages(in notebookId: String) -> [Page] {

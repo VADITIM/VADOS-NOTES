@@ -142,7 +142,11 @@ export class TopBar {
         this.pageDate = revealLabel(create("span", "page-date"))
         this.pageContent = create("div", "page-titles-content", this.pageFolder, this.pageNameReveal, this.pageDate)
         this.pageTitles.append(this.pageContent)
-        this.left.append(this.folderPill, this.pageTitles)
+        this.depthLine = create("div", "folder-depth")
+        this.depthReveal = revealLabel(this.depthLine, "folder-depth-reveal")
+        this.depthReveal.hidden = true
+        this.depthText = null
+        this.left.append(this.depthReveal, this.folderPill, this.pageTitles)
         this.search = new SearchField((value) => {
             this.app.navigator.query = value
             this.app.refresh()
@@ -158,7 +162,8 @@ export class TopBar {
         this.viewAll.setAttribute("aria-label", "View all")
         this.viewAll.hidden = true
         this.settings = roundIconButton({ glyphName: "gear", label: "Settings", action: () => this.app.navigator.show({ kind: "settings" }) })
-        this.controls = create("div", "top-bar-controls", this.settings, this.viewAll, this.back)
+        this.explorerButton = roundIconButton({ glyphName: "explorer", label: "Explorer", action: () => this.app.explorer.toggle() })
+        this.controls = create("div", "top-bar-controls", this.explorerButton, this.settings, this.viewAll, this.back)
         this.right = create("div", "top-bar-right", this.searchHost, this.controls)
         this.element.append(this.left, this.right)
         this.folderTitle = null
@@ -188,6 +193,36 @@ export class TopBar {
         shapePillShell(this.folderShell, { width: this.folderPill.offsetWidth, height: this.folderPill.offsetHeight, isWide: true, scale: this.folderMotion.shellScale, spread: this.folderMotion.shellSpread })
         this.folderPill.style.pointerEvents = this.folderMotion.areElementsShown ? "auto" : "none"
         this.folderPill.style.visibility = this.folderMotion.isPresent ? "visible" : "hidden"
+    }
+
+    paintDepth(folderId) {
+        const library = this.app.library
+        const text = folderId ? library.depthText(folderId) : null
+        if (text === this.depthText) {
+            return
+        }
+        this.depthText = text
+        if (!text) {
+            this.depthReveal.hidden = true
+            labelReveal(this.depthReveal, false)
+            return
+        }
+        const segments = library.depth(folderId)
+        this.depthLine.replaceChildren()
+        segments.forEach((segment, index) => {
+            if (index > 0) {
+                this.depthLine.append(create("span", "folder-depth-divider", "/"))
+            }
+            if (segment.group) {
+                this.depthLine.append(create("span", "folder-depth-group", `${segment.group} - `))
+            }
+            const button = create("button", "folder-depth-segment", segment.title)
+            button.classList.toggle("is-current", index === segments.length - 1)
+            button.addEventListener("click", () => this.app.navigator.go({ kind: "notebook", notebookId: segment.id }))
+            this.depthLine.append(button)
+        })
+        this.depthReveal.hidden = false
+        labelReveal(this.depthReveal, true)
     }
 
     renameNote(title) {
@@ -227,6 +262,7 @@ export class TopBar {
             this.pageTitles.style.pointerEvents = isPage ? "auto" : "none"
         }
         this.setFolderShown(!isPage && folderId !== null)
+        this.paintDepth(!isPage ? folderId : null)
         this.search.setShown(!isPage)
         if (!isPage) {
             this.search.setValue(navigator.query)
@@ -314,6 +350,9 @@ export class TopBar {
         const isPage = this.isPage
         const frames = {}
         frames.title = layoutRect(isPage ? this.pageTitles : this.folderPill)
+        if (!isPage && !this.depthReveal.hidden) {
+            frames.depth = layoutRect(this.depthReveal)
+        }
         if (!isPage) {
             frames.search = layoutRect(this.search.element)
         }

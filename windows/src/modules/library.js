@@ -198,8 +198,38 @@ export class Library {
         return names.join(" / ")
     }
 
+    groupOf(memberId, parentId) {
+        return this.groups(parentId).find((group) => group.members.includes(memberId)) ?? null
+    }
+
+    depth(notebookId) {
+        const segments = []
+        const visited = new Set()
+        let current = notebookId
+        while (current && !visited.has(current) && this.notebook(current)) {
+            visited.add(current)
+            const parentId = this.parentOf(current)
+            segments.unshift({ id: current, title: this.notebook(current).title, group: this.groupOf(current, parentId)?.title ?? null })
+            current = parentId
+        }
+        return segments
+    }
+
+    depthText(notebookId) {
+        return this.depth(notebookId).map((segment) => (segment.group ? `${segment.group} - ${segment.title}` : segment.title)).join("/")
+    }
+
+    nestedNoteCount(notebookId, visited) {
+        if (visited.has(notebookId)) {
+            return 0
+        }
+        visited.add(notebookId)
+        return this.pages(notebookId).length + this.folders(notebookId).reduce((total, folder) => total + this.nestedNoteCount(folder.id, visited), 0)
+    }
+
     folderSummary(notebookId) {
-        const noteCount = this.pages(notebookId).length
+        const directCount = this.pages(notebookId).length
+        const noteCount = directCount > 0 ? directCount : this.nestedNoteCount(notebookId, new Set())
         const folderCount = this.folders(notebookId).length
         const noteText = `${noteCount} note${noteCount === 1 ? "" : "s"}`
         return folderCount > 0 ? `${noteText} · ${folderCount} folder${folderCount === 1 ? "" : "s"}` : noteText

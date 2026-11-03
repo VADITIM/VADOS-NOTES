@@ -136,8 +136,12 @@ export function addWidthPreset(tool, width) {
     const rounded = roundedWidth(clamp(width, widthRange(tool)))
     const presets = widthPresets(tool)
     if (!presets.some((candidate) => isSameWidth(candidate, rounded))) {
-        write(`${tool}WidthPresets`, [...presets, rounded].sort((first, second) => first - second))
+        write(`${tool}WidthPresets`, [...presets, rounded])
     }
+}
+
+export function setWidthPresets(tool, widths) {
+    write(`${tool}WidthPresets`, [...widths])
 }
 
 export function removeWidthPreset(tool, width) {
@@ -155,6 +159,10 @@ export function addColorPreset(tool, color) {
     if (!presets.includes(normalized)) {
         write(`${tool}Presets`, [...presets, normalized])
     }
+}
+
+export function setColorPresets(tool, colors) {
+    write(`${tool}Presets`, colors.map((color) => color.toUpperCase()))
 }
 
 export function removeColorPreset(tool, color) {

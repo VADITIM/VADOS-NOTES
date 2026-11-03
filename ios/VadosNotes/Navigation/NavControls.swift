@@ -5,10 +5,162 @@ private struct NavigationTapsResumeKey: EnvironmentKey {
     static let defaultValue = Date.distantPast
 }
 
+struct PresetLiftCallbacks {
+    var pressed: (Bool) -> Void = { _ in }
+    var lifted: (Bool) -> Void = { _ in }
+}
+
+private struct PresetLiftCallbacksKey: EnvironmentKey {
+    static let defaultValue = PresetLiftCallbacks()
+}
+
 extension EnvironmentValues {
     var navigationTapsResumeAt: Date {
         get { self[NavigationTapsResumeKey.self] }
         set { self[NavigationTapsResumeKey.self] = newValue }
+    }
+
+    var presetLiftCallbacks: PresetLiftCallbacks {
+        get { self[PresetLiftCallbacksKey.self] }
+        set { self[PresetLiftCallbacksKey.self] = newValue }
+    }
+}
+
+struct PresetLiftState {
+    var isLifted = false
+    var isMoving = false
+}
+
+struct PresetStrip<Item: Hashable, Content: View>: View {
+    let items: [Item]
+    let orientation: NavOrientation
+    var isKeyedByPosition = false
+    let onReorder: ([Item]) -> Void
+    @ViewBuilder let content: (Item, PresetLiftState) -> Content
+
+    private struct Lift {
+        let index: Int
+        var order: [Int]
+        let anchor: CGFloat
+        var drag: CGFloat
+    }
+
+    @Environment(\.presetLiftCallbacks) private var callbacks
+    @State private var lift: Lift?
+    @State private var settling: (index: Int, offset: CGFloat)?
+    @GestureState private var isPressing = false
+
+    private static var space: String { "preset-strip" }
+
+    private var pitch: CGFloat { SwatchButton.pitch }
+
+    var body: some View {
+        let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+        layout {
+            if isKeyedByPosition {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    cell(index, item)
+                }
+            } else {
+                ForEach(Array(items.enumerated()), id: \.element) { index, item in
+                    cell(index, item)
+                }
+            }
+        }
+        .coordinateSpace(name: Self.space)
+        .onChange(of: isPressing) { _, pressing in
+            callbacks.pressed(pressing)
+            if !pressing {
+                finish()
+            }
+        }
+    }
+
+    private func cell(_ index: Int, _ item: Item) -> some View {
+        let isLifted = lift?.index == index
+        let state = PresetLiftState(isLifted: isLifted, isMoving: isLifted && abs(lift?.drag ?? 0) > pitch / 4)
+        let offset = offset(index)
+        return content(item, state)
+            .scaleEffect(isLifted ? CGFloat(Motion.scales.held) : 1)
+            .offset(x: orientation == .horizontal ? offset : 0, y: orientation == .vertical ? offset : 0)
+            .zIndex(isLifted || settling?.index == index ? 1 : 0)
+            .animation(isLifted ? nil : Motion.placement, value: offset)
+            .animation(Motion.backOut(Motion.stateMilliseconds), value: isLifted)
+            .simultaneousGesture(liftGesture(index))
+    }
+
+    private func offset(_ index: Int) -> CGFloat {
+        if let settling, settling.index == index {
+            return settling.offset
+        }
+        guard let lift else { return 0 }
+        if lift.index == index {
+            return lift.drag
+        }
+        let position = lift.order.firstIndex(of: index) ?? index
+        return CGFloat(position - index) * pitch
+    }
+
+    private func axisValue(_ point: CGPoint) -> CGFloat {
+        orientation == .horizontal ? point.x : point.y
+    }
+
+    private func liftGesture(_ index: Int) -> some Gesture {
+        LongPressGesture(minimumDuration: Motion.seconds(Motion.menuHoldMilliseconds), maximumDistance: 10)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)))
+            .updating($isPressing) { _, pressing, _ in pressing = true }
+            .onChanged { value in
+                guard case .second(true, let drag) = value, let drag else { return }
+                if lift == nil {
+                    lift = Lift(index: index, order: Array(items.indices), anchor: axisValue(drag.location), drag: 0)
+                    callbacks.lifted(true)
+                }
+                guard var current = lift else { return }
+                current.drag = axisValue(drag.location) - current.anchor
+                step(&current)
+                lift = current
+            }
+            .onEnded { _ in finish() }
+    }
+
+    private func step(_ current: inout Lift) {
+        while let position = current.order.firstIndex(of: current.index) {
+            let relative = current.drag - CGFloat(position - current.index) * pitch
+            if position < current.order.count - 1, relative > pitch / 2 {
+                current.order.swapAt(position, position + 1)
+                Haptics.segment()
+            } else if position > 0, relative < -pitch / 2 {
+                current.order.swapAt(position, position - 1)
+                Haptics.segment()
+            } else {
+                break
+            }
+        }
+    }
+
+    private func finish() {
+        guard let current = lift else { return }
+        let target = current.order.firstIndex(of: current.index) ?? current.index
+        let residual = current.drag - CGFloat(target - current.index) * pitch
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            lift = nil
+            if target != current.index {
+                onReorder(current.order.map { items[$0] })
+            }
+            settling = (target, residual)
+        }
+        callbacks.lifted(false)
+        Haptics.landed()
+        DispatchQueue.main.async {
+            withAnimation(Motion.placement) {
+                settling?.offset = 0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.stateMilliseconds * 2)) {
+                settling = nil
+            }
+        }
     }
 }
 
@@ -180,6 +332,7 @@ struct SwatchButton: View {
     var isPanelAnchor = false
     let onSelect: () -> Void
     var onRemove: (() -> Void)?
+    var isMoving = false
 
     static let pitch: CGFloat = 34 * NavMetrics.scale
     private static let swatchDiameter: CGFloat = 26 * NavMetrics.scale
@@ -242,6 +395,11 @@ struct SwatchButton: View {
             Haptics.hold()
             isArmed = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+                isArmed = false
+            }
+        }
+        .onChange(of: isMoving) { _, moving in
+            if moving {
                 isArmed = false
             }
         }
@@ -534,23 +692,23 @@ struct HSV: Equatable {
 
 struct ColorPanel: View {
     let color: String
+    var isPicking = false
+    var onPick: (() -> Void)?
     let onChange: (String) -> Void
 
     @State private var hsv = HSV(hue: 0, saturation: 0, value: 1)
     @State private var hexText = ""
     @GestureState private var isDragging = false
-    @State private var copiedAt: Date?
     @FocusState private var isHexFocused: Bool
 
     private static let wheelSize: CGFloat = 184
-    private static let copiedSeconds: Double = 1.4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 MicroLabel(text: "Colour")
                 Spacer()
-                copyButton
+                pickButton
             }
             ZStack {
                 Circle()
@@ -625,30 +783,23 @@ struct ColorPanel: View {
         }
     }
 
-    private var copyButton: some View {
-        let isCopied = copiedAt != nil
-        return Button {
-            UIPasteboard.general.string = hsv.hex
+    private var pickButton: some View {
+        Button {
             Haptics.tick()
-            let stamp = Date()
-            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
-                copiedAt = stamp
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.copiedSeconds) {
-                guard copiedAt == stamp else { return }
-                withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
-                    copiedAt = nil
-                }
-            }
+            onPick?()
         } label: {
             HStack(spacing: 6) {
-                GlyphView(name: "copy", color: isCopied ? Palette.accent : Palette.textMuted, size: 16)
-                Text(isCopied ? "COPIED" : "COPY")
-                    .font(Typography.monoBold(10))
-                    .tracking(1.5)
-                    .foregroundColor(isCopied ? Palette.accent : Palette.textMuted)
-                    .id(isCopied)
-                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity))
+                GlyphView(name: "eyedropper", color: isPicking ? Palette.accent : Palette.textMuted, size: 16)
+                ZStack {
+                    Text(isPicking ? "PICKING" : "PICK")
+                        .font(Typography.monoBold(10))
+                        .tracking(1.5)
+                        .foregroundColor(isPicking ? Palette.accent : Palette.textMuted)
+                        .fixedSize()
+                        .id(isPicking)
+                        .transition(.pop)
+                }
+                .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: isPicking)
             }
             .padding(.horizontal, 10)
             .frame(height: 26)

@@ -250,7 +250,12 @@ export class ToolNav {
                 event.preventDefault()
             }
         }, true)
+        this.subNavigation.element.addEventListener("pointerdown", (event) => this.subPointerDown(event))
+        this.subNavigation.element.addEventListener("pointermove", (event) => this.subPointerMove(event))
+        this.subNavigation.element.addEventListener("pointerup", (event) => this.subPointerUp(event))
+        this.subNavigation.element.addEventListener("pointercancel", (event) => this.subPointerUp(event))
         this.groupElements = new Map()
+        this.presetLift = null
         this.subNavigation.motion.onElements = (shown, isInstant) => {
             for (const element of this.subNavigation.content.querySelectorAll("[data-revealed-element]")) {
                 if (isInstant) {
@@ -994,6 +999,146 @@ export class ToolNav {
         }
     }
 
+    subPointerDown(event) {
+        if (event.button !== 0 || this.carry.isActive || this.isEdgeHidden) {
+            return
+        }
+        this.subGesture = { pointerId: event.pointerId, start: [event.clientX, event.clientY], isRejected: false, edgeStart: null, factor: 1 }
+    }
+
+    subFollowFactor() {
+        const subValue = this.subNavigationCenter.value
+        const navigationValue = this.navigationCenter.value
+        if (!subValue || !navigationValue) {
+            return 1
+        }
+        const isAcross = this.edge === "up" || this.edge === "down"
+        const distance = Math.abs(isAcross ? subValue[1] - navigationValue[1] : subValue[0] - navigationValue[0])
+        return this.hiddenReach / Math.max(1, distance)
+    }
+
+    subPointerMove(event) {
+        const gesture = this.subGesture
+        if (!gesture || gesture.pointerId !== event.pointerId || this.presetLift || this.groupReordering || this.carry.isActive) {
+            return
+        }
+        const translation = [event.clientX - gesture.start[0], event.clientY - gesture.start[1]]
+        if (gesture.edgeStart !== null) {
+            const travel = this.outwardTravel(translation, this.edge)
+            this.setEdgeOffset(this.rubberBanded((travel[0] - gesture.edgeStart) * gesture.factor, this.hiddenReach))
+            return
+        }
+        if (gesture.isRejected || Math.hypot(...translation) < navMetrics.navSizingSlop) {
+            return
+        }
+        const travel = this.outwardTravel(translation, this.edge)
+        if (this.shownSubNavigationKey && Math.abs(travel[0]) > Math.abs(travel[1]) * navMetrics.navSizingDominance) {
+            this.subNavigation.element.setPointerCapture(event.pointerId)
+            this.swallowUntil = Infinity
+            gesture.edgeStart = travel[0]
+            gesture.factor = this.subFollowFactor()
+            return
+        }
+        gesture.isRejected = true
+    }
+
+    subPointerUp(event) {
+        const gesture = this.subGesture
+        if (!gesture || gesture.pointerId !== event.pointerId) {
+            return
+        }
+        this.subGesture = null
+        if (gesture.edgeStart === null) {
+            return
+        }
+        this.swallowUntil = performance.now() + swallowMilliseconds
+        if (this.edgeOffset > this.crossExtent(this.edge) * tokens.motion.shares.nav_edge_hide) {
+            this.hideToEdge()
+        } else {
+            this.setEdgeOffset(0, duration("nav_edge_hide"), "back_out")
+        }
+    }
+
+    liftPreset({ pointerId, point, element, elements, onReorder }) {
+        if (this.presetLift || this.groupReordering || this.carry.isActive) {
+            return
+        }
+        const ordered = elements()
+        const index = ordered.indexOf(element)
+        if (index < 0) {
+            return
+        }
+        const axis = (value) => (this.orientation === "horizontal" ? value[0] : value[1])
+        const offsetOf = (candidate) => (this.orientation === "horizontal" ? candidate.offsetLeft : candidate.offsetTop)
+        const starts = ordered.map(offsetOf)
+        const pitch = ordered.length > 1 ? Math.abs(starts[1] - starts[0]) : along([element.offsetWidth, element.offsetHeight], this.orientation)
+        const positions = ordered.map((candidate, position) => position)
+        const lift = { id: index, start: positions, order: [...positions], anchor: axis(point), drag: 0 }
+        this.presetLift = lift
+        this.subGesture = null
+        this.swallowUntil = Infinity
+        element.classList.add("is-lifted")
+        animate(element, [{ scale: "1" }, { scale: String(tokens.motion.scales.held) }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
+        const extent = () => pitch
+        const translate = (offset) => (this.orientation === "horizontal" ? `${offset}px 0px` : `0px ${offset}px`)
+        const move = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) {
+                return
+            }
+            lift.drag = axis([moveEvent.clientX, moveEvent.clientY]) - lift.anchor
+            if (Math.abs(lift.drag) > pitch / 4) {
+                element.setArmed?.(false)
+            }
+            stepReordering(lift, extent)
+            ordered.forEach((candidate, position) => {
+                const offset = position === index ? lift.drag : shiftOf(lift, position, extent)
+                const value = translate(offset)
+                if (candidate.style.translate === value) {
+                    return
+                }
+                const previous = candidate.style.translate || "0px 0px"
+                candidate.style.translate = value
+                if (position !== index) {
+                    const running = springAnimate(candidate, [{ translate: previous }, { translate: value }], "placement")
+                    running.id = "offset"
+                }
+            })
+        }
+        const end = (endEvent) => {
+            if (endEvent.pointerId !== pointerId) {
+                return
+            }
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", end)
+            window.removeEventListener("pointercancel", end)
+            this.presetLift = null
+            this.swallowUntil = performance.now() + swallowMilliseconds
+            const landing = starts[index] + lift.drag
+            for (const candidate of ordered) {
+                candidate.style.translate = ""
+                candidate.getAnimations().filter((running) => running.id === "offset").forEach((running) => running.cancel())
+            }
+            element.classList.remove("is-lifted")
+            animate(element, [{ scale: String(tokens.motion.scales.held) }, { scale: "1" }], { milliseconds: duration("state"), curveName: "back_out", fill: "forwards" })
+            const target = lift.order.indexOf(index)
+            if (target === index) {
+                springAnimate(element, [{ translate: translate(landing - starts[index]) }, { translate: "0px 0px" }], "placement")
+                return
+            }
+            element.setArmed?.(false)
+            onReorder(lift.order)
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                const settled = elements()[target]
+                if (settled) {
+                    springAnimate(settled, [{ translate: translate(landing - offsetOf(settled)) }, { translate: "0px 0px" }], "placement")
+                }
+            }))
+        }
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", end)
+        window.addEventListener("pointercancel", end)
+    }
+
     gripDown(event) {
         this.startCarry(event)
     }
@@ -1322,6 +1467,7 @@ export class ToolNav {
         if (event.button !== 0) {
             return
         }
+        const isOnPreset = Boolean(event.target.closest("[data-preset]"))
         const pointerId = event.pointerId
         const start = [event.clientX, event.clientY]
         const axis = (point) => (this.orientation === "horizontal" ? point[0] : point[1])
@@ -1334,7 +1480,7 @@ export class ToolNav {
         let collapseJudged = false
         let didCollapse = false
         const onCollapse = this.props.subNavigationGroups.find((group) => group.id === groupId)?.onCollapse
-        const timer = setTimeout(() => {
+        const timer = isOnPreset ? null : setTimeout(() => {
             const ids = this.props.subNavigationGroups.map((group) => group.id)
             reordering = { id: groupId, start: ids, order: [...ids], anchor: axis(start), drag: 0 }
             this.groupReordering = reordering

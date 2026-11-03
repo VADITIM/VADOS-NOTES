@@ -2,8 +2,15 @@ import NotesCore
 import SwiftUI
 
 extension Library {
+    func nestedNoteCount(_ notebookId: String, visited: Set<String>) -> Int {
+        guard !visited.contains(notebookId) else { return 0 }
+        let seen = visited.union([notebookId])
+        return pages(in: notebookId).count + folders(in: notebookId).reduce(0) { $0 + nestedNoteCount($1.id, visited: seen) }
+    }
+
     func folderSummary(_ notebookId: String) -> String {
-        let noteCount = pages(in: notebookId).count
+        let directCount = pages(in: notebookId).count
+        let noteCount = directCount > 0 ? directCount : nestedNoteCount(notebookId, visited: [])
         let folderCount = folders(in: notebookId).count
         let noteText = "\(noteCount) note\(noteCount == 1 ? "" : "s")"
         return folderCount > 0 ? "\(noteText) · \(folderCount) folder\(folderCount == 1 ? "" : "s")" : noteText
@@ -720,7 +727,7 @@ struct AddTile: View {
 }
 
 enum TileIcons {
-    static let folder: CGFloat = 64
+    static let folder: CGFloat = 160
     static let add: CGFloat = 40
     static let note: CGFloat = 22
 }

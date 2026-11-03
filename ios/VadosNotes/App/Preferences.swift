@@ -200,7 +200,15 @@ final class Preferences: ObservableObject {
         let rounded = Self.roundedWidth(clamp(width, widthRange(tool)))
         let presets = widthPresets(tool)
         guard !presets.contains(where: { Self.isSameWidth($0, rounded) }) else { return }
-        write("\(tool.rawValue)WidthPresets", (presets + [rounded]).sorted())
+        write("\(tool.rawValue)WidthPresets", presets + [rounded])
+    }
+
+    func setWidthPresets(_ widths: [Double], for tool: Tool) {
+        write("\(tool.rawValue)WidthPresets", widths)
+    }
+
+    func setColorPresets(_ colors: [String], for tool: Tool) {
+        write("\(tool.rawValue)Presets", colors.map { $0.uppercased() })
     }
 
     func removeWidthPreset(_ width: Double, for tool: Tool) {

@@ -53,11 +53,13 @@ struct CanvasView: UIViewRepresentable {
     func makeUIView(context: Context) -> InkCanvasView {
         let view = InkCanvasView(frame: .zero)
         configure(view)
+        CanvasSampler.shared.canvas = view
         return view
     }
 
     func updateUIView(_ view: InkCanvasView, context: Context) {
         configure(view)
+        CanvasSampler.shared.canvas = view
     }
 
     private func configure(_ view: InkCanvasView) {

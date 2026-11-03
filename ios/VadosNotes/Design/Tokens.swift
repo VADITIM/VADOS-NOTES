@@ -165,6 +165,9 @@ struct Tokens: Decodable {
         let type: Int
         let undoTap: Int
         let navEdgeHide: Int
+        let explorerEnter: Int
+        let explorerLeave: Int
+        let explorerRowStagger: Int
     }
 
     struct SpringToken: Decodable {
@@ -293,6 +296,9 @@ struct Tokens: Decodable {
         let grouping: [MenuSlotToken]
         let group: [MenuSlotToken]
         let selection: [MenuSlotToken]
+        let explorerFolder: [MenuSlotToken]
+        let explorerNote: [MenuSlotToken]
+        let explorerRoot: [MenuSlotToken]
     }
 
     struct FolderTokens: Decodable {

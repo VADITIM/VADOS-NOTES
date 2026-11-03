@@ -58,6 +58,7 @@ struct PageScreen: View {
     @State private var flightTile: CGRect?
     @State private var flightProgress: CGFloat = 1
     @State private var selectionMenu: SelectionMenuRequest?
+    @State private var isColorPicking = false
     @State private var selectionCommand: SelectionCommand?
     @State private var equalWidth = Tokens.shared.tools.pen.width
     @State private var equalWidthStart: Double?
@@ -123,6 +124,15 @@ struct PageScreen: View {
                     }
                 }
                 toolNav
+                if isColorPicking {
+                    ColorPickLayer(onPick: { hex in
+                        isColorPicking = false
+                        applyPickedColor(hex)
+                    }, onCancel: {
+                        isColorPicking = false
+                    })
+                    .transition(.opacity.animation(Motion.powerTwoOut(Motion.pressMilliseconds)))
+                }
             }
         }
         .background(KeyboardCommands(onUndo: { library.undo(pageId) }, onRedo: { library.redo(pageId) }))
@@ -595,17 +605,30 @@ struct PageScreen: View {
             switch key {
             case "pen", "marker":
                 if let tool = Tool(rawValue: key) {
-                    ColorPanel(color: displayColor(tool)) { hex in
+                    ColorPanel(color: displayColor(tool), isPicking: isColorPicking, onPick: { isColorPicking.toggle() }) { hex in
                         preferences.setColor(Palette.inkOnPaper(hex, style: preferences.paperStyle), for: tool)
                     }
                 }
             case "text-color":
-                ColorPanel(color: Palette.inkOnPaper(session?.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle)) { hex in
+                ColorPanel(color: Palette.inkOnPaper(session?.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle), isPicking: isColorPicking, onPick: { isColorPicking.toggle() }) { hex in
                     library.styleText(color: Palette.inkOnPaper(hex, style: preferences.paperStyle))
                 }
             default:
                 EmptyView()
             }
+        }
+    }
+
+    private func applyPickedColor(_ hex: String) {
+        switch subNavKey {
+        case "pen", "marker":
+            if let key = subNavKey, let tool = Tool(rawValue: key) {
+                preferences.setColor(Palette.inkOnPaper(hex, style: preferences.paperStyle), for: tool)
+            }
+        case "text-color":
+            library.styleText(color: Palette.inkOnPaper(hex, style: preferences.paperStyle))
+        default:
+            break
         }
     }
 
@@ -691,8 +714,10 @@ struct PageScreen: View {
             group(sizesId, onCollapse: { isCollapsing in setCollapsed(isCollapsing, id: sizesId, count: presets.count) }) { orientation in
                 let layout = stack(orientation)
                 layout {
-                    ForEach(shownPresets, id: \.self) { preset in
-                        SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) })
+                    PresetStrip(items: shownPresets, orientation: orientation, onReorder: { reordered in
+                        preferences.setWidthPresets(reordered + presets.dropFirst(shownPresets.count), for: tool)
+                    }) { preset, lift in
+                        SwatchButton(color: inkColor, diameter: Self.previewDiameter(Self.share(preset, range)), isSelected: Preferences.isSameWidth(preset, width), isSizePreset: true, orientation: orientation, ring: ("\(tool.rawValue)-size-ring", ringSpace), onSelect: { preferences.setWidth(preset, for: tool) }, onRemove: { preferences.removeWidthPreset(preset, for: tool) }, isMoving: lift.isMoving)
                             .transition(.elementLeave)
                     }
                     GroupEndButton(isCollapsed: areSizesCollapsed, isEnabled: areSizesCollapsed || !presets.contains { Preferences.isSameWidth($0, width) }, orientation: orientation) {
@@ -707,8 +732,10 @@ struct PageScreen: View {
             group(coloursId, onCollapse: collapseColours) { orientation in
                 let layout = stack(orientation)
                 layout {
-                    ForEach(Array(shownColors.enumerated()), id: \.offset) { _, color in
-                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: isVariationAnchor(color, for: tool), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) })
+                    PresetStrip(items: shownColors, orientation: orientation, isKeyedByPosition: true, onReorder: { reordered in
+                        preferences.setColorPresets(reordered + colors.dropFirst(shownColors.count), for: tool)
+                    }) { color, lift in
+                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: isVariationAnchor(color, for: tool), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) }, isMoving: lift.isMoving)
                             .transition(.elementLeave)
                     }
                     GroupEndButton(isCollapsed: areColoursCollapsed, isEnabled: areColoursCollapsed || !colors.contains(current), orientation: orientation) {

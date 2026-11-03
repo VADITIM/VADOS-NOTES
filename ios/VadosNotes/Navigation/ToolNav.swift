@@ -215,6 +215,8 @@ struct ToolNav<PanelContent: View>: View {
     @State private var isCollapseSwiped = false
     @State private var isCollapseSwipeRejected = false
     @State private var carryLayer: CGSize = .zero
+    @State private var isPresetPressed = false
+    @State private var isPresetLifted = false
     @GestureState private var isEdgeGestureActive = false
     @GestureState private var isCollapseGestureActive = false
     @GestureState private var isSizingGestureActive = false
@@ -317,6 +319,7 @@ struct ToolNav<PanelContent: View>: View {
                         subNavBody
                     }
                 }
+                .simultaneousGesture(edgeHideGesture(edge: edge, limit: hiddenReach, follow: subNavFollow(subNavCenter: subNavCenter, center: center, edge: edge, limit: hiddenReach)))
                 .position(subNavCenter)
                 .offset(stackFollow(from: subNavCenter, to: center, share: edgeShare))
                 ZStack {
@@ -540,11 +543,17 @@ struct ToolNav<PanelContent: View>: View {
         }
     }
 
-    private func edgeHideGesture(edge: NavSide, limit: CGFloat) -> some Gesture {
+    private func subNavFollow(subNavCenter: CGPoint, center: CGPoint, edge: NavSide, limit: CGFloat) -> CGFloat {
+        let isAcross = edge == .up || edge == .down
+        let distance = abs(isAcross ? subNavCenter.y - center.y : subNavCenter.x - center.x)
+        return limit / max(1, distance)
+    }
+
+    private func edgeHideGesture(edge: NavSide, limit: CGFloat, follow: CGFloat = 1) -> some Gesture {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .updating($isEdgeGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
-                guard sizingDrag == nil, toolReordering == nil, !carry.isStageCleared, !isEdgeHidden else { return }
+                guard sizingDrag == nil, toolReordering == nil, groupReordering == nil, !isPresetLifted, !carry.isStageCleared, !isEdgeHidden else { return }
                 let travel = outwardTravel(value.translation, edge)
                 if edgeDragStart == nil {
                     guard shownSubNavigationKey != nil, abs(travel.outward) > abs(travel.across) * NavMetrics.navSizingDominance else { return }
@@ -553,7 +562,7 @@ struct ToolNav<PanelContent: View>: View {
                     edgeDragStart = travel.outward
                 }
                 guard let start = edgeDragStart else { return }
-                edgeOffset = rubberBanded(travel.outward - start, limit: limit)
+                edgeOffset = rubberBanded((travel.outward - start) * follow, limit: limit)
             }
             .onEnded { _ in
                 guard edgeDragStart != nil else { return }
@@ -767,6 +776,7 @@ struct ToolNav<PanelContent: View>: View {
         }
         .environment(\.isElementRevealed, subNavigationMotion.areElementsShown)
         .environment(\.navigationTapsResumeAt, swallowUntil)
+        .environment(\.presetLiftCallbacks, PresetLiftCallbacks(pressed: { isPresetPressed = $0 }, lifted: { isPresetLifted = $0 }))
         .padding(NavMetrics.padding)
         .fixedSize()
         .animation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2), value: shown.map(\.id))
@@ -897,6 +907,7 @@ struct ToolNav<PanelContent: View>: View {
             .onChanged { value in
                 guard case .second(true, let drag) = value, let drag else { return }
                 if groupReordering == nil {
+                    guard !isPresetPressed, !isPresetLifted, edgeDragStart == nil else { return }
                     Haptics.hold()
                     let order = subNavigationGroups.map(\.id)
                     groupReordering = Reordering(id: id, start: order, order: order, anchor: axisValue(drag.location), drag: 0)

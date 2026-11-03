@@ -1,4 +1,5 @@
 import { InkCanvas } from "./canvas.js"
+import { ColorPickOverlay } from "./eyedropper.js"
 import { create, pressable } from "./components.js"
 import {
     KeyedList,
@@ -66,6 +67,10 @@ function capitalized(text) {
     return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
+function presetElements(row) {
+    return [...row.querySelectorAll(":scope > [data-preset]:not(.is-leaving)")]
+}
+
 export class PageScreen {
     constructor(app, notebookId, pageId) {
         this.app = app
@@ -107,6 +112,7 @@ export class PageScreen {
     }
 
     destroy() {
+        this.colorPick?.cancel()
         window.removeEventListener("keydown", this.keyDown)
         this.canvas.destroy()
         this.closeEditor()
@@ -489,7 +495,7 @@ export class PageScreen {
             this.updatePanel(panel, key)
             return panel
         }
-        const panel = colorPanel({ color: this.wheelColor(), onChange: (hex) => this.applyWheel(hex) })
+        const panel = colorPanel({ color: this.wheelColor(), onChange: (hex) => this.applyWheel(hex), onPick: () => this.startColorPick(panel) })
         return panel
     }
 
@@ -510,6 +516,28 @@ export class PageScreen {
             return inkOnPaper(this.session?.element.color ?? tokens.text.color, preferences.paperStyle())
         }
         return key === "pen" || key === "marker" ? this.displayColor(key) : "#FFFFFF"
+    }
+
+    startColorPick(panel) {
+        if (this.colorPick) {
+            this.colorPick.cancel()
+            return
+        }
+        panel.setPicking(true)
+        const finish = () => {
+            this.colorPick = null
+            panel.setPicking(false)
+        }
+        this.colorPick = new ColorPickOverlay({
+            host: this.app.overlayHost,
+            sample: (point) => this.canvas.sampleColor(point),
+            onPick: (hex) => {
+                finish()
+                this.applyWheel(hex)
+                this.refresh()
+            },
+            onCancel: finish,
+        })
     }
 
     applyWheel(hex) {
@@ -599,7 +627,17 @@ export class PageScreen {
             row.append(plus)
             const list = new KeyedList(row, {
                 make: (entry) => {
-                    const swatch = swatchButton({ color: "#000", isSizePreset: true, orientation, onSelect: () => preferences.setToolWidth(tool, entry.preset), onRemove: () => preferences.removeWidthPreset(tool, entry.preset) })
+                    const swatch = swatchButton({ color: "#000", isSizePreset: true, orientation, onSelect: () => preferences.setToolWidth(tool, entry.preset), onRemove: () => preferences.removeWidthPreset(tool, entry.preset), onHold: ({ pointerId, point }) => this.app.nav.liftPreset({
+                        pointerId,
+                        point,
+                        element: swatch,
+                        elements: () => presetElements(row),
+                        onReorder: (order) => {
+                            const all = preferences.widthPresets(tool)
+                            const shown = row.presets ?? all
+                            preferences.setWidthPresets(tool, [...order.map((index) => shown[index]), ...all.slice(shown.length)])
+                        },
+                    }) })
                     swatch.dataset.revealedElement = ""
                     return swatch
                 },
@@ -615,6 +653,7 @@ export class PageScreen {
             const isCollapsed = this.isGroupCollapsed(sizesId, allPresets.length)
             const presets = isCollapsed ? allPresets.slice(0, collapsedGroupCount) : allPresets
             const color = this.displayColor(tool)
+            row.presets = presets
             row.list.sync(presets.map((preset) => ({ key: String(preset), preset })), { isSwitch: false })
             row.append(row.plus)
             let selected = null
@@ -645,7 +684,16 @@ export class PageScreen {
             row.append(plus)
             const list = new KeyedList(row, {
                 make: (entry) => {
-                    const swatch = swatchButton({ color: "#000", orientation, onSelect: () => this.chooseColor(row.colors[entry.index], tool), onRemove: () => preferences.removeColorPreset(tool, row.colors[entry.index]) })
+                    const swatch = swatchButton({ color: "#000", orientation, onSelect: () => this.chooseColor(row.colors[entry.index], tool), onRemove: () => preferences.removeColorPreset(tool, row.colors[entry.index]), onHold: ({ pointerId, point }) => this.app.nav.liftPreset({
+                        pointerId,
+                        point,
+                        element: swatch,
+                        elements: () => presetElements(row),
+                        onReorder: (order) => {
+                            const all = preferences.colorPresets(tool)
+                            preferences.setColorPresets(tool, [...order.map((index) => row.colors[index]), ...all.slice(row.colors.length)])
+                        },
+                    }) })
                     swatch.dataset.revealedElement = ""
                     return swatch
                 },

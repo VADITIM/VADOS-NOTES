@@ -18,7 +18,7 @@ import {
 import { duration } from "./motion.js"
 import { Camera, StrokePathCache, drawPage, importRect, strokePath, textRect } from "./renderer.js"
 import { subscribeImports } from "./imports.js"
-import { inkOnPaper, tokens, withAlpha } from "./tokens.js"
+import { componentsToHex, hexComponents, inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
 const fitMargin = 24
 const holdTolerance = 8
@@ -100,6 +100,21 @@ export class InkCanvas {
         this.resizeObserver.observe(this.element)
         this.unsubscribeImports = subscribeImports(() => this.requestDraw())
         this.bindInput()
+    }
+
+    sampleColor(point) {
+        const canvas = this.paperCanvas
+        const rect = canvas.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0 || point[0] < rect.left || point[0] >= rect.right || point[1] < rect.top || point[1] >= rect.bottom) {
+            return null
+        }
+        const x = Math.floor(((point[0] - rect.left) * canvas.width) / rect.width)
+        const y = Math.floor(((point[1] - rect.top) * canvas.height) / rect.height)
+        const [red, green, blue, alpha] = this.paperContext.getImageData(x, y, 1, 1).data
+        const ground = hexComponents(tokens.palette.ground)
+        const share = alpha / 255
+        const blend = (value, under) => (value / 255) * share + under * (1 - share)
+        return componentsToHex({ red: blend(red, ground.red), green: blend(green, ground.green), blue: blend(blue, ground.blue), alpha: 1 })
     }
 
     destroy() {
