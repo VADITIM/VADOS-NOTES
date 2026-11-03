@@ -4,12 +4,12 @@ import UIKit.UIGestureRecognizerSubclass
 final class PalmGuard {
     weak var view: UIView?
 
-    private var isPencilDown = false
+    private let pencilTouches = NSHashTable<UITouch>.weakObjects()
+    private let palmTouches = NSHashTable<UITouch>.weakObjects()
     private var lastPencilContact: TimeInterval = -.infinity
-    private var palmTouches: Set<ObjectIdentifier> = []
     private var restPoints: [CGPoint] = []
 
-    private static let palmRadius: CGFloat = 30
+    private static let palmRadius: CGFloat = 52
     private static let writingWindow: TimeInterval = 1.2
     private static let restBottomShare: CGFloat = 0.25
     private static let restRightShare: CGFloat = 0.35
@@ -19,12 +19,16 @@ final class PalmGuard {
 
     func isPalm(_ touch: UITouch) -> Bool {
         guard touch.type == .direct else { return false }
-        if palmTouches.contains(ObjectIdentifier(touch)) || touch.majorRadius >= Self.palmRadius || isPencilDown {
+        if palmTouches.contains(touch) || touch.majorRadius >= Self.palmRadius || isPencilDown {
             return true
         }
         guard touch.timestamp - lastPencilContact < Self.writingWindow, let view else { return false }
         let location = touch.location(in: view)
         return restZones(in: view.bounds).contains { $0.contains(location) }
+    }
+
+    private var isPencilDown: Bool {
+        pencilTouches.allObjects.contains { $0.phase != .ended && $0.phase != .cancelled }
     }
 
     func rejects(_ touches: Set<UITouch>?) -> Bool {
@@ -34,10 +38,10 @@ final class PalmGuard {
     func began(_ touches: Set<UITouch>) {
         for touch in touches {
             if touch.type == .pencil {
-                isPencilDown = true
+                pencilTouches.add(touch)
                 lastPencilContact = touch.timestamp
             } else if isPalm(touch) {
-                palmTouches.insert(ObjectIdentifier(touch))
+                palmTouches.add(touch)
                 learn(touch)
             }
         }
@@ -47,8 +51,8 @@ final class PalmGuard {
         for touch in touches {
             if touch.type == .pencil {
                 lastPencilContact = touch.timestamp
-            } else if touch.type == .direct, touch.majorRadius >= Self.palmRadius, !palmTouches.contains(ObjectIdentifier(touch)) {
-                palmTouches.insert(ObjectIdentifier(touch))
+            } else if touch.type == .direct, touch.majorRadius >= Self.palmRadius, !palmTouches.contains(touch) {
+                palmTouches.add(touch)
                 learn(touch)
             }
         }
@@ -57,10 +61,10 @@ final class PalmGuard {
     func ended(_ touches: Set<UITouch>) {
         for touch in touches {
             if touch.type == .pencil {
-                isPencilDown = false
+                pencilTouches.remove(touch)
                 lastPencilContact = touch.timestamp
             }
-            palmTouches.remove(ObjectIdentifier(touch))
+            palmTouches.remove(touch)
         }
     }
 

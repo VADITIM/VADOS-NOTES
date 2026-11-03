@@ -67,6 +67,13 @@ enum SheetRequest: Identifiable, Equatable {
         default: return false
         }
     }
+
+    var isSeeThrough: Bool {
+        if case .transfer = self {
+            return true
+        }
+        return false
+    }
 }
 
 @MainActor

@@ -26,10 +26,7 @@ private struct TransferDrag {
     var start: CGPoint
     var location: CGPoint
     var hasStart: Bool
-    var isSelecting: Bool
-    var isPainting = false
     var isLifted = false
-    var lastPainted: CellPosition?
 }
 
 private struct PdfPageReference: Equatable {
@@ -55,6 +52,12 @@ private enum TransferPart: Int, CaseIterable {
     case grid
 }
 
+private enum PillButton: Hashable {
+    case mode(TransferMode)
+    case back
+    case current(TransferMode)
+}
+
 struct TransferSheet: View {
     let pageId: String
 
@@ -62,6 +65,8 @@ struct TransferSheet: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
     @State private var mode: TransferMode
+    @State private var pillMode: TransferMode
+    @StateObject private var pillMotion = PillMotion()
     @State private var document: ImportedDocument?
     @State private var documentName: String?
     @State private var importFailure: String?
@@ -71,6 +76,7 @@ struct TransferSheet: View {
     @State private var drag: TransferDrag?
     @State private var frames: [TransferTarget: CGRect] = [:]
     @State private var images: [CellPosition: UIImage] = [:]
+    @State private var filledCells: Set<CellPosition> = []
     @State private var sourceImages: [Int: UIImage] = [:]
     @State private var cellsKey = ""
     @State private var sourcesKey = ""
@@ -78,23 +84,32 @@ struct TransferSheet: View {
     @State private var isExporting = false
     @State private var shownParts: Set<TransferPart> = []
     @State private var chosenPdfPage: PdfPageReference?
+    @State private var isSelecting = false
+    @State private var selectedCells: Set<CellPosition> = []
 
     private static let space = "transfer"
-    private static let contentShare: CGFloat = 0.75
-    private static let largestCellWidth: CGFloat = 150
+    private static let originId = "transfer-origin"
+    private static let cellWidth: CGFloat = 150
     private static let stripWidth: CGFloat = 150
     private static let pdfColumnWidth: CGFloat = 120
-    private static let pdfColumnReserve: CGFloat = 220
-    private static let pdfDotSize: CGFloat = 9
-    private static let rowLabelWidth: CGFloat = 36
+    private static let sideInset: CGFloat = 16
+    private static let axisLabelSize: CGFloat = 28
+    private static let controlsReserve: CGFloat = 76
+    private static let canvasGutter: CGFloat = 24
+    private static let canvasMargin: CGFloat = 900
+    private static let markWidth: CGFloat = 14
     private static let spacing: CGFloat = 10
-    private static let dragSlop: CGFloat = 6
     private static let cellShape = Squircle(radius: 8)
     private static let growDepth: CGFloat = 28
+
+    private static var cellHeight: CGFloat {
+        cellWidth * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth)
+    }
 
     init(pageId: String, initialMode: TransferMode) {
         self.pageId = pageId
         _mode = State(initialValue: initialMode)
+        _pillMode = State(initialValue: initialMode)
     }
 
     private var page: Page? {
@@ -109,28 +124,15 @@ struct TransferSheet: View {
         mode == .view && isEditable && page != nil
     }
 
-    private var noteImports: [Element] {
-        page?.liveElements.filter { $0.type == .importPage } ?? []
-    }
-
-    private var hasPdfPages: Bool {
-        !noteImports.isEmpty || (mode == .import && document != nil)
-    }
-
     private var isShowingInverted: Bool {
-        if mode == .import, let document {
-            return !document.inverted.isEmpty && document.inverted.allSatisfy { $0 }
-        }
-        let imports = noteImports
-        return !imports.isEmpty && imports.allSatisfy { ImportImages.shared.isInverted($0, isDark: preferences.paperStyle == .dark) }
+        guard let document else { return false }
+        return !document.inverted.isEmpty && document.inverted.allSatisfy { $0 }
     }
 
     private func setInverted(_ isInverted: Bool) {
-        if var pending = document {
-            pending.inverted = pending.pages.map { _ in isInverted }
-            document = pending
-        }
-        library.setInverted(noteImports.map(\.id), on: pageId, to: isInverted)
+        guard var pending = document else { return }
+        pending.inverted = pending.pages.map { _ in isInverted }
+        document = pending
     }
 
     private var placements: [CellPosition: Int] {
@@ -159,7 +161,7 @@ struct TransferSheet: View {
 
     private var stripCount: Int {
         switch mode {
-        case .view: return total
+        case .view: return 0
         case .export: return placements.count
         case .import: return document?.pages.count ?? 0
         }
@@ -200,17 +202,40 @@ struct TransferSheet: View {
 
     var body: some View {
         let _ = library.revision
+        let groups = mode == .view ? pdfGroups : []
+        let isSideShown = mode != .view || !groups.isEmpty
         GeometryReader { proxy in
-            ScrollView {
-                module(width: proxy.size.width * Self.contentShare, height: proxy.size.height)
-                    .frame(width: proxy.size.width * Self.contentShare)
-                    .padding(.vertical, 24)
-                    .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
-                    .background(Color.clear.contentShape(Rectangle()).onTapGesture { navigator.show(nil) })
+            HStack(spacing: 0) {
+                if isSideShown {
+                    sideColumn(groups)
+                        .frame(height: proxy.size.height)
+                        .modifier(rising(.strip))
+                        .transition(.popTogether)
+                    Rectangle()
+                        .fill(Palette.border)
+                        .frame(width: 1, height: proxy.size.height)
+                        .modifier(rising(.strip))
+                }
+                canvas
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .modifier(rising(.grid))
+                    .overlay(alignment: .topLeading) {
+                        leadingControls
+                            .padding(.leading, Self.canvasGutter)
+                            .padding(.top, 12)
+                            .modifier(rising(.header))
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        modePill
+                            .padding(.trailing, Self.canvasGutter)
+                            .padding(.top, 12)
+                            .modifier(rising(.header))
+                    }
             }
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize)
-            .scrollDisabled(drag?.isLifted == true)
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSideShown)
+            .coordinateSpace(name: Self.space)
+            .onPreferenceChange(TransferFrames.self) { frames = $0 }
+            .overlay(ghost)
         }
         .fileImporter(isPresented: $isPicking, allowedContentTypes: [.pdf]) { result in
             guard case .success(let url) = result else { return }
@@ -232,6 +257,7 @@ struct TransferSheet: View {
         .onAppear {
             selectAll()
             showParts(true)
+            pillMotion.enter()
             if mode == .import {
                 isPicking = true
             }
@@ -239,6 +265,7 @@ struct TransferSheet: View {
         .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
             if isLeaving {
                 showParts(false)
+                pillMotion.leave()
             }
         }
     }
@@ -261,53 +288,145 @@ struct TransferSheet: View {
         RisingPart(isShown: shownParts.contains(part))
     }
 
-    private func module(width: CGFloat, height: CGFloat) -> some View {
-        let isImport = mode == .import
-        let chosen = placements.count
-        let groups = mode == .view ? pdfGroups : []
-        let gridWidth = width - 36 - Self.stripWidth - 18 - (groups.isEmpty ? 0 : Self.pdfColumnWidth + 18)
-        return SettingsModule(label: page.map { library.noteTitle($0) } ?? "Note") {
-            HStack(spacing: 14) {
-                Segmented(options: [SegmentOption(value: TransferMode.view, title: "View all"), SegmentOption(value: TransferMode.export, title: "Export"), SegmentOption(value: TransferMode.import, title: "Import")], selected: mode) { picked in
-                    guard picked != .import || isEditable else { return }
-                    withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
-                        mode = picked
-                        chosenPdfPage = nil
-                    }
-                    if picked == .import && document == nil {
-                        isPicking = true
-                    }
-                }
-                if hasPdfPages {
-                    Segmented(options: [SegmentOption(value: false, title: "Normal"), SegmentOption(value: true, title: "Inverted")], selected: isShowingInverted) { isInverted in
-                        setInverted(isInverted)
-                    }
-                    .transition(.popTogether)
-                }
-                if mode != .view {
-                    SlabButton(title: isImport ? "Import \(chosen) of \(document?.pages.count ?? 0)" : "Export \(chosen) page\(chosen == 1 ? "" : "s")", color: Palette.importAsset, isEnabled: chosen > 0 && !isExporting, action: submit)
-                        .transition(.popTogether)
-                }
-            }
-            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: mode)
-            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: hasPdfPages)
-            .modifier(rising(.header))
-            HStack(alignment: .top, spacing: 18) {
-                if !groups.isEmpty {
-                    pdfColumn(groups, height: max(Self.pdfColumnWidth * 2, height - Self.pdfColumnReserve))
-                        .modifier(rising(.strip))
-                        .transition(.popTogether)
-                }
-                strip
-                    .frame(width: Self.stripWidth)
-                    .modifier(rising(.strip))
-                grid(width: gridWidth)
-                    .modifier(rising(.grid))
+    private func pick(_ picked: TransferMode) {
+        guard picked != mode, picked != .import || isEditable else { return }
+        Haptics.tick()
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            mode = picked
+            chosenPdfPage = nil
+            isSelecting = false
+            selectedCells = []
+        }
+        pillMotion.mutate {
+            withAnimation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)) {
+                pillMode = picked
             }
         }
-        .coordinateSpace(name: Self.space)
-        .onPreferenceChange(TransferFrames.self) { frames = $0 }
-        .overlay(ghost)
+        if picked == .import && document == nil {
+            isPicking = true
+        }
+    }
+
+    @ViewBuilder
+    private var leadingControls: some View {
+        HStack(spacing: 12) {
+            if mode == .view && isEditable {
+                RoundIconButton(glyph: "check", color: isSelecting ? Palette.create : Palette.textBody, isTinted: isSelecting) {
+                    Haptics.tick()
+                    withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                        isSelecting.toggle()
+                        selectedCells = []
+                    }
+                }
+                .accessibilityLabel(isSelecting ? "Stop selecting" : "Select pages")
+                .transition(.popTogether)
+                if isSelecting {
+                    RoundIconButton(glyph: "trash", color: Palette.destructive, isTinted: true, isEnabled: !selectedCells.isEmpty, action: clearSelected)
+                        .accessibilityLabel("Clear selected pages")
+                        .transition(.popTogether)
+                }
+            }
+            if mode == .import && document != nil {
+                Segmented(options: [SegmentOption(value: false, title: "Normal"), SegmentOption(value: true, title: "Inverted")], selected: isShowingInverted) { isInverted in
+                    setInverted(isInverted)
+                }
+                .transition(.popTogether)
+            }
+        }
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSelecting)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: mode)
+    }
+
+    private func pillButtons(for shown: TransferMode) -> [PillButton] {
+        switch shown {
+        case .view: return [.mode(.import), .mode(.export), .back, .current(.view)]
+        case .export: return [.mode(.import), .mode(.view), .back, .current(.export)]
+        case .import: return [.mode(.view), .mode(.export), .back, .current(.import)]
+        }
+    }
+
+    private var modePill: some View {
+        HStack(spacing: 4) {
+            ForEach(pillButtons(for: pillMode), id: \.self) { button in
+                pillButton(button)
+            }
+        }
+        .environment(\.isElementRevealed, pillMotion.areElementsShown)
+        .padding(5)
+        .background(PillShell(scale: pillMotion.shellScale, spread: pillMotion.shellSpread, isWide: true))
+        .allowsHitTesting(pillMotion.areElementsShown)
+    }
+
+    private func glyph(for shown: TransferMode) -> String {
+        switch shown {
+        case .view: return "view_all"
+        case .export: return "export"
+        case .import: return "import"
+        }
+    }
+
+    private func tint(for shown: TransferMode) -> Color {
+        switch shown {
+        case .view: return Palette.view
+        case .export: return Palette.edit
+        case .import: return Palette.importAsset
+        }
+    }
+
+    private func title(for shown: TransferMode) -> String {
+        switch shown {
+        case .view: return "View all"
+        case .export: return "Export"
+        case .import: return "Import"
+        }
+    }
+
+    @ViewBuilder
+    private func pillButton(_ button: PillButton) -> some View {
+        switch button {
+        case .mode(let target):
+            pillLabel(glyph: glyph(for: target), color: tint(for: target), isEnabled: target != .import || isEditable) {
+                pick(target)
+            }
+            .accessibilityLabel(title(for: target))
+        case .back:
+            pillLabel(glyph: "back", color: Palette.navigation) {
+                navigator.show(nil)
+            }
+            .accessibilityLabel("Back to the note")
+        case .current(let shown):
+            if shown == .view {
+                pillLabel(glyph: glyph(for: shown), color: tint(for: shown), isCurrent: true) {}
+                    .accessibilityLabel(title(for: shown))
+            } else {
+                let chosen = placements.count
+                let label = shown == .import ? "\(chosen)/\(document?.pages.count ?? 0)" : "\(chosen)"
+                pillLabel(glyph: glyph(for: shown), color: tint(for: shown), label: label, isCurrent: true, isEnabled: chosen > 0 && !isExporting, action: submit)
+                    .accessibilityLabel(shown == .import ? "Import \(chosen) pages" : "Export \(chosen) pages")
+            }
+        }
+    }
+
+    private func pillLabel(glyph: String, color: Color, label: String? = nil, isCurrent: Bool = false, isEnabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                GlyphView(name: glyph, color: color, size: 20)
+                if let label {
+                    Text(label)
+                        .font(Typography.monoBold(13))
+                        .foregroundColor(color)
+                        .monospacedDigit()
+                }
+            }
+            .padding(.horizontal, label == nil ? 0 : 14)
+            .frame(minWidth: TopBar.controlHeight - 4, minHeight: TopBar.controlHeight - 4)
+            .background(Capsule().fill(isCurrent ? Palette.pressedWash : Color.clear))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.38)
+        .revealedElement()
     }
 
     @ViewBuilder
@@ -323,6 +442,23 @@ struct TransferSheet: View {
                 .position(x: frame.midX + drag.location.x - drag.start.x, y: frame.midY + drag.location.y - drag.start.y)
                 .allowsHitTesting(false)
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder
+    private func sideColumn(_ groups: [PdfGroup]) -> some View {
+        if mode == .view {
+            pdfColumn(groups)
+        } else {
+            ScrollView {
+                strip
+                    .padding(.top, 24)
+                    .padding(.bottom, 40)
+                    .padding(.horizontal, Self.sideInset)
+            }
+            .scrollIndicators(.hidden)
+            .scrollDisabled(drag?.isLifted == true)
+            .frame(width: Self.stripWidth + Self.sideInset * 2)
         }
     }
 
@@ -367,12 +503,7 @@ struct TransferSheet: View {
                     .background(GeometryReader { proxy in
                         Color.clear.preference(key: TransferFrames.self, value: [.page(index): proxy.frame(in: .named(Self.space))])
                     })
-                    .gesture(stripGesture(index))
-                    .simultaneousGesture(TapGesture().onEnded {
-                        if mode == .view, chosenPdfPage != nil {
-                            placeChosenPdfPage(on: cell(at: index))
-                        }
-                    })
+                    .gesture(holdGesture(.page(index)))
             }
         }
         .onAppear { renderSources(size: CGSize(width: Self.stripWidth, height: pageHeight)) }
@@ -386,11 +517,16 @@ struct TransferSheet: View {
         return pageTile(image: image(for: target), label: "\(index + 1)/\(total)", isSelected: isPlaced, isNew: false, target: target)
     }
 
-    private func pageTile(image: UIImage?, label: String?, isSelected: Bool, isNew: Bool, target: TransferTarget) -> some View {
+    private func pageTile(image: UIImage?, label: String?, isSelected: Bool, isNew: Bool, isEmpty: Bool = false, isMarked: Bool = false, target: TransferTarget) -> some View {
         let isLifted = drag?.isLifted == true && drag?.source == target
         let isHovered = hovered == target
+        let isDashed = isEmpty || (isNew && !isSelected)
         return ZStack(alignment: .bottomTrailing) {
-            if let image {
+            if isEmpty {
+                Color.clear
+                GlyphView(name: "plus", color: Palette.textMuted, size: 22)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let image {
                 Image(uiImage: image)
                     .resizable()
                     .opacity(isSelected || mode == .view ? 1 : 0.55)
@@ -409,65 +545,116 @@ struct TransferSheet: View {
                     .transition(.popTogether)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if isMarked {
+                Capsule()
+                    .fill(Palette.destructive)
+                    .frame(width: Self.markWidth, height: 4)
+                    .padding(10)
+                    .transition(.popTogether)
+            }
+        }
         .clipShape(Self.cellShape)
-        .overlay(Self.cellShape.stroke(isHovered ? Palette.importAsset : isSelected ? Palette.accent : Palette.border, style: StrokeStyle(lineWidth: isSelected || isHovered ? 2.5 : 1.5, dash: isNew && !isSelected ? [5, 4] : [])))
-        .scaleEffect(isHovered ? 1.04 : isSelected ? 0.96 : 1)
+        .overlay(Self.cellShape.stroke(isHovered ? Palette.importAsset : isSelected ? Palette.accent : isEmpty ? Palette.borderControl : Palette.border, style: StrokeStyle(lineWidth: isSelected || isHovered ? 2.5 : 1.5, dash: isDashed ? [5, 4] : [])))
+        .scaleEffect(isHovered ? 1.04 : isSelected ? (mode == .view ? CGFloat(0.9) : CGFloat(0.96)) : 1)
         .opacity(isLifted ? 0.3 : 1)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSelected)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isHovered)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isLifted)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isMarked)
     }
 
-    private func grid(width: CGFloat) -> some View {
+    private var canvas: some View {
+        ScrollViewReader { reader in
+            ScrollView([.horizontal, .vertical]) {
+                grid
+                    .padding(.top, Self.controlsReserve)
+                    .padding(.leading, Self.canvasGutter)
+                    .id(Self.originId)
+                    .padding(Self.canvasMargin)
+            }
+            .scrollIndicators(.hidden)
+            .scrollDisabled(drag?.isLifted == true)
+            .onAppear {
+                DispatchQueue.main.async {
+                    reader.scrollTo(Self.originId, anchor: .topLeading)
+                }
+            }
+        }
+    }
+
+    private func axisLabel(_ number: Int) -> some View {
+        Text("\(number)")
+            .font(Typography.monoBold(12))
+            .tracking(1.5)
+            .foregroundColor(Palette.textMuted)
+    }
+
+    private var grid: some View {
         let shape = extent
         let isGrowing = isGrowable
-        let growReach = isGrowing ? Self.growDepth + Self.spacing : 0
-        let available = width - Self.rowLabelWidth - Self.spacing * CGFloat(shape.columns) - growReach
-        let cellWidth = max(24, min(Self.largestCellWidth, available / CGFloat(max(1, shape.columns))))
-        let cellHeight = cellWidth * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth)
+        let cellWidth = Self.cellWidth
+        let cellHeight = Self.cellHeight
         let cellsWidth = cellWidth * CGFloat(shape.columns) + Self.spacing * CGFloat(shape.columns - 1)
         let cellsHeight = cellHeight * CGFloat(shape.rows) + Self.spacing * CGFloat(shape.rows - 1)
         let firstNewRow = page?.extent.rows ?? shape.rows
         let count = total
-        return HStack(alignment: .top, spacing: Self.spacing) {
-            VStack(spacing: Self.spacing) {
-                ForEach(0..<shape.rows, id: \.self) { row in
-                    Button {
-                        toggleRow(row, columns: shape.columns)
-                    } label: {
-                        Text(String(format: "%02d", row + 1))
-                            .font(Typography.monoBold(12))
-                            .tracking(1.5)
-                            .foregroundColor(Palette.textMuted)
-                            .frame(width: Self.rowLabelWidth, height: cellHeight)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PressableStyle())
-                    .disabled(mode == .view)
+        return VStack(alignment: .leading, spacing: Self.spacing) {
+            HStack(spacing: Self.spacing) {
+                Color.clear
+                    .frame(width: Self.axisLabelSize, height: Self.axisLabelSize)
+                ForEach(0..<shape.columns, id: \.self) { column in
+                    axisLabel(column + 1)
+                        .frame(width: cellWidth, height: Self.axisLabelSize)
                 }
             }
-            VStack(alignment: .leading, spacing: Self.spacing) {
-                HStack(alignment: .top, spacing: Self.spacing) {
-                    cells(shape: shape, cellWidth: cellWidth, cellHeight: cellHeight, firstNewRow: firstNewRow, count: count)
-                    if isGrowing {
-                        growButton(glyph: "add_column", label: "Add column") {
-                            library.expand(pageId, columns: true)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Palette.border)
+                    .frame(height: 1)
+                    .padding(.leading, Self.axisLabelSize + Self.spacing)
+            }
+            HStack(alignment: .top, spacing: Self.spacing) {
+                VStack(spacing: Self.spacing) {
+                    ForEach(0..<shape.rows, id: \.self) { row in
+                        Button {
+                            toggleRow(row, columns: shape.columns)
+                        } label: {
+                            axisLabel(row + 1)
+                                .frame(width: Self.axisLabelSize, height: cellHeight)
+                                .contentShape(Rectangle())
                         }
-                        .frame(width: Self.growDepth, height: cellsHeight)
+                        .buttonStyle(PressableStyle())
+                        .disabled(mode == .view)
+                    }
+                }
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Palette.border)
+                        .frame(width: 1)
+                }
+                VStack(alignment: .leading, spacing: Self.spacing) {
+                    HStack(alignment: .top, spacing: Self.spacing) {
+                        cells(shape: shape, cellWidth: cellWidth, cellHeight: cellHeight, firstNewRow: firstNewRow, count: count)
+                        if isGrowing {
+                            growButton(glyph: "add_column", label: "Add column") {
+                                library.expand(pageId, columns: true)
+                            }
+                            .frame(width: Self.growDepth, height: cellsHeight)
+                            .transition(.popTogether)
+                        }
+                    }
+                    if isGrowing {
+                        growButton(glyph: "add_row", label: "Add row") {
+                            library.expand(pageId, columns: false)
+                        }
+                        .frame(width: cellsWidth, height: Self.growDepth)
                         .transition(.popTogether)
                     }
                 }
-                if isGrowing {
-                    growButton(glyph: "add_row", label: "Add row") {
-                        library.expand(pageId, columns: false)
-                    }
-                    .frame(width: cellsWidth, height: Self.growDepth)
-                    .transition(.popTogether)
-                }
+                .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isGrowing)
             }
-            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isGrowing)
         }
-        .frame(maxWidth: .infinity)
         .onAppear { renderCells(cellSize: CGSize(width: cellWidth, height: cellHeight)) }
         .onChange(of: renderKey(cellWidth: cellWidth)) { _, _ in
             renderCells(cellSize: CGSize(width: cellWidth, height: cellHeight))
@@ -494,74 +681,76 @@ struct TransferSheet: View {
             ForEach(0..<shape.rows, id: \.self) { row in
                 HStack(spacing: Self.spacing) {
                     ForEach(0..<shape.columns, id: \.self) { column in
-                        let cell = CellPosition(column: column, row: row)
-                        let index = mode == .view ? row * shape.columns + column : placements[cell]
-                        pageTile(image: images[cell], label: index.map { "\($0 + 1)/\(count)" }, isSelected: mode != .view && index != nil, isNew: row >= firstNewRow, target: .cell(cell))
+                        cellTile(CellPosition(column: column, row: row), firstNewRow: firstNewRow, count: count)
                             .frame(width: cellWidth, height: cellHeight)
-                            .background(GeometryReader { proxy in
-                                Color.clear.preference(key: TransferFrames.self, value: [.cell(cell): proxy.frame(in: .named(Self.space))])
-                            })
                     }
                 }
             }
         }
-        .gesture(gridGesture)
     }
 
-    private var gridGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
-            .onChanged { value in
-                guard var current = drag else {
-                    beginGridDrag(at: value.startLocation)
-                    return
-                }
-                current.location = value.location
-                drag = current
-                if current.isLifted {
-                    return
-                }
-                if current.isPainting {
-                    if case .cell(let cell) = target(at: value.location), cell != current.lastPainted {
-                        drag?.lastPainted = cell
-                        paint(cell, isSelecting: true)
+    private func cellTile(_ cell: CellPosition, firstNewRow: Int, count: Int) -> some View {
+        let isViewing = mode == .view
+        let index = isViewing ? nil : placements[cell]
+        let isEmpty = isViewing && !filledCells.contains(cell)
+        let isSelected = isViewing ? selectedCells.contains(cell) : index != nil
+        return pageTile(image: images[cell], label: index.map { "\($0 + 1)/\(count)" }, isSelected: isSelected, isNew: cell.row >= firstNewRow, isEmpty: isEmpty, isMarked: isViewing && isSelecting && !isEmpty, target: .cell(cell))
+            .background(GeometryReader { proxy in
+                Color.clear.preference(key: TransferFrames.self, value: [.cell(cell): proxy.frame(in: .named(Self.space))])
+            })
+            .contentShape(Self.cellShape)
+            .gesture(holdGesture(.cell(cell)))
+            .simultaneousGesture(TapGesture().onEnded { tapped(cell) })
+    }
+
+    private func tapped(_ cell: CellPosition) {
+        guard drag == nil else { return }
+        switch mode {
+        case .view:
+            if chosenPdfPage != nil {
+                placeChosenPdfPage(on: cell)
+            } else if isSelecting, filledCells.contains(cell) {
+                Haptics.tick()
+                withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
+                    if selectedCells.contains(cell) {
+                        selectedCells.remove(cell)
+                    } else {
+                        selectedCells.insert(cell)
                     }
-                    return
-                }
-                if hypot(value.location.x - current.start.x, value.location.y - current.start.y) > Self.dragSlop {
-                    lift()
                 }
             }
-            .onEnded { _ in
-                guard let current = drag else { return }
-                if current.isLifted {
-                    drop()
-                } else if !current.isPainting, mode != .view, case .cell(let cell) = current.source {
-                    paint(cell, isSelecting: false)
-                } else if mode == .view, chosenPdfPage != nil, case .cell(let cell) = current.source {
-                    placeChosenPdfPage(on: cell)
-                }
-                drag = nil
-            }
+        case .export, .import:
+            paint(cell, isSelecting: placements[cell] == nil)
+        }
     }
 
-    private func beginGridDrag(at location: CGPoint) {
-        guard case .cell(let cell) = target(at: location) else { return }
-        let isCarryable = mode == .view || placements[cell] != nil
-        drag = TransferDrag(source: .cell(cell), start: location, location: location, hasStart: true, isSelecting: !isCarryable)
-        guard !isCarryable else { return }
-        drag?.isPainting = true
-        drag?.lastPainted = cell
-        paint(cell, isSelecting: true)
+    private func clearSelected() {
+        guard !selectedCells.isEmpty else { return }
+        Haptics.landed()
+        library.clearCells(selectedCells, on: pageId)
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            selectedCells = []
+            isSelecting = false
+        }
     }
 
-    private func stripGesture(_ index: Int) -> some Gesture {
+    private func isCarryable(_ source: TransferTarget) -> Bool {
+        switch (mode, source) {
+        case (.view, .cell(let cell)): return isEditable && filledCells.contains(cell)
+        case (.view, .page): return false
+        case (_, .cell(let cell)): return placements[cell] != nil
+        case (_, .page): return true
+        }
+    }
+
+    private func holdGesture(_ source: TransferTarget) -> some Gesture {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.tileDragHoldMilliseconds))
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)))
             .onChanged { value in
-                guard case .second(true, let moved) = value else { return }
+                guard case .second(true, let moved) = value, isCarryable(source) else { return }
                 if drag == nil {
-                    let centre = frames[.page(index)].map { CGPoint(x: $0.midX, y: $0.midY) } ?? .zero
-                    drag = TransferDrag(source: .page(index), start: centre, location: centre, hasStart: false, isSelecting: false)
+                    let centre = frames[source].map { CGPoint(x: $0.midX, y: $0.midY) } ?? .zero
+                    drag = TransferDrag(source: source, start: centre, location: centre, hasStart: false)
                     lift()
                 }
                 guard let moved else { return }
@@ -631,9 +820,6 @@ struct TransferSheet: View {
         case .cell(let cell):
             return images[cell]
         case .page(let index):
-            if mode == .view {
-                return images[cell(at: index)]
-            }
             if mode == .import {
                 return sourceImages[index]
             }
@@ -656,6 +842,7 @@ struct TransferSheet: View {
 
     private func renderCells(cellSize: CGSize) {
         guard let shown = previewPage, cellSize.width > 0 else { return }
+        filledCells = library.filledCells(of: pageId)
         let options = renderOptions()
         let key = renderKey(cellWidth: cellSize.width)
         cellsKey = key
@@ -733,19 +920,21 @@ struct TransferSheet: View {
         library.setInverted(group.elements.filter { !$0.deleted }.map(\.id), on: pageId, to: isInverted)
     }
 
-    private func pdfColumn(_ groups: [PdfGroup], height: CGFloat) -> some View {
+    private func pdfColumn(_ groups: [PdfGroup]) -> some View {
         let _ = importRevision
         return ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 26) {
                 ForEach(groups) { group in
                     pdfGroup(group)
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.top, 24)
+            .padding(.bottom, 40)
+            .padding(.horizontal, Self.sideInset)
         }
         .scrollIndicators(.hidden)
         .scrollDisabled(drag?.isLifted == true)
-        .frame(width: Self.pdfColumnWidth, height: height, alignment: .top)
+        .frame(width: Self.pdfColumnWidth + Self.sideInset * 2)
     }
 
     private func pdfGroup(_ group: PdfGroup) -> some View {
@@ -753,30 +942,32 @@ struct TransferSheet: View {
         let isShownInverted = isInverted(group)
         let used = Set(group.elements.filter { !$0.deleted }.compactMap(\.sourcePage))
         return VStack(alignment: .leading, spacing: Self.spacing) {
-            HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
                 Capsule()
                     .fill(group.accent)
-                    .frame(width: 4, height: 30)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(group.name)
-                        .font(Typography.monoBold(11))
-                        .foregroundColor(Palette.textBright)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                    MicroLabel(text: "\(used.count)/\(sizes.count)", color: group.accent)
+                    .frame(height: 2)
+                HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(group.name)
+                            .font(Typography.monoBold(11))
+                            .foregroundColor(group.accent)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                        MicroLabel(text: "\(used.count)/\(sizes.count)", color: Palette.textLabel)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        setInverted(group, to: !isShownInverted)
+                    } label: {
+                        GlyphView(name: "invert", color: isShownInverted ? Palette.ground : group.accent, size: 15)
+                            .frame(width: 30, height: 30)
+                            .background(Circle().fill(isShownInverted ? group.accent : Palette.sunkenDeep))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(PressableStyle())
+                    .disabled(used.isEmpty || !isEditable)
+                    .accessibilityLabel(isShownInverted ? "Original PDF" : "Invert PDF")
                 }
-                Spacer(minLength: 0)
-                Button {
-                    setInverted(group, to: !isShownInverted)
-                } label: {
-                    GlyphView(name: "invert", color: isShownInverted ? Palette.ground : group.accent, size: 15)
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(isShownInverted ? group.accent : Palette.sunkenDeep))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(PressableStyle())
-                .disabled(used.isEmpty || !isEditable)
-                .accessibilityLabel(isShownInverted ? "Original PDF" : "Invert PDF")
             }
             ForEach(sizes.indices, id: \.self) { index in
                 pdfPage(group, index: index, size: sizes[index], count: sizes.count, isShownInverted: isShownInverted, isUsed: used.contains(index))
@@ -799,11 +990,10 @@ struct TransferSheet: View {
         }
         .frame(width: Self.pdfColumnWidth, height: height)
         .overlay(alignment: .bottomLeading) {
-            Circle()
-                .fill(isUsed ? Palette.create : Palette.destructive)
-                .frame(width: Self.pdfDotSize, height: Self.pdfDotSize)
-                .overlay(Circle().stroke(Palette.ground, lineWidth: 1.5))
-                .padding(7)
+            GlyphView(name: isUsed ? "check" : "close", color: isUsed ? Palette.create : Palette.destructive, size: 14)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Palette.ground.opacity(0.8)))
+                .padding(5)
         }
         .overlay(alignment: .bottomTrailing) {
             Text("\(index + 1)/\(count)")
@@ -837,6 +1027,8 @@ struct TransferSheet: View {
         Haptics.tick()
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             chosenPdfPage = chosenPdfPage == reference ? nil : reference
+            isSelecting = false
+            selectedCells = []
         }
     }
 

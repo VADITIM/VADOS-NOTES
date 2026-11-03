@@ -438,6 +438,24 @@ final class Library: ObservableObject {
         record(step, on: pageId)
     }
 
+    func filledCells(of pageId: String) -> Set<CellPosition> {
+        guard let page = page(pageId) else { return [] }
+        return Set(page.liveElements.compactMap { Self.elementBounds($0).map(Self.cell(holding:)) })
+    }
+
+    func clearCells(_ cells: Set<CellPosition>, on pageId: String) {
+        guard let page = page(pageId), !isReadOnly(pageId), !cells.isEmpty else { return }
+        finishText()
+        let ids = page.liveElements.filter { element in
+            Self.elementBounds(element).map { cells.contains(Self.cell(holding: $0)) } ?? false
+        }.map(\.id)
+        erase(ids, on: pageId)
+    }
+
+    private static func cell(holding bounds: CGRect) -> CellPosition {
+        CellPosition(column: Int((Double(bounds.midX) / PaperGeometry.cellWidth).rounded(.down)), row: Int((Double(bounds.midY) / PaperGeometry.cellHeight).rounded(.down)))
+    }
+
     func removeCell(_ pageId: String, along axis: CellAxis, at index: Int) {
         guard let page = page(pageId), !isReadOnly(pageId), page.extent.count(along: axis) > 1 else { return }
         finishText()

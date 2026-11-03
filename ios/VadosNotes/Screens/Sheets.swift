@@ -24,7 +24,7 @@ struct SheetHost: View {
 
     var body: some View {
         ZStack(alignment: request.isNaming ? .bottom : .top) {
-            (request.isFullScreen ? Palette.ground : Color.black.opacity(0.45))
+            (request.isSeeThrough ? Color.black.opacity(0.62) : request.isFullScreen ? Palette.ground : Color.black.opacity(0.45))
                 .opacity(isBackdropShown ? 1 : 0)
                 .ignoresSafeArea()
                 .onTapGesture { navigator.show(nil) }
