@@ -35,7 +35,7 @@ struct SizeSlider: View {
     private static let knob: CGFloat = 26 * NavMetrics.scale
     private static let thickness: CGFloat = 48 * NavMetrics.scale
     @State private var dragStart: Double?
-    @State private var isHeld = false
+    @GestureState private var isHeld = false
 
     private var isVertical: Bool { orientation == .vertical }
 
@@ -63,20 +63,21 @@ struct SizeSlider: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0)
+                .updating($isHeld) { _, isActive, _ in isActive = true }
                 .onChanged { value in
                     if dragStart == nil {
                         dragStart = share
-                        isHeld = true
                     }
                     let delta = isVertical ? -value.translation.height : value.translation.width
                     onChange(min(1, max(0, (dragStart ?? share) + Double(delta / travel))))
                 }
-                .onEnded { _ in
-                    dragStart = nil
-                    isHeld = false
-                }
         )
         .animation(Motion.backOut(Motion.stateMilliseconds), value: isHeld)
+        .onChange(of: isHeld) { _, held in
+            if !held {
+                dragStart = nil
+            }
+        }
     }
 }
 
@@ -536,7 +537,7 @@ struct ColorPanel: View {
 
     @State private var hsv = HSV(hue: 0, saturation: 0, value: 1)
     @State private var hexText = ""
-    @State private var isDragging = false
+    @GestureState private var isDragging = false
     @FocusState private var isHexFocused: Bool
 
     private static let wheelSize: CGFloat = 184
@@ -560,8 +561,8 @@ struct ColorPanel: View {
             .contentShape(Circle())
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($isDragging) { _, isActive, _ in isActive = true }
                     .onChanged { value in
-                        isDragging = true
                         let x = value.location.x - Self.wheelSize / 2
                         let y = value.location.y - Self.wheelSize / 2
                         hsv.hue = (atan2(Double(y), Double(x)) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
@@ -571,7 +572,6 @@ struct ColorPanel: View {
                         }
                         emit()
                     }
-                    .onEnded { _ in isDragging = false }
             )
             SizeSlider(orientation: .horizontal, share: hsv.value, previewDiameter: 0, previewColor: .clear, length: Self.wheelSize) { share in
                 hsv.value = share

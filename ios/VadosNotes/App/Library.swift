@@ -28,6 +28,18 @@ struct StrokeReplacement {
 struct ImportedDocument {
     let asset: String
     let pages: [[Double]]
+    let inverted: [Bool]
+
+    func isInverted(_ index: Int) -> Bool {
+        inverted.indices.contains(index) && inverted[index]
+    }
+}
+
+struct TileGroup: Equatable, Identifiable {
+    var id: String
+    var title: String
+    var isFolders: Bool
+    var members: [String]
 }
 
 @MainActor
@@ -163,6 +175,7 @@ final class Library: ObservableObject {
         updateNotebook(notebookId) { notebook in
             notebook.parent = parentId
             notebook.order = order
+            notebook.group = nil
         }
     }
 
@@ -205,7 +218,7 @@ final class Library: ObservableObject {
         apply(.page(header), page: header.id)
         if let document {
             for (index, size) in document.pages.enumerated() {
-                apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now)), page: header.id)
+                apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, isInverted: document.isInverted(index), now: now)), page: header.id)
             }
         }
         return page(header.id) ?? Page(header: header)
@@ -220,13 +233,13 @@ final class Library: ObservableObject {
             header.extent = Extent(columns: header.extent.columns, rows: firstRow + document.pages.count)
         }
         for (index, size) in document.pages.enumerated() {
-            var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index)
+            var element = importElement(asset: document.asset, index: index, size: size, isInverted: document.isInverted(index), now: now, row: firstRow + index)
             element.order = firstOrder + index
             apply(.element(pageId: pageId, element: element), page: pageId)
         }
     }
 
-    private func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil) -> Element {
+    private func importElement(asset: String, index: Int, size: [Double], isInverted: Bool, now: Date, row: Int? = nil) -> Element {
         let width = size[0]
         let height = size[1]
         let cellWidth = PaperGeometry.cellWidth
@@ -246,6 +259,7 @@ final class Library: ObservableObject {
             sourceSizeMillimetres: [width, height],
             placement: Placement(x: rounded((cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
             fit: isA4 ? .original : .fitCell,
+            inverted: isInverted,
             updated: now,
             device: device
         )
@@ -272,6 +286,7 @@ final class Library: ObservableObject {
         header.id = Identifier.make(prefix: Identifier.pagePrefix, date: now)
         header.notebook = notebookId
         header.order = Arrangement.endOrder(after: pages(in: notebookId))
+        header.group = nil
         header.updated = now
         header.device = device
         apply(.page(header), page: header.id)
@@ -294,7 +309,7 @@ final class Library: ObservableObject {
 
     func expand(_ pageId: String, columns: Bool) {
         updatePage(pageId) { header in
-            header.extent = columns ? header.extent.doublingColumns() : header.extent.doublingRows()
+            header.extent = header.extent.adding(columns ? .columns : .rows)
         }
     }
 
@@ -365,6 +380,16 @@ final class Library: ObservableObject {
         if !step.after.isEmpty {
             record(step, on: pageId)
         }
+    }
+
+    func setInverted(_ elementId: String, on pageId: String, to isInverted: Bool) {
+        guard let page = page(pageId), !isReadOnly(pageId), let element = page.element(withId: elementId), !element.deleted, element.type == .importPage, element.inverted != isInverted else { return }
+        var changed = element
+        changed.inverted = isInverted
+        changed.updated = store.timestamp()
+        changed.device = device
+        apply(.element(pageId: pageId, element: changed), page: pageId)
+        record(UndoStep(before: [element], after: [changed]), on: pageId)
     }
 
     private func place(_ elements: [Element], on pageId: String, by offset: Point) -> [String] {
@@ -695,6 +720,89 @@ final class Library: ObservableObject {
         }
         undoSteps[pageId] = steps
         redoSteps[pageId] = []
+    }
+
+    func groups(in parentId: String?) -> [TileGroup] {
+        let records = store.liveGroups(in: parentId).enumerated().sorted { first, second in
+            (first.element.order ?? first.offset, first.element.id) < (second.element.order ?? second.offset, second.element.id)
+        }.map(\.element)
+        return records.map { record in
+            TileGroup(id: record.id, title: record.title, isFolders: record.kind == .folders, members: members(of: record, in: parentId))
+        }.filter { !$0.members.isEmpty }
+    }
+
+    private func members(of record: GroupRecord, in parentId: String?) -> [String] {
+        if record.kind == .folders {
+            return folders(in: parentId).filter { $0.group == record.id }.map(\.id)
+        }
+        guard let parentId else { return [] }
+        return pages(in: parentId).filter { $0.group == record.id }.map(\.id)
+    }
+
+    private func setGroup(_ groupId: String?, of memberId: String) {
+        if notebook(memberId) != nil {
+            updateNotebook(memberId) { $0.group = groupId }
+        } else if page(memberId) != nil {
+            updatePage(memberId) { $0.group = groupId }
+        }
+    }
+
+    private func updateGroup(_ groupId: String, _ change: (inout GroupRecord) -> Void) {
+        guard var group = store.groups[groupId], !group.deleted else { return }
+        change(&group)
+        group.updated = store.timestamp()
+        group.device = device
+        apply(.group(group), page: nil)
+    }
+
+    func addToGroup(_ memberId: String, groupId: String, in parentId: String?) {
+        guard store.groups[groupId]?.deleted == false else { return }
+        let previous = groups(in: parentId).first { $0.members.contains(memberId) }
+        setGroup(groupId, of: memberId)
+        if let previous, previous.id != groupId, previous.members == [memberId] {
+            updateGroup(previous.id) { $0.deleted = true }
+        }
+    }
+
+    @discardableResult
+    func createGroup(_ title: String, isFolders: Bool, with memberId: String, in parentId: String?) -> String {
+        let now = store.timestamp()
+        let order = (store.liveGroups(in: parentId).compactMap(\.order).max() ?? -1) + 1
+        let group = GroupRecord(id: Identifier.make(prefix: Identifier.groupPrefix, date: now), parent: parentId, title: title, kind: isFolders ? .folders : .notes, order: order, updated: now, device: device)
+        apply(.group(group), page: nil)
+        addToGroup(memberId, groupId: group.id, in: parentId)
+        return group.id
+    }
+
+    func removeFromGroup(_ memberId: String, in parentId: String?) {
+        guard let group = groups(in: parentId).first(where: { $0.members.contains(memberId) }) else { return }
+        setGroup(nil, of: memberId)
+        if group.members == [memberId] {
+            updateGroup(group.id) { $0.deleted = true }
+        }
+    }
+
+    func renameGroup(_ groupId: String, to title: String) {
+        updateGroup(groupId) { $0.title = title }
+    }
+
+    func ungroup(_ groupId: String) {
+        updateGroup(groupId) { $0.deleted = true }
+    }
+
+    func adoptDeviceGroups(_ taken: [(parentId: String?, groups: [DeviceGroup])]) {
+        for (parentId, deviceGroups) in taken {
+            for deviceGroup in deviceGroups {
+                let live = deviceGroup.members.filter { id in
+                    deviceGroup.isFolders ? notebook(id) != nil && parent(of: id) == parentId : parentId != nil && page(id)?.notebook == parentId
+                }
+                guard let first = live.first else { continue }
+                let groupId = createGroup(deviceGroup.title, isFolders: deviceGroup.isFolders, with: first, in: parentId)
+                for memberId in live.dropFirst() {
+                    setGroup(groupId, of: memberId)
+                }
+            }
+        }
     }
 
     private func apply(_ change: Change, page pageId: String?) {

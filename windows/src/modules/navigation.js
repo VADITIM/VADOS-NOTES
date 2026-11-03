@@ -1,10 +1,10 @@
 import { create } from "./components.js"
 import { KeyedList, itemSize, navMetrics, navSizeSlider, separator, separatorExtent } from "./controls.js"
 import { animate, duration, tween } from "./motion.js"
-import { PillMotion, hideTurned, popTogether, revealElement, shapePillShell, spring, springAnimate, switchOut } from "./pill.js"
+import { PillMotion, hideTurned, popTogether, revealElement, shapePillShell, spring, springAnimate, switchOut, turnOut } from "./pill.js"
 import { navPlacement, setNavPlacement } from "./preferences.js"
 import { glyph } from "./shapes.js"
-import { tokens } from "./tokens.js"
+import { tokens, withAlpha } from "./tokens.js"
 
 const swallowMilliseconds = 600
 
@@ -227,11 +227,8 @@ export class ToolNav {
         this.layer.append(this.subNavigation.element, this.wheelHost, this.pillPanel.element, this.navigation.element, this.edgeStrip)
 
         this.navigationCenter = new SpringPoint((value) => this.placeNavigation(value))
-        this.subNavigationCenter = new SpringPoint((value) => placeAt(this.subNavigation.element, value, this.subNavigation.size))
-        this.panelCenter = new SpringPoint((value) => {
-            placeAt(this.pillPanel.element, value, this.pillPanel.size)
-            placeAt(this.wheelHost, value, [this.wheelHost.offsetWidth, this.wheelHost.offsetHeight])
-        })
+        this.subNavigationCenter = new SpringPoint(() => this.placeFollowers())
+        this.panelCenter = new SpringPoint(() => this.placeFollowers())
         window.addEventListener("resize", () => this.layout(false))
         this.applyOrientationClasses()
     }
@@ -322,7 +319,7 @@ export class ToolNav {
                     this.showFromEdge()
                 }
                 this.layout(false)
-            })
+            }, { keepsShape: true })
         } else if (isWanted) {
             const isSwitch = this.shownSubNavigationKey !== props.subNavKey
             this.shownSubNavigationKey = props.subNavKey
@@ -425,16 +422,44 @@ export class ToolNav {
                 animate(this.navigation.content, [{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: `scale(${tokens.motion.scales.slider_enter})` }], { milliseconds: duration("press"), curveName: "power_two_in", fill: "forwards" })
             }
             const sizing = item.sizing
+            this.syncSizePreview(sizing)
             this.slider.style.width = `${this.navigation.size[0] - navMetrics.padding * 2}px`
             this.slider.style.height = `${this.navigation.size[1] - navMetrics.padding * 2}px`
-            this.slider.update({ share: sizing.share, color: sizing.color, diameter: sizing.previewDiameter(sizing.share), text: sizing.caption(sizing.share) })
+            this.slider.update({ share: sizing.share, color: sizing.color, diameter: sizing.previewDiameter(sizing.share), startThickness: sizing.previewDiameter(0), endThickness: sizing.previewDiameter(1), text: sizing.caption(sizing.share) })
         } else if (this.slider) {
+            this.syncSizePreview(null)
             const slider = this.slider
             this.slider = null
             animate(slider, [{ opacity: 1 }, { opacity: 0 }], { milliseconds: duration("press"), curveName: "power_two_in", fill: "forwards" }).finished.then(() => slider.remove())
             this.navigation.content.getAnimations().forEach((running) => running.cancel())
             animate(this.navigation.content, [{ opacity: 0, transform: `scale(${tokens.motion.scales.slider_enter})` }, { opacity: 1, transform: "scale(1)" }], { milliseconds: duration("state"), curveName: "power_two_out", delay: duration("press") })
         }
+    }
+
+    syncSizePreview(sizing) {
+        const preview = sizing?.canvasPreview
+        if (!preview) {
+            if (this.sizePreview) {
+                const dot = this.sizePreview
+                this.sizePreview = null
+                animate(dot, [{ opacity: 1 }, { opacity: 0 }], { milliseconds: duration("press"), curveName: "power_two_in", fill: "forwards" }).finished.then(() => dot.remove(), () => dot.remove())
+            }
+            return
+        }
+        if (!this.sizePreview) {
+            this.sizePreview = create("span", "size-preview-dot")
+            this.layer.append(this.sizePreview)
+            animate(this.sizePreview, [{ opacity: 0, scale: String(tokens.motion.scales.slider_enter) }, { opacity: 1, scale: "1" }], { milliseconds: duration("overlay_leave"), curveName: "power_two_out", delay: duration("press") })
+        }
+        const diameter = Math.max(1, preview.diameter(sizing.share))
+        const dot = this.sizePreview
+        dot.style.width = `${diameter}px`
+        dot.style.height = `${diameter}px`
+        dot.style.left = `${window.innerWidth / 2 - diameter / 2}px`
+        dot.style.top = `${window.innerHeight / 2 - diameter / 2}px`
+        dot.classList.toggle("is-ring", preview.isRing)
+        dot.style.background = preview.isRing ? withAlpha(preview.color, 0.12) : preview.color
+        dot.style.borderColor = preview.isRing ? preview.color : "transparent"
     }
 
     groupList() {
@@ -683,6 +708,23 @@ export class ToolNav {
         const [x, y] = this.edgeVector(this.edge ?? "down", this.edgeOffset)
         placeAt(this.navigation.element, [center[0] + x, center[1] + y], this.navigation.size)
         this.navigation.element.classList.toggle("is-carried", Boolean(this.carryPoint))
+        this.placeFollowers()
+    }
+
+    placeFollowers() {
+        const navigationValue = this.navigationCenter?.value
+        const subValue = this.subNavigationCenter?.value
+        const panelValue = this.panelCenter?.value
+        const share = this.hiddenReach > 0 ? this.edgeOffset / this.hiddenReach : 0
+        const follow = (start, end) => (start && end ? [start[0] + (end[0] - start[0]) * share, start[1] + (end[1] - start[1]) * share] : start)
+        if (subValue) {
+            placeAt(this.subNavigation.element, follow(subValue, navigationValue), this.subNavigation.size)
+        }
+        if (panelValue) {
+            const panel = follow(panelValue, subValue)
+            placeAt(this.pillPanel.element, panel, this.pillPanel.size)
+            placeAt(this.wheelHost, panel, [this.wheelHost.offsetWidth, this.wheelHost.offsetHeight])
+        }
     }
 
     edgeVector(edge, distance) {
@@ -916,6 +958,7 @@ export class ToolNav {
                 return
             }
             this.carryPoint = [moveEvent.clientX - this.carryGrab[0], moveEvent.clientY - this.carryGrab[1]]
+            this.turnWhileCarried([moveEvent.clientX, moveEvent.clientY])
             this.layout(false)
         }
         const end = (endEvent) => {
@@ -935,13 +978,52 @@ export class ToolNav {
         window.addEventListener("pointercancel", end)
     }
 
+    touchedOrientation(point) {
+        const size = this.navigation.size
+        const center = this.clamped(point, size)
+        const reach = navMetrics.edgeMargin + navMetrics.edgeTouchReach
+        const isAtSide = center[0] - size[0] / 2 <= reach || center[0] + size[0] / 2 >= window.innerWidth - reach
+        const isAtEnd = center[1] - size[1] / 2 <= reach || center[1] + size[1] / 2 >= window.innerHeight - reach
+        if (isAtSide === isAtEnd) {
+            return this.orientation
+        }
+        return isAtSide ? "vertical" : "horizontal"
+    }
+
+    turnWhileCarried(finger) {
+        const next = this.touchedOrientation(this.carryPoint)
+        if (next === this.orientation || this.isMutating) {
+            return
+        }
+        this.isMutating = true
+        for (const element of this.items.elements.values()) {
+            turnOut(element, { milliseconds: duration("navigation_mutate_leave") })
+        }
+        setTimeout(() => {
+            this.isMutating = false
+            if (!this.carryPoint) {
+                return
+            }
+            const turned = this.touchedOrientation(this.carryPoint)
+            if (turned === this.orientation) {
+                this.items.reveal(true)
+                return
+            }
+            const before = this.navigation.element.getBoundingClientRect()
+            this.orientation = turned
+            this.carryGrab = [this.carryGrab[1], this.carryGrab[0]]
+            this.carryPoint = [finger[0] - this.carryGrab[0], finger[1] - this.carryGrab[1]]
+            this.rebuildForOrientation()
+            this.layout(false)
+            morphFrom(this.navigation.element, before)
+        }, duration("navigation_mutate_leave"))
+    }
+
     finishCarry() {
         const point = this.clamped(this.carryPoint, this.navigation.size)
         const width = window.innerWidth
         const height = window.innerHeight
-        const sideDistance = Math.min(point[0], width - point[0])
-        const endDistance = Math.min(point[1], height - point[1])
-        const nextOrientation = sideDistance < endDistance ? "vertical" : "horizontal"
+        const nextOrientation = this.orientation
         const next = { x: point[0] / Math.max(1, width), y: point[1] / Math.max(1, height), orientation: nextOrientation }
         setNavPlacement(next)
         const before = this.navigation.element.getBoundingClientRect()
@@ -1084,6 +1166,9 @@ export class ToolNav {
             return along(size, this.orientation) + separatorExtent + navMetrics.spacing * 2
         }
         let reordering = null
+        let collapseJudged = false
+        let didCollapse = false
+        const onCollapse = this.props.subNavigationGroups.find((group) => group.id === groupId)?.onCollapse
         const timer = setTimeout(() => {
             const ids = this.props.subNavigationGroups.map((group) => group.id)
             reordering = { id: groupId, start: ids, order: [...ids], anchor: axis(start), drag: 0 }
@@ -1096,8 +1181,18 @@ export class ToolNav {
                 return
             }
             if (!reordering) {
-                if (Math.hypot(moveEvent.clientX - start[0], moveEvent.clientY - start[1]) > 10) {
+                const travel = [moveEvent.clientX - start[0], moveEvent.clientY - start[1]]
+                if (Math.hypot(...travel) > 10) {
                     clearTimeout(timer)
+                }
+                if (onCollapse && !collapseJudged && !this.carryPoint && Math.hypot(...travel) >= navMetrics.navSizingSlop) {
+                    collapseJudged = true
+                    const alongTravel = this.orientation === "horizontal" ? travel[0] : travel[1]
+                    const acrossTravel = this.orientation === "horizontal" ? travel[1] : travel[0]
+                    if (Math.abs(alongTravel) > Math.abs(acrossTravel) * navMetrics.navSizingDominance && onCollapse(alongTravel < 0)) {
+                        didCollapse = true
+                        this.swallowUntil = Infinity
+                    }
                 }
                 return
             }
@@ -1127,6 +1222,9 @@ export class ToolNav {
             window.removeEventListener("pointermove", move)
             window.removeEventListener("pointerup", end)
             window.removeEventListener("pointercancel", end)
+            if (didCollapse && this.swallowUntil === Infinity) {
+                this.swallowUntil = performance.now() + swallowMilliseconds
+            }
             if (!reordering) {
                 return
             }

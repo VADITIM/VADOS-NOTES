@@ -213,6 +213,17 @@ struct ToolNav<PanelContent: View>: View {
     @State private var isSizingRejected = false
     @State private var isCollapseSwiped = false
     @State private var isCollapseSwipeRejected = false
+    @State private var carryLayer: CGSize = .zero
+    @GestureState private var isEdgeGestureActive = false
+    @GestureState private var isCollapseGestureActive = false
+    @GestureState private var isSizingGestureActive = false
+    @GestureState private var isToolGestureActive = false
+    @GestureState private var isGroupGestureActive = false
+    @GestureState private var isCarryGestureActive = false
+
+    private var isNavigationGestureActive: Bool {
+        isEdgeGestureActive || isCollapseGestureActive || isSizingGestureActive || isToolGestureActive || isGroupGestureActive || isCarryGestureActive
+    }
 
     private enum Entry: Identifiable {
         case item(NavItem)
@@ -365,10 +376,17 @@ struct ToolNav<PanelContent: View>: View {
             }
         }
         .onChange(of: isShown) { _, shown in
+            recoverGestures()
             if shown {
                 navigationMotion.enter()
             } else {
                 navigationMotion.leave()
+            }
+        }
+        .onChange(of: isNavigationGestureActive) { _, isActive in
+            guard !isActive else { return }
+            DispatchQueue.main.async {
+                recoverGestures()
             }
         }
         .onChange(of: isSubNavigationWanted) { _, isWanted in
@@ -483,8 +501,33 @@ struct ToolNav<PanelContent: View>: View {
         return distance
     }
 
+    private func recoverGestures() {
+        guard !isNavigationGestureActive else { return }
+        if edgeDragStart != nil {
+            edgeDragStart = nil
+            if !isEdgeHidden {
+                withAnimation(Motion.backOut(Motion.navigationEdgeHideMilliseconds)) {
+                    edgeOffset = 0
+                }
+            }
+        }
+        isCollapseSwiped = false
+        isCollapseSwipeRejected = false
+        isSizingRejected = false
+        if sizingDrag != nil {
+            sizingDrag = nil
+        }
+        finishToolReordering()
+        finishGroupReordering()
+        finishCarry()
+        if swallowUntil == .distantFuture {
+            swallowUntil = Date().addingTimeInterval(0.6)
+        }
+    }
+
     private func edgeHideGesture(edge: NavSide, limit: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+            .updating($isEdgeGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
                 guard sizingDrag == nil, toolReordering == nil, carryPoint == nil, !isEdgeHidden else { return }
                 let travel = outwardTravel(value.translation, edge)
@@ -726,6 +769,7 @@ struct ToolNav<PanelContent: View>: View {
 
     private func collapseGesture(_ onCollapse: @escaping (Bool) -> Bool) -> some Gesture {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+            .updating($isCollapseGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
                 guard !isCollapseSwiped, !isCollapseSwipeRejected, groupReordering == nil, carryPoint == nil else { return }
                 let along = orientation == .horizontal ? value.translation.width : value.translation.height
@@ -755,6 +799,7 @@ struct ToolNav<PanelContent: View>: View {
 
     private func sizingGesture() -> some Gesture {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
+            .updating($isSizingGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
                 guard !isSizingRejected, toolReordering == nil, carryPoint == nil, let item = sizingItem ?? sizableItem, let sizing = item.sizing else { return }
                 let along = orientation == .horizontal ? value.translation.width : -value.translation.height
@@ -785,6 +830,7 @@ struct ToolNav<PanelContent: View>: View {
     private func toolReorderGesture(_ id: String) -> some Gesture {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.menuHoldMilliseconds), maximumDistance: 10)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
+            .updating($isToolGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
                 guard case .second(true, let drag) = value, let drag, sizingDrag == nil else { return }
                 if toolReordering == nil {
@@ -797,19 +843,30 @@ struct ToolNav<PanelContent: View>: View {
                 stepReordering(&reordering) { _ in toolExtent }
                 toolReordering = reordering
             }
-            .onEnded { _ in
-                guard let reordering = toolReordering else { return }
-                let residual = reordering.drag - reordering.shift(reordering.id) { _ in toolExtent }
-                settle(id: reordering.id, residual: residual, isTool: true) {
-                    onReorderTools(reordering.order)
-                }
-                swallowUntil = Date().addingTimeInterval(0.6)
-            }
+            .onEnded { _ in finishToolReordering() }
+    }
+
+    private func finishToolReordering() {
+        guard let reordering = toolReordering else { return }
+        let residual = reordering.drag - reordering.shift(reordering.id) { _ in toolExtent }
+        settle(id: reordering.id, residual: residual, isTool: true) {
+            onReorderTools(reordering.order)
+        }
+        swallowUntil = Date().addingTimeInterval(0.6)
+    }
+
+    private func finishGroupReordering() {
+        guard let reordering = groupReordering else { return }
+        let residual = reordering.drag - reordering.shift(reordering.id, extent: groupExtent)
+        settle(id: reordering.id, residual: residual, isTool: false) {
+            onReorderSubNavigation(reordering.order)
+        }
     }
 
     private func groupReorderGesture(_ id: String) -> some Gesture {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.menuHoldMilliseconds), maximumDistance: 10)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
+            .updating($isGroupGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
                 guard case .second(true, let drag) = value, let drag else { return }
                 if groupReordering == nil {
@@ -822,13 +879,7 @@ struct ToolNav<PanelContent: View>: View {
                 stepReordering(&reordering, extent: groupExtent)
                 groupReordering = reordering
             }
-            .onEnded { _ in
-                guard let reordering = groupReordering else { return }
-                let residual = reordering.drag - reordering.shift(reordering.id, extent: groupExtent)
-                settle(id: reordering.id, residual: residual, isTool: false) {
-                    onReorderSubNavigation(reordering.order)
-                }
-            }
+            .onEnded { _ in finishGroupReordering() }
     }
 
     private func settle(id: String, residual: CGFloat, isTool: Bool, commit: () -> Void) {
@@ -993,10 +1044,12 @@ struct ToolNav<PanelContent: View>: View {
     private func carryGesture(layer: CGSize, center: CGPoint) -> some Gesture {
         LongPressGesture(minimumDuration: Motion.seconds(Motion.navigationGripHoldMilliseconds), maximumDistance: 10)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(NavMetrics.layerSpace)))
+            .updating($isCarryGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
                 guard case .second(true, let drag) = value, sizingDrag == nil else { return }
                 if carryPoint == nil {
                     swallowUntil = .distantFuture
+                    carryLayer = layer
                     Haptics.hold()
                     carryGrab = nil
                     carryPoint = center
@@ -1014,17 +1067,21 @@ struct ToolNav<PanelContent: View>: View {
                     navigationMotion.mutate(turnCarried)
                 }
             }
-            .onEnded { _ in
-                guard let point = carryPoint else { return }
-                let nextOrientation = edgeOrientation(of: point, layer: layer, current: turningOrientation ?? orientation)
-                let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: nextOrientation.rawValue)
-                Preferences.shared.setNavPlacement(next)
-                withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2)) {
-                    orientation = nextOrientation
-                    placement = next
-                    carryPoint = nil
-                }
-                swallowUntil = Date().addingTimeInterval(0.6)
-            }
+            .onEnded { _ in finishCarry() }
+    }
+
+    private func finishCarry() {
+        guard let point = carryPoint else { return }
+        let layer = carryLayer
+        let nextOrientation = edgeOrientation(of: point, layer: layer, current: turningOrientation ?? orientation)
+        let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: nextOrientation.rawValue)
+        Preferences.shared.setNavPlacement(next)
+        turningOrientation = nil
+        withAnimation(Motion.powerThreeInOut(Motion.stateMilliseconds * 2)) {
+            orientation = nextOrientation
+            placement = next
+            carryPoint = nil
+        }
+        swallowUntil = Date().addingTimeInterval(0.6)
     }
 }

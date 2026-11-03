@@ -14,6 +14,10 @@ public extension Extent {
         axis == .columns ? columns : rows
     }
 
+    func adding(_ axis: CellAxis) -> Extent {
+        axis == .columns ? Extent(columns: columns + 1, rows: rows) : Extent(columns: columns, rows: rows + 1)
+    }
+
     func removing(_ axis: CellAxis) -> Extent {
         axis == .columns ? Extent(columns: max(1, columns - 1), rows: rows) : Extent(columns: columns, rows: max(1, rows - 1))
     }

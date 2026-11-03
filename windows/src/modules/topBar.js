@@ -1,12 +1,14 @@
-import { create, holdable, inlineTitle, microLabel, revealLabel, roundIconButton, sweepTitle } from "./components.js"
+import { create, holdable, inlineTitle, microLabel, revealLabel, roundIconButton } from "./components.js"
 import { creationDate } from "./model.js"
 import { duration } from "./motion.js"
-import { PillMotion, chromePop, hideTurned, labelReveal, popTogether, revealElement, shapePillShell } from "./pill.js"
+import { PillMotion, hideTurned, labelReveal, popTogether, revealElement, shapePillShell } from "./pill.js"
 import { glyph } from "./shapes.js"
 import { tokens } from "./tokens.js"
 
 const searchPrompt = "Search"
 const bareTitleSize = 15
+const topBarControlHeight = 48
+const folderTitleSize = topBarControlHeight / 2
 
 function createdText(pageId) {
     const date = creationDate(pageId)
@@ -118,7 +120,20 @@ export class TopBar {
         this.folderPill = create("div", "folder-titles")
         this.folderLabel = microLabel("")
         this.folderTitleHost = create("div", "folder-title-host")
-        this.folderPill.append(this.folderLabel, this.folderTitleHost)
+        this.folderShell = create("span", "pill-shell")
+        this.folderPill.append(this.folderShell, this.folderTitleHost, this.folderLabel)
+        this.isFolderShown = false
+        this.folderMotion = new PillMotion(() => this.paintFolderPill())
+        this.folderMotion.onElements = (shown, isInstant) => {
+            for (const element of [this.folderTitleHost, this.folderLabel]) {
+                if (isInstant) {
+                    hideTurned(element)
+                } else {
+                    element.style.opacity = ""
+                    revealElement(element, shown)
+                }
+            }
+        }
         this.pageTitles = create("div", "page-titles")
         this.pageFolder = revealLabel(microLabel(""))
         this.pageName = inlineTitle({ title: "Note", size: bareTitleSize, isSweeping: false, onRename: (title) => this.renameNote(title) })
@@ -142,7 +157,6 @@ export class TopBar {
         this.right = create("div", "top-bar-right", this.searchHost, this.controls)
         this.element.append(this.left, this.right)
         this.folderTitle = null
-        this.folderTitleKind = null
         this.isPage = null
         this.isPageShown = false
         window.addEventListener("keydown", (event) => {
@@ -151,6 +165,24 @@ export class TopBar {
                 this.search.input.focus()
             }
         })
+    }
+
+    setFolderShown(shown) {
+        if (shown === this.isFolderShown) {
+            return
+        }
+        this.isFolderShown = shown
+        if (shown) {
+            this.folderMotion.enter()
+        } else {
+            this.folderMotion.leave()
+        }
+    }
+
+    paintFolderPill() {
+        shapePillShell(this.folderShell, { width: this.folderPill.offsetWidth, height: this.folderPill.offsetHeight, isWide: true, scale: this.folderMotion.shellScale, spread: this.folderMotion.shellSpread })
+        this.folderPill.style.pointerEvents = this.folderMotion.areElementsShown ? "auto" : "none"
+        this.folderPill.style.visibility = this.folderMotion.isPresent ? "visible" : "hidden"
     }
 
     renameNote(title) {
@@ -179,16 +211,10 @@ export class TopBar {
         const isPage = route.kind === "page"
         const folderId = route.kind === "library" ? null : route.notebookId
         if (this.isPage !== isPage) {
-            const isFirst = this.isPage === null
             this.isPage = isPage
-            this.folderPill.style.pointerEvents = isPage ? "none" : "auto"
             this.pageTitles.style.pointerEvents = isPage ? "auto" : "none"
-            if (isFirst) {
-                chromePop(this.folderPill, !isPage, 0)
-            } else {
-                chromePop(this.folderPill, !isPage, 0)
-            }
         }
+        this.setFolderShown(!isPage && folderId !== null)
         this.search.setShown(!isPage)
         if (!isPage) {
             this.search.setValue(navigator.query)
@@ -213,29 +239,21 @@ export class TopBar {
                 }
             })
         }
-        if (!isPage) {
-            const count = library.folders(null).length
-            this.folderLabel.textContent = (folderId ? library.folderSummary(folderId) : `${count} folder${count === 1 ? "" : "s"}`).toUpperCase()
-            const title = folderId ? library.notebook(folderId)?.title ?? "Folders" : "Folders"
-            const kind = folderId ? "inline" : "sweep"
-            if (this.folderTitleKind !== kind) {
-                this.folderTitleKind = kind
-                this.folderTitle = kind === "inline"
-                    ? inlineTitle({ title, onRename: (next) => {
-                        const id = this.app.navigator.route.notebookId
-                        if (next.trim() && id) {
-                            library.updateNotebook(id, { title: next })
-                        }
-                    } })
-                    : sweepTitle(title)
+        if (!isPage && folderId) {
+            this.folderLabel.textContent = library.folderSummary(folderId).toUpperCase()
+            const title = library.notebook(folderId)?.title ?? ""
+            if (!this.folderTitle) {
+                this.folderTitle = inlineTitle({ title, size: folderTitleSize, onRename: (next) => {
+                    const id = this.app.navigator.route.notebookId
+                    if (next.trim() && id) {
+                        library.updateNotebook(id, { title: next })
+                    }
+                } })
                 this.folderTitleHost.replaceChildren(this.folderTitle)
-            } else if (kind === "inline") {
-                if (!this.folderTitle.isEditing()) {
-                    this.folderTitle.setTitle(title)
-                }
-            } else {
-                this.folderTitle.setText(title)
+            } else if (!this.folderTitle.isEditing()) {
+                this.folderTitle.setTitle(title)
             }
+            this.paintFolderPill()
         }
         const page = navigator.lastPage
         if (page) {

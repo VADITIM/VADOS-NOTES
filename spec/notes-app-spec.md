@@ -26,9 +26,9 @@ A GoodNotes replacement for iPad and Windows. Ink is written on the iPad, typing
 
 - A page has no fixed size. Elements use one unbounded coordinate space.
 - Extent is expressed in whole A4 cells: `cols` and `rows`.
-- Expanding doubles one axis at a time: 1×1 → 2×1 → 2×2 → 4×2, and so on.
+- Expanding adds one column at the right or one row at the bottom: 1×1 → 2×1 → 2×2 → 3×2, and so on.
 - Expansion only changes the visible extent and the cell boundary lines. No stored element moves.
-- Expansion is triggered by a button: "add column" or "add row" in the page menu doubles that axis.
+- Expansion is triggered by a button: "add column" or "add row" in the page menu or the Paper module of settings adds one cell along that axis.
 - Beside each add button sits a remove button. It removes the one column or row under the hold point: elements whose centre lies in it are deleted, later columns or rows move back by one cell, and the axis shrinks by one. It is never below one cell, arms first like every destructive slot, and is one undo step.
 - All coordinates and lengths in a page file are millimetres. One A4 cell is 210 × 297, and cell (c, r) spans x ∈ [210c, 210(c+1)), y ∈ [297r, 297(r+1)).
 
@@ -127,10 +127,13 @@ Timestamps are UTC ISO 8601 with milliseconds. Readers also accept them without 
 ### 4.4 Repository layout
 
 ```
-notebooks/<notebook id>/notebook.json      { schema_version, id, title, updated, device, deleted, color?, icon?, parent? }
+notebooks/<notebook id>/notebook.json      { schema_version, id, title, updated, device, deleted, color?, icon?, parent?, order?, group? }
 notebooks/<notebook id>/pages/<page id>.json
+groups/<group id>.json                     { schema_version, id, parent?, title, kind, order?, updated, device, deleted }
 assets/<sha256>
 ```
+
+A group gathers folders (`kind: "folders"`) or notes (`kind: "notes"`) inside one folder (`parent`, absent at the top level) into a stack. Membership is stored on the member, not on the group: a notebook or page header carries the optional `group` ID it belongs to. A member counts only while its group is live, of its kind, and in the same folder as the member; anything else reads as ungrouped. Group IDs use the prefix `g_`.
 
 Notebooks are shown as folders. `parent` nests a folder inside another; a missing or deleted parent puts it at the top level. A page header may carry an optional `title`, `color` and `icon`; they sit in the header lines in sorted-key order and are left out when absent. Pages are ordered by their ID, which is a ULID and therefore sorts by creation time. Files are written with sorted keys and one element per line, so the same state always produces the same bytes.
 
@@ -182,7 +185,8 @@ A Git Data API commit is atomic: either all pages in a flush land or none do.
 - **Elements:** union by ID. Two devices adding elements never conflict.
 - **Deletions:** tombstones. A tombstone wins over a copy of the same element without the deletion.
 - **Edits to existing elements** (moving or changing a text block): latest `updated` wins, per element.
-- **Page metadata** (title, colour, icon, order): latest `updated` wins.
+- **Page metadata** (title, colour, icon, order, group): latest `updated` wins.
+- **Groups:** a group file is latest `updated` wins, and a deleted group wins over a live copy. Because membership lives on each member, two devices adding different notes to one group never conflict.
 - **Extent:** latest `extent_updated` wins; a stamped extent wins over an unstamped one; two unstamped extents (or an exact tie) merge to their union. `updated` cannot decide it, because every element edit moves the page's `updated`, so a device that drew on a stale copy would bring a removed column back.
 
 ### 5.6 Offline
@@ -427,7 +431,7 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The nav is carried by its end grips, never collapses, steers clear of the other UI and the keyboard, and its tools and secondary-nav groups reorder by holding them.
 - A lasso selects every stroke, text and imported page it touches and moves them as one undo step. The selection stays across tool changes until a finger presses the canvas.
 - Folder tiles show their icon in the centre and their colour as the outline; notes lie in a masonry grid sized by their page columns and rows.
-- Folders and notes can be grouped inside a folder as GALLERY-style stacks, kept on the device. Opening a note flies out of its tile.
+- Folders and notes can be grouped inside a folder as GALLERY-style stacks, synced through `groups/<id>.json` with membership on each member. Opening a note flies out of its tile.
 - An optional ASCII background drifts behind the folder screens, tilted to 14:10, still or moving, in a chosen colour. Guides keep their phase across vertically joined cells. Stroke ranges: pen 0.5–50 px, marker 1–100 px, eraser 1–80 px.
 - The lasso starts only with the Pencil; a selection moves with one finger anywhere, scales by pinching on it, and a tap on it offers "Resize to equal px".
 - Both navs share one enter (circle pop, widen, then elements) and one leave; pops turn on the vertical axis instead of bouncing. Returning from a note keeps the shared chrome still. Add folder sits under Add note; a 1×2 note is never shorter than a 2×2 one; naming sheets ride up on the keyboard with the name selected.
@@ -471,3 +475,8 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Hold menus no longer dim the page behind them.
 - In code blocks, brackets close themselves, typing the closer steps over it, and Backspace between a pair removes both. On the iPad, Enter on a line of inline code turns it into a code block, and choosing a code language on an empty line opens one.
 - Marker strokes never stack: all markers on a page are drawn as one layer, so where two cross the colour stays the same.
+- Groups sync. Each group is its own file under `groups/`, its members carry its ID, and groups kept on a device before are moved into the repository on the next launch.
+- Windows and Linux are on par with the iPad again: the styled `.md` editor and the code nav with syntax highlighting, text on the guide rows, collapsible preset groups, the stack-wide edge hide, the cone slider, the capsule leave, settings module pops, the single-row folder head that shows only inside a folder, tool colours and the size preview dot, nav turning at edges while carried, the slot-under-the-pointer drag with groups, and the colour wheel in the icon and colour sheet.
+- The nav, the secondary nav and the colour wheel stay usable after any interrupted touch. A nav gesture that the system cancels (a sheet or file picker opening, the canvas taking the touch) now ends exactly like a released one.
+- Add column and Add row put one cell at the right or the bottom instead of doubling the axis, in the page menu and in settings.
+- Whether an imported PDF page shows inverted is stored on the page element (`inverted`) and synced, so the iPad and the desktop always agree. A new import is inverted when its page is white and the importing device has dark paper; the page menu's Invert PDF / Original PDF flips the page under the finger.

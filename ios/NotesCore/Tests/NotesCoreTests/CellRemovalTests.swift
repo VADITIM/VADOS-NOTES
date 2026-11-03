@@ -32,6 +32,11 @@ final class CellRemovalTests: XCTestCase {
         XCTAssertEqual(outcome.moved.first?.points?.first, Point(x: 10, y: 13))
     }
 
+    func testAddingPutsOneCellAtTheRightOrBottom() {
+        XCTAssertEqual(Extent(columns: 2, rows: 1).adding(.columns), Extent(columns: 3, rows: 1))
+        XCTAssertEqual(Extent(columns: 2, rows: 3).adding(.rows), Extent(columns: 2, rows: 4))
+    }
+
     func testExtentShrinksButNeverBelowOneCell() {
         XCTAssertEqual(Extent(columns: 2, rows: 2).removing(.columns), Extent(columns: 1, rows: 2))
         XCTAssertEqual(Extent.single.removing(.rows), Extent.single)

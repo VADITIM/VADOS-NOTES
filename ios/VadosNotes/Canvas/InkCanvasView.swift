@@ -230,6 +230,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private var hasFitted = false
     private var fittedSize: CGSize = .zero
     private var importObserver: NSObjectProtocol?
+    private let palmGuard = PalmGuard()
+    private var gestureCamera: CanvasCamera?
+    private var touchCamera: CanvasCamera?
 
     private static let fitMargin: CGFloat = 24
     private static let holdTolerance: CGFloat = 8
@@ -300,12 +303,19 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         pencil.delegate = self
         addInteraction(pencil)
 
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        palmGuard.view = self
+        let palmWatch = PalmWatchGestureRecognizer(palmGuard: palmGuard)
+        palmWatch.delegate = self
+        addGestureRecognizer(palmWatch)
+
+        let pinch = GuardedPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.palmGuard = palmGuard
         pinch.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         pinch.delegate = self
         addGestureRecognizer(pinch)
 
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        let pan = GuardedPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.palmGuard = palmGuard
         pan.minimumNumberOfTouches = 2
         pan.maximumNumberOfTouches = 2
         pan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -507,9 +517,14 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         stopGlide()
-        guard activeTouch == nil, let touch = touches.first, let page else { return }
+        if activeTouch != nil, isFingerTouch, touches.contains(where: { $0.type == .pencil }) {
+            restoreTouchCamera()
+            cancelActiveGesture()
+        }
+        guard activeTouch == nil, let touch = touches.first(where: { !palmGuard.isPalm($0) }), let page else { return }
         clearPendingFeedback()
         activeTouch = touch
+        touchCamera = camera
         isFingerTouch = touch.type == .direct
         hasMoved = false
         isHolding = false
@@ -565,6 +580,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = activeTouch, touches.contains(touch), let page else { return }
+        if isFingerTouch, palmGuard.isPalm(touch) {
+            restoreTouchCamera()
+            cancelActiveGesture()
+            return
+        }
         let location = touch.location(in: self)
         if !hasMoved, hypot(location.x - gestureStart.x, location.y - gestureStart.y) > Self.holdTolerance {
             hasMoved = true
@@ -740,6 +760,35 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         true
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        gestureRecognizer is PalmWatchGestureRecognizer || !palmGuard.isPalm(touch)
+    }
+
+    private func restoreTouchCamera() {
+        guard let touchCamera, isPanning else { return }
+        camera = touchCamera
+        self.touchCamera = nil
+        cameraChanged()
+    }
+
+    private func trackGestureCamera(_ state: UIGestureRecognizer.State) {
+        switch state {
+        case .began:
+            gestureCamera = gestureCamera ?? camera
+        case .cancelled, .failed:
+            stopGlide()
+            if let gestureCamera {
+                camera = gestureCamera
+                cameraChanged()
+            }
+            gestureCamera = nil
+        case .ended:
+            gestureCamera = nil
+        default:
+            break
+        }
+    }
+
     func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
         onPencilTap?()
     }
@@ -753,6 +802,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     @objc private func handlePinch(_ pinch: UIPinchGestureRecognizer) {
+        trackGestureCamera(pinch.state)
         if pinch.state == .began {
             onSelectionMenu?(nil)
             if !isReadOnly, let selectionBounds, selectionScreenRect()?.contains(pinch.location(in: self)) ?? false {
@@ -816,6 +866,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
+        trackGestureCamera(pan.state)
         if pan.state == .began {
             stopGlide()
         }
@@ -1198,7 +1249,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func beginHold() {
-        guard activeTouch != nil, !hasMoved else { return }
+        guard let activeTouch, !hasMoved, !palmGuard.isPalm(activeTouch) else { return }
         isHolding = true
         isPanning = false
         endStroke()

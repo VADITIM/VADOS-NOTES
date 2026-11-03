@@ -136,6 +136,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
     public var sourceSizeMillimetres: [Double]?
     public var placement: Placement?
     public var fit: Fit?
+    public var inverted: Bool?
     public var updated: Date
     public var device: String
     public var deleted: Bool
@@ -157,6 +158,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         case sourceSizeMillimetres = "source_size_mm"
         case placement
         case fit
+        case inverted
         case updated
         case device
         case deleted
@@ -187,6 +189,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         sourceSizeMillimetres: [Double]? = nil,
         placement: Placement? = nil,
         fit: Fit? = nil,
+        inverted: Bool? = nil,
         updated: Date,
         device: String,
         deleted: Bool = false
@@ -207,6 +210,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         self.sourceSizeMillimetres = sourceSizeMillimetres
         self.placement = placement
         self.fit = fit
+        self.inverted = inverted
         self.updated = updated
         self.device = device
         self.deleted = deleted
@@ -244,6 +248,7 @@ public struct PageHeader: Codable, Equatable, Sendable {
     public var color: String?
     public var icon: String?
     public var order: Int?
+    public var group: String?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -258,9 +263,10 @@ public struct PageHeader: Codable, Equatable, Sendable {
         case color
         case icon
         case order
+        case group
     }
 
-    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, extentUpdated: Date? = nil, title: String? = nil, color: String? = nil, icon: String? = nil, order: Int? = nil) {
+    public init(schemaVersion: Int = Page.currentSchemaVersion, id: String, notebook: String, updated: Date, device: String, deleted: Bool = false, extent: Extent = .single, extentUpdated: Date? = nil, title: String? = nil, color: String? = nil, icon: String? = nil, order: Int? = nil, group: String? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.notebook = notebook
@@ -273,6 +279,7 @@ public struct PageHeader: Codable, Equatable, Sendable {
         self.color = color
         self.icon = icon
         self.order = order
+        self.group = group
     }
 }
 
@@ -291,6 +298,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
     public var color: String?
     public var icon: String?
     public var order: Int?
+    public var group: String?
     public var elements: [Element]
 
     enum CodingKeys: String, CodingKey {
@@ -306,6 +314,7 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         case color
         case icon
         case order
+        case group
         case elements
     }
 
@@ -322,11 +331,12 @@ public struct Page: Codable, Equatable, Identifiable, Sendable {
         color = header.color
         icon = header.icon
         order = header.order
+        group = header.group
         self.elements = elements
     }
 
     public var header: PageHeader {
-        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, extentUpdated: extentUpdated, title: title, color: color, icon: icon, order: order)
+        PageHeader(schemaVersion: schemaVersion, id: id, notebook: notebook, updated: updated, device: device, deleted: deleted, extent: extent, extentUpdated: extentUpdated, title: title, color: color, icon: icon, order: order, group: group)
     }
 
     public var liveElements: [Element] {
@@ -355,6 +365,7 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
     public var icon: String?
     public var parent: String?
     public var order: Int?
+    public var group: String?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -367,9 +378,10 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
         case icon
         case parent
         case order
+        case group
     }
 
-    public init(schemaVersion: Int = Notebook.currentSchemaVersion, id: String, title: String, updated: Date, device: String, deleted: Bool = false, color: String? = nil, icon: String? = nil, parent: String? = nil, order: Int? = nil) {
+    public init(schemaVersion: Int = Notebook.currentSchemaVersion, id: String, title: String, updated: Date, device: String, deleted: Bool = false, color: String? = nil, icon: String? = nil, parent: String? = nil, order: Int? = nil, group: String? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.title = title
@@ -380,6 +392,50 @@ public struct Notebook: Codable, Equatable, Identifiable, Sendable {
         self.icon = icon
         self.parent = parent
         self.order = order
+        self.group = group
+    }
+}
+
+public enum GroupKind: String, Codable, Sendable {
+    case folders
+    case notes
+}
+
+public struct GroupRecord: Codable, Equatable, Identifiable, Sendable {
+    public static let currentSchemaVersion = 1
+
+    public var schemaVersion: Int
+    public var id: String
+    public var parent: String?
+    public var title: String
+    public var kind: GroupKind
+    public var order: Int?
+    public var updated: Date
+    public var device: String
+    public var deleted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case id
+        case parent
+        case title
+        case kind
+        case order
+        case updated
+        case device
+        case deleted
+    }
+
+    public init(schemaVersion: Int = GroupRecord.currentSchemaVersion, id: String, parent: String?, title: String, kind: GroupKind, order: Int? = nil, updated: Date, device: String, deleted: Bool = false) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.parent = parent
+        self.title = title
+        self.kind = kind
+        self.order = order
+        self.updated = updated
+        self.device = device
+        self.deleted = deleted
     }
 }
 
@@ -392,6 +448,12 @@ public enum RepositoryPath {
 
     public static func page(notebook notebookId: String, page pageId: String) -> String {
         "\(notebooksDirectory)/\(notebookId)/pages/\(pageId).json"
+    }
+
+    public static let groupsDirectory = "groups"
+
+    public static func group(_ groupId: String) -> String {
+        "\(groupsDirectory)/\(groupId).json"
     }
 
     public static let assetsDirectory = "assets"
@@ -419,10 +481,14 @@ public enum RepositoryPath {
     public enum Kind: Equatable {
         case notebook(notebookId: String)
         case page(notebookId: String, pageId: String)
+        case group(groupId: String)
     }
 
     public static func kind(of path: String) -> Kind? {
         let parts = path.split(separator: "/").map(String.init)
+        if parts.count == 2, parts[0] == groupsDirectory, parts[1].hasSuffix(".json") {
+            return .group(groupId: String(parts[1].dropLast(".json".count)))
+        }
         guard parts.first == notebooksDirectory else { return nil }
         if parts.count == 3, parts[2] == "notebook.json" {
             return .notebook(notebookId: parts[1])

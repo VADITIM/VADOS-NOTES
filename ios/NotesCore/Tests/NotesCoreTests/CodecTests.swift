@@ -39,6 +39,18 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(try PageCodec.encodePage(decoded), data)
     }
 
+    func testImportInversionRoundTripsAndIsLeftOutWhenUnset() throws {
+        var element = Element(id: "e_PDF", type: .importPage, layer: .importLayer, order: 0, asset: "sha256:abc", sourcePage: 0, sourceSizeMillimetres: [210, 297], placement: Placement(x: 0, y: 0, scale: 1), fit: .original, updated: Fixtures.time(1), device: "ipad-01")
+        XCTAssertFalse(String(decoding: try PageCodec.encodePage(Fixtures.page(elements: [element])), as: UTF8.self).contains("inverted"))
+
+        element.inverted = true
+        let data = try PageCodec.encodePage(Fixtures.page(elements: [element]))
+        let decoded = try PageCodec.decodePage(data)
+
+        XCTAssertEqual(decoded.elements.first?.inverted, true)
+        XCTAssertEqual(try PageCodec.encodePage(decoded), data)
+    }
+
     func testPageNameColorAndIconRoundTrip() throws {
         var page = Fixtures.page(elements: [Fixtures.stroke("e_A")])
         page.title = "Lecture \"one\""

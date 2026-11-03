@@ -1,11 +1,12 @@
 import { create, pressable } from "./components.js"
-import { animate, duration } from "./motion.js"
+import { animate, duration, tween } from "./motion.js"
 import { hideTurned, popTogether, revealElement, springAnimate, switchOut } from "./pill.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { componentsToHex, hexComponents, tokens } from "./tokens.js"
 
 export const navMetrics = {
     edgeMargin: 16,
+    edgeTouchReach: 4,
     bottomGap: 24,
     besideGap: 10,
     avoidGap: 12,
@@ -237,6 +238,63 @@ export function navIconButton({ glyphName, tint = tokens.palette.text_body, orie
     return button
 }
 
+const plusLines = [[[12, 5], [12, 19]], [[5, 12], [19, 12]]]
+const arrowLines = [[[9, 5], [16, 12]], [[9, 19], [16, 12]]]
+
+function plusArrowPath(progress, isVertical) {
+    const blended = (start, end) => {
+        const point = [start[0] + (end[0] - start[0]) * progress, start[1] + (end[1] - start[1]) * progress]
+        return isVertical ? [point[1], point[0]] : point
+    }
+    return plusLines.map((line, index) => {
+        const target = arrowLines[index]
+        const [startX, startY] = blended(line[0], target[0])
+        const [endX, endY] = blended(line[1], target[1])
+        return `M ${startX} ${startY} L ${endX} ${endY}`
+    }).join(" ")
+}
+
+export function groupEndButton({ orientation, action }) {
+    const [width, height] = itemSize(orientation)
+    const isVertical = orientation === "vertical"
+    const button = create("button", "nav-icon-button group-end-button")
+    button.style.width = `${width}px`
+    button.style.height = `${height}px`
+    const namespace = "http://www.w3.org/2000/svg"
+    const svg = document.createElementNS(namespace, "svg")
+    svg.setAttribute("viewBox", "0 0 24 24")
+    svg.setAttribute("width", String(navMetrics.glyphSize))
+    svg.setAttribute("height", String(navMetrics.glyphSize))
+    const path = document.createElementNS(namespace, "path")
+    path.setAttribute("d", plusArrowPath(0, isVertical))
+    svg.append(path)
+    button.append(svg)
+    let isCollapsed = false
+    button.update = ({ isCollapsed: nextCollapsed = isCollapsed, isEnabled = true }) => {
+        if (nextCollapsed !== isCollapsed) {
+            isCollapsed = nextCollapsed
+            const from = isCollapsed ? 0 : 1
+            const to = isCollapsed ? 1 : 0
+            tween({
+                milliseconds: duration("state"),
+                curveName: "back_out",
+                onFrame: (eased) => path.setAttribute("d", plusArrowPath(from + (to - from) * eased, isVertical)),
+            })
+        }
+        button.setAttribute("aria-label", isCollapsed ? "Show all" : "Add")
+        button.disabled = !isEnabled
+        button.classList.toggle("is-disabled", !isEnabled)
+    }
+    pressable(button)
+    button.addEventListener("click", () => {
+        if (!button.disabled) {
+            action()
+        }
+    })
+    button.update({})
+    return button
+}
+
 export function captionButton({ caption, action }) {
     const button = create("button", "caption-button", create("span", "caption-button-text", caption))
     button.update = ({ isSelected = false }) => button.classList.toggle("is-selected", isSelected)
@@ -319,26 +377,65 @@ export function sizeSlider({ orientation = "horizontal", share, previewDiameter 
     return slider
 }
 
+function conePath(length, startThickness, endThickness) {
+    const middle = endThickness / 2
+    const startRadius = startThickness / 2
+    const endRadius = endThickness / 2
+    return [
+        `M ${startRadius} ${middle - startRadius}`,
+        `L ${length - endRadius} ${middle - endRadius}`,
+        `A ${endRadius} ${endRadius} 0 0 1 ${length - endRadius} ${middle + endRadius}`,
+        `L ${startRadius} ${middle + startRadius}`,
+        `A ${startRadius} ${startRadius} 0 0 1 ${startRadius} ${middle - startRadius}`,
+        "Z",
+    ].join(" ")
+}
+
+function coneTrack(className) {
+    const namespace = "http://www.w3.org/2000/svg"
+    const svg = document.createElementNS(namespace, "svg")
+    svg.classList.add(className)
+    const group = document.createElementNS(namespace, "g")
+    const path = document.createElementNS(namespace, "path")
+    group.append(path)
+    svg.append(group)
+    svg.shape = ({ length, startThickness, endThickness, isVertical }) => {
+        svg.setAttribute("width", String(isVertical ? endThickness : length))
+        svg.setAttribute("height", String(isVertical ? length : endThickness))
+        path.setAttribute("d", conePath(length, startThickness, endThickness))
+        group.setAttribute("transform", isVertical ? `matrix(0 -1 1 0 0 ${length})` : "")
+    }
+    return svg
+}
+
 export function navSizeSlider(orientation) {
     const isVertical = orientation === "vertical"
     const slider = create("div", `nav-size-slider is-${orientation}`)
     const track = create("span", "nav-size-track")
+    const base = coneTrack("nav-size-cone")
     const fill = create("span", "nav-size-fill")
-    track.append(fill)
+    const filled = coneTrack("nav-size-cone")
+    fill.append(filled)
+    track.append(base, fill)
     const knob = create("span", "nav-size-knob")
     const preview = create("span", "nav-size-preview")
     const caption = create("span", "nav-size-caption")
     knob.append(preview, caption)
     slider.append(track, knob)
-    slider.update = ({ share, color, diameter, text }) => {
+    slider.update = ({ share, color, diameter, startThickness, endThickness, text }) => {
         const length = isVertical ? slider.clientHeight : slider.clientWidth
         const travel = Math.max(1, length - navMetrics.sliderKnob)
+        const shape = { length: travel, startThickness, endThickness, isVertical }
+        base.shape(shape)
+        filled.shape(shape)
         if (isVertical) {
+            track.style.width = `${endThickness}px`
             track.style.height = `${travel}px`
             fill.style.height = `${travel * share}px`
             knob.style.bottom = `${travel * share}px`
         } else {
             track.style.width = `${travel}px`
+            track.style.height = `${endThickness}px`
             fill.style.width = `${travel * share}px`
             knob.style.left = `${travel * share}px`
         }

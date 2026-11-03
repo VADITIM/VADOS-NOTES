@@ -27,7 +27,7 @@ export async function loadSyncedFiles() {
         return tauri().core.invoke("load_files", { synced: true })
     }
     return Object.entries(browserFiles())
-        .filter(([path]) => path.startsWith(`${syncedPrefix}notebooks/`))
+        .filter(([path]) => path.startsWith(`${syncedPrefix}notebooks/`) || path.startsWith(`${syncedPrefix}groups/`))
         .map(([path, contents]) => ({ path: path.slice(syncedPrefix.length), contents }))
 }
 

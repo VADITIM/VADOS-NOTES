@@ -892,7 +892,11 @@ struct PageScreen: View {
         let showsGuides = preferences.showsGuides
         let showsDividers = preferences.showsDividers
         let hasClipboard = !library.clipboard.isEmpty
-        let actions = ["paste", "expand_columns", "shrink_columns", "expand_rows", "shrink_rows", "toggle_guides", "toggle_dividers", "delete_page"]
+        let heldImport = page?.liveElements.first { element in
+            element.type == .importPage && PageRenderer.importRect(for: element)?.contains(CGPoint(x: pagePoint.x, y: pagePoint.y)) == true
+        }
+        let isImportInverted = heldImport.map { ImportImages.shared.isInverted($0, isDark: preferences.paperStyle == .dark) } ?? false
+        let actions = ["paste", "expand_columns", "shrink_columns", "expand_rows", "shrink_rows", "toggle_guides", "toggle_dividers", "invert_import", "delete_page"]
         let slots = MenuSlot.fromTokens(
             Tokens.shared.menus.page.filter { actions.contains($0.action) },
             title: { action in
@@ -904,6 +908,7 @@ struct PageScreen: View {
                 case "shrink_rows": return "Remove row"
                 case "toggle_guides": return showsGuides ? "Guides off" : "Guides on"
                 case "toggle_dividers": return showsDividers ? "Cell lines off" : "Cell lines on"
+                case "invert_import": return isImportInverted ? "Original PDF" : "Invert PDF"
                 case "delete_page": return "Delete note"
                 default: return action
                 }
@@ -915,6 +920,7 @@ struct PageScreen: View {
                 case "shrink_columns": return !isReadOnly && (page?.extent.columns ?? 1) > 1
                 case "shrink_rows": return !isReadOnly && (page?.extent.rows ?? 1) > 1
                 case "toggle_dividers": return (page?.extent.cellCount ?? 1) > 1
+                case "invert_import": return heldImport != nil && !isReadOnly
                 case "delete_page": return page != nil
                 default: return true
                 }
@@ -939,6 +945,10 @@ struct PageScreen: View {
                     preferences.setShowsGuides(!showsGuides)
                 case "toggle_dividers":
                     preferences.setShowsDividers(!showsDividers)
+                case "invert_import":
+                    if let heldImport {
+                        library.setInverted(heldImport.id, on: pageId, to: !isImportInverted)
+                    }
                 case "delete_page":
                     library.deletePage(pageId)
                     navigator.go(.notebook(notebookId))
