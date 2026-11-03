@@ -176,6 +176,10 @@ private struct ChromeLayoutKey: EnvironmentKey {
     static let defaultValue = ChromeLayout()
 }
 
+private struct WindowPushKey: EnvironmentKey {
+    static let defaultValue = CGSize.zero
+}
+
 extension EnvironmentValues {
     var screenInsets: EdgeInsets {
         get { self[ScreenInsetsKey.self] }
@@ -185,6 +189,11 @@ extension EnvironmentValues {
     var chromeLayout: ChromeLayout {
         get { self[ChromeLayoutKey.self] }
         set { self[ChromeLayoutKey.self] = newValue }
+    }
+
+    var windowPush: CGSize {
+        get { self[WindowPushKey.self] }
+        set { self[WindowPushKey.self] = newValue }
     }
 }
 
@@ -217,16 +226,17 @@ struct RootView: View {
                     .id(screenIdentity)
                     .transition(isFlight ? .flight : navigator.isReturningFromPage ? .returning : .section)
                     .environment(\.chromeLayout, chromeLayout)
+                    .environment(\.windowPush, pushOffset(fullSize(proxy)))
                     .onPreferenceChange(NavCoverKey.self) { navCovers = $0 }
-                    .offset(pushOffset(proxy.size))
+                    .offset(pushOffset(fullSize(proxy)))
                 VStack {
                     TopBar(titleCutouts: titleCutouts)
-                        .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 }
+                        .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 - pushOffset(fullSize(proxy)).height }
                         .onPreferenceChange(BackButtonFrameKey.self) { chromeLayout.back = $0 }
                         .onPreferenceChange(ChromeFramesKey.self) { chromeLayout.frames = $0 }
                     Spacer(minLength: 0)
                 }
-                .offset(y: navigator.sheet?.pushEdge == .top ? navigator.windowPush * proxy.size.height : 0)
+                .offset(y: pushOffset(fullSize(proxy)).height)
                 .zIndex(navigator.sheet?.isSeeThrough == true ? 3 : 1)
                 MenuOverlay(controller: menu)
                     .zIndex(1)
@@ -454,16 +464,16 @@ struct TopBar: View {
                     if isTransferring {
                         transferExtras
                     }
+                    control(firstFace)
                     if isPage {
-                        control(firstFace)
+                        control(secondFace)
                             .transition(.popTogether)
                     }
                     if folderId != nil {
-                        control(secondFace)
+                        control(thirdFace)
                             .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
                             .transition(.popTogether)
                     }
-                    control(thirdFace)
                 }
                 .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isTransferring)
                 .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: transferBar.state)
@@ -487,21 +497,21 @@ struct TopBar: View {
 
     private var firstFace: ControlFace {
         guard isTransferring else {
-            return ControlFace(glyph: "view_all", color: Palette.view, title: "View all", action: openViewAll)
+            return ControlFace(glyph: "gear", title: "Settings") { navigator.show(.settings) }
         }
         return transferFace(.import)
     }
 
     private var secondFace: ControlFace {
         guard isTransferring else {
-            return ControlFace(glyph: "back", color: Palette.navigation, title: "Back", action: goBack)
+            return ControlFace(glyph: "view_all", color: Palette.view, title: "View all", action: openViewAll)
         }
         return transferFace(.export)
     }
 
     private var thirdFace: ControlFace {
         guard isTransferring else {
-            return ControlFace(glyph: "gear", title: "Settings") { navigator.show(.settings) }
+            return ControlFace(glyph: "back", color: Palette.navigation, title: "Back", action: goBack)
         }
         let title = transferBar.state.mode == .view ? "Back to the note" : "Back to view all"
         return ControlFace(glyph: "back", color: Palette.navigation, title: title) { transferBar.perform(.back) }
@@ -523,12 +533,12 @@ struct TopBar: View {
         let state = transferBar.state
         if state.mode == .view {
             if state.isEditable {
-                control(ControlFace(glyph: "check", color: state.isSelecting ? Palette.create : Palette.textBody, isTinted: state.isSelecting, title: state.isSelecting ? "Stop selecting" : "Select pages") { transferBar.perform(.select) })
-                    .transition(.popTogether)
                 if state.isSelecting {
                     control(ControlFace(glyph: "trash", color: Palette.destructive, isTinted: true, isEnabled: state.hasSelection, title: "Clear selected pages") { transferBar.perform(.clear) })
                         .transition(.popTogether)
                 }
+                control(ControlFace(glyph: "check", color: state.isSelecting ? Palette.create : Palette.textBody, isTinted: state.isSelecting, title: state.isSelecting ? "Stop selecting" : "Select pages") { transferBar.perform(.select) })
+                    .transition(.popTogether)
             }
         } else {
             control(ControlFace(glyph: "invert", color: Palette.importAsset, isTinted: state.isInvertOn, isEnabled: state.isInvertible, title: state.isInvertOn ? "Show PDF pages as they are" : "Invert PDF pages") { transferBar.perform(.invert) })

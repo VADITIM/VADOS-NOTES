@@ -67,6 +67,7 @@ struct GridScreen: View {
     @EnvironmentObject private var menu: MenuController
     @EnvironmentObject private var preferences: Preferences
     @Environment(\.chromeLayout) private var chrome
+    @Environment(\.windowPush) private var windowPush
     @State private var frames: [String: CGRect] = [:]
     @State private var drag: TileDrag?
     @State private var arrangedFolders: [String]?
@@ -124,7 +125,8 @@ struct GridScreen: View {
         let _ = library.revision
         let _ = preferences.revision
         GeometryReader { proxy in
-            let origin = proxy.frame(in: .global).origin
+            let pushed = proxy.frame(in: .global).origin
+            let origin = CGPoint(x: pushed.x - windowPush.width, y: pushed.y - windowPush.height)
             ZStack(alignment: .top) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {

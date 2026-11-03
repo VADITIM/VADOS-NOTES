@@ -79,6 +79,7 @@ struct TransferSheet: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
     @EnvironmentObject private var transferBar: TransferBar
+    @Environment(\.screenInsets) private var insets
     @State private var mode: TransferMode
     @State private var document: ImportedDocument?
     @State private var documentName: String?
@@ -99,6 +100,9 @@ struct TransferSheet: View {
     @State private var chosenImportPage: Int?
     @State private var isSelecting = false
     @State private var selectedCells: Set<CellPosition> = []
+    @State private var zoom: CGFloat = 1
+    @State private var pinchStartZoom: CGFloat?
+    @State private var armedRemoval: CellAxis?
 
     private static let space = "transfer"
     private static let originId = "transfer-origin"
@@ -110,7 +114,10 @@ struct TransferSheet: View {
     private static let controlsReserve: CGFloat = 76
     private static let canvasGutter: CGFloat = 24
     private static let canvasMargin: CGFloat = 450
-    private static let markWidth: CGFloat = 14
+    private static let markShare: CGFloat = 0.42
+    private static let removalShare: CGFloat = 0.2
+    private static let zoomRange: ClosedRange<CGFloat> = 0.1...1.6
+    private static let chromeGap: CGFloat = 28
     private static let spacing: CGFloat = 10
     private static let cellShape = Squircle(radius: 8)
 
@@ -369,6 +376,10 @@ struct TransferSheet: View {
         }
     }
 
+    private var sideTop: CGFloat {
+        insets.top + TopBar.controlHeight + Self.chromeGap
+    }
+
     private var sideColumnWidth: CGFloat {
         (mode == .view ? Self.pdfColumnWidth : Self.stripWidth) + Self.sideInset * 2
     }
@@ -380,7 +391,7 @@ struct TransferSheet: View {
         } else {
             ScrollView {
                 strip
-                    .padding(.top, 24)
+                    .padding(.top, sideTop)
                     .padding(.bottom, 40)
                     .padding(.horizontal, Self.sideInset)
             }
@@ -467,7 +478,7 @@ struct TransferSheet: View {
         return pageTile(image: image(for: target), label: "\(index + 1)/\(total)", isSelected: isPlaced, isNew: false, isOutlined: isQueued, target: target)
     }
 
-    private func pageTile(image: UIImage?, label: String?, isSelected: Bool, isNew: Bool, isMarked: Bool = false, isOutlined: Bool = false, target: TransferTarget) -> some View {
+    private func pageTile(image: UIImage?, label: String?, isSelected: Bool, isNew: Bool, isMarked: Bool = false, isDoomed: Bool = false, isOutlined: Bool = false, target: TransferTarget) -> some View {
         let isLifted = drag?.isLifted == true && drag?.source == target
         let isHovered = hovered == target
         let isDashed = isNew && !isSelected
@@ -491,13 +502,21 @@ struct TransferSheet: View {
                     .transition(.popTogether)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if isMarked {
-                Capsule()
-                    .fill(Palette.destructive)
-                    .frame(width: Self.markWidth, height: 4)
-                    .padding(10)
-                    .transition(.popTogether)
+        .overlay {
+            if isDoomed || (isMarked && isSelected) {
+                Palette.destructive.opacity(0.22)
+                    .transition(.opacity)
+            }
+        }
+        .overlay {
+            if isMarked || isDoomed {
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(Palette.destructive)
+                        .frame(width: proxy.size.width * Self.markShare, height: max(4, proxy.size.width * 0.05))
+                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                }
+                .transition(.popTogether)
             }
         }
         .clipShape(Self.cellShape)
@@ -514,6 +533,7 @@ struct TransferSheet: View {
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isHovered)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isLifted)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isMarked)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isDoomed)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isOutlined)
     }
 
@@ -529,6 +549,7 @@ struct TransferSheet: View {
             }
             .scrollIndicators(.hidden)
             .scrollDisabled(drag?.isLifted == true)
+            .simultaneousGesture(zoomGesture)
             .onAppear {
                 DispatchQueue.main.async {
                     reader.scrollTo(Self.originId, anchor: .topLeading)
@@ -542,9 +563,22 @@ struct TransferSheet: View {
         }
     }
 
+    private var zoomGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                guard drag == nil else { return }
+                let start = pinchStartZoom ?? zoom
+                pinchStartZoom = start
+                zoom = min(Self.zoomRange.upperBound, max(Self.zoomRange.lowerBound, start * value.magnification))
+            }
+            .onEnded { _ in
+                pinchStartZoom = nil
+            }
+    }
+
     private var gridWidth: CGFloat {
         let columns = CGFloat(extent.columns + (isGrowable ? 1 : 0))
-        return Self.axisLabelSize + Self.spacing + columns * Self.cellWidth + max(0, columns - 1) * Self.spacing
+        return Self.axisLabelSize + Self.spacing + columns * Self.cellWidth * zoom + max(0, columns - 1) * Self.spacing
     }
 
     private func trailingReach(_ size: CGSize) -> CGFloat {
@@ -561,8 +595,9 @@ struct TransferSheet: View {
     private var grid: some View {
         let shape = extent
         let isGrowing = isGrowable
-        let cellWidth = Self.cellWidth
-        let cellHeight = Self.cellHeight
+        let cellWidth = Self.cellWidth * zoom
+        let cellHeight = Self.cellHeight * zoom
+        let renderSize = CGSize(width: Self.cellWidth, height: Self.cellHeight)
         let firstNewRow = page?.extent.rows ?? shape.rows
         let count = total
         return VStack(alignment: .leading, spacing: Self.spacing) {
@@ -605,10 +640,8 @@ struct TransferSheet: View {
                         if isGrowing {
                             VStack(spacing: Self.spacing) {
                                 ForEach(0..<shape.rows, id: \.self) { _ in
-                                    growButton(label: "Add a page column") {
-                                        grow(columns: true)
-                                    }
-                                    .frame(width: cellWidth, height: cellHeight)
+                                    growZone(along: .columns, shape: shape)
+                                        .frame(width: cellWidth, height: cellHeight)
                                 }
                             }
                             .transition(.popTogether)
@@ -617,10 +650,8 @@ struct TransferSheet: View {
                     if isGrowing {
                         HStack(spacing: Self.spacing) {
                             ForEach(0..<shape.columns, id: \.self) { _ in
-                                growButton(label: "Add a page row") {
-                                    grow(columns: false)
-                                }
-                                .frame(width: cellWidth, height: cellHeight)
+                                growZone(along: .rows, shape: shape)
+                                    .frame(width: cellWidth, height: cellHeight)
                             }
                         }
                         .transition(.popTogether)
@@ -629,31 +660,92 @@ struct TransferSheet: View {
                 .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isGrowing)
             }
         }
-        .onAppear { renderCells(cellSize: CGSize(width: cellWidth, height: cellHeight)) }
-        .onChange(of: renderKey(cellWidth: cellWidth)) { _, _ in
-            renderCells(cellSize: CGSize(width: cellWidth, height: cellHeight))
+        .onAppear { renderCells(cellSize: renderSize) }
+        .onChange(of: renderKey(cellWidth: renderSize.width)) { _, _ in
+            renderCells(cellSize: renderSize)
         }
     }
 
     private func grow(columns: Bool) {
+        armedRemoval = nil
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             library.expand(pageId, columns: columns)
         }
     }
 
-    private func growButton(label: String, action: @escaping () -> Void) -> some View {
-        Button {
+    private func lastCells(along axis: CellAxis, shape: Extent) -> [CellPosition] {
+        switch axis {
+        case .columns: return (0..<shape.rows).map { CellPosition(column: shape.columns - 1, row: $0) }
+        case .rows: return (0..<shape.columns).map { CellPosition(column: $0, row: shape.rows - 1) }
+        }
+    }
+
+    private func shrink(along axis: CellAxis, shape: Extent) {
+        let isFilled = lastCells(along: axis, shape: shape).contains { filledCells.contains($0) }
+        if isFilled && armedRemoval != axis {
+            Haptics.tick()
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                armedRemoval = axis
+            }
+            return
+        }
+        Haptics.landed()
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            armedRemoval = nil
+            library.removeCell(pageId, along: axis, at: axis == .columns ? shape.columns - 1 : shape.rows - 1)
+        }
+    }
+
+    private func growZone(along axis: CellAxis, shape: Extent) -> some View {
+        let isColumns = axis == .columns
+        let isRemovable = (isColumns ? shape.columns : shape.rows) > 1
+        let isArmed = armedRemoval == axis
+        let removal = Button {
+            shrink(along: axis, shape: shape)
+        } label: {
+            GlyphView(name: "minus", color: Palette.destructive, size: 18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Palette.destructive.opacity(isArmed ? 0.28 : 0.08))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel(isColumns ? "Remove the last page column" : "Remove the last page row")
+        let addition = Button {
             Haptics.landed()
-            action()
+            grow(columns: isColumns)
         } label: {
             GlyphView(name: "plus", color: Palette.textBody, size: 22)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Self.cellShape.fill(Palette.ground))
-                .overlay(Self.cellShape.stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
-                .contentShape(Self.cellShape)
+                .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
-        .accessibilityLabel(label)
+        .accessibilityLabel(isColumns ? "Add a page column" : "Add a page row")
+        return GeometryReader { proxy in
+            let removalLength = (isColumns ? proxy.size.width : proxy.size.height) * Self.removalShare
+            Group {
+                if isColumns {
+                    HStack(spacing: 0) {
+                        if isRemovable {
+                            removal.frame(width: removalLength)
+                            Rectangle().fill(Palette.destructive.opacity(0.6)).frame(width: 1.5)
+                        }
+                        addition
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        if isRemovable {
+                            removal.frame(height: removalLength)
+                            Rectangle().fill(Palette.destructive.opacity(0.6)).frame(height: 1.5)
+                        }
+                        addition
+                    }
+                }
+            }
+            .background(Palette.ground)
+            .clipShape(Self.cellShape)
+            .overlay(Self.cellShape.stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+        }
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isArmed)
     }
 
     private func cells(shape: Extent, cellWidth: CGFloat, cellHeight: CGFloat, firstNewRow: Int, count: Int) -> some View {
@@ -675,7 +767,8 @@ struct TransferSheet: View {
         let index = isViewing ? nil : placements[cell]
         let isFilled = filledCells.contains(cell)
         let isSelected = isViewing ? selectedCells.contains(cell) : index != nil
-        return pageTile(image: images[cell], label: index.map { "\($0 + 1)/\(count)" }, isSelected: isSelected, isNew: cell.row >= firstNewRow, isMarked: isViewing && isSelecting && isFilled, target: .cell(cell))
+        let isDoomed = isViewing && armedRemoval.map { lastCells(along: $0, shape: extent).contains(cell) } == true
+        return pageTile(image: images[cell], label: index.map { "\($0 + 1)/\(count)" }, isSelected: isSelected, isNew: cell.row >= firstNewRow, isMarked: isViewing && isSelecting && isFilled, isDoomed: isDoomed, target: .cell(cell))
             .background(GeometryReader { proxy in
                 Color.clear.preference(key: TransferFrames.self, value: [.cell(cell): proxy.frame(in: .named(Self.space))])
             })
@@ -686,6 +779,11 @@ struct TransferSheet: View {
 
     private func tapped(_ cell: CellPosition) {
         guard drag == nil else { return }
+        if armedRemoval != nil {
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                armedRemoval = nil
+            }
+        }
         switch mode {
         case .view:
             if chosenPdfPage != nil {
@@ -724,7 +822,7 @@ struct TransferSheet: View {
 
     private func isCarryable(_ source: TransferTarget) -> Bool {
         switch (mode, source) {
-        case (.view, .cell(let cell)): return isEditable && filledCells.contains(cell)
+        case (.view, .cell): return isEditable && !isSelecting
         case (.view, .page): return false
         case (_, .cell(let cell)): return placements[cell] != nil
         case (_, .page): return true
@@ -916,7 +1014,7 @@ struct TransferSheet: View {
                     pdfGroup(group)
                 }
             }
-            .padding(.top, 24)
+            .padding(.top, sideTop)
             .padding(.bottom, 40)
             .padding(.horizontal, Self.sideInset)
         }

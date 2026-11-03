@@ -158,7 +158,7 @@ export class TopBar {
         this.viewAll.setAttribute("aria-label", "View all")
         this.viewAll.hidden = true
         this.settings = roundIconButton({ glyphName: "gear", label: "Settings", action: () => this.app.navigator.show({ kind: "settings" }) })
-        this.controls = create("div", "top-bar-controls", this.viewAll, this.back, this.settings)
+        this.controls = create("div", "top-bar-controls", this.settings, this.viewAll, this.back)
         this.right = create("div", "top-bar-right", this.searchHost, this.controls)
         this.element.append(this.left, this.right)
         this.folderTitle = null

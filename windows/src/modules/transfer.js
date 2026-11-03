@@ -1,3 +1,4 @@
+import { elementBounds } from "./canvas.js"
 import { create, microLabel, pressable, segmented, setEnabled, slabButton } from "./components.js"
 import { exportCells } from "./exports.js"
 import { importFailureMessage, importImage, importPageSizes, isImportInverted, readPdf, subscribeImports } from "./imports.js"
@@ -177,14 +178,49 @@ export function transferSheet(app, request) {
         library.setInverted(noteImports().map((element) => element.id), request.pageId, isInverted)
         render(false)
     })
-    const growColumn = create("button", "transfer-grow", glyph("add_column", { color: tokens.semantic.create, size: 18 }))
-    growColumn.setAttribute("aria-label", "Add column")
-    pressable(growColumn)
-    growColumn.addEventListener("click", () => library.expand(request.pageId, true))
-    const growRow = create("button", "transfer-grow", glyph("add_row", { color: tokens.semantic.create, size: 18 }))
-    growRow.setAttribute("aria-label", "Add row")
-    pressable(growRow)
-    growRow.addEventListener("click", () => library.expand(request.pageId, false))
+    let armedRemoval = null
+    const lastCells = (isColumns) => {
+        const { cols, rows } = page()?.extent ?? { cols: 1, rows: 1 }
+        return isColumns ? Array.from({ length: rows }, (_, row) => cellKey(cols - 1, row)) : Array.from({ length: cols }, (_, column) => cellKey(column, rows - 1))
+    }
+    const isLastFilled = (isColumns) => {
+        const keys = new Set(lastCells(isColumns))
+        return liveElements(page()).some((element) => {
+            const bounds = elementBounds(element)
+            return bounds && keys.has(cellKey(Math.floor((bounds.x + bounds.width / 2) / cellWidth), Math.floor((bounds.y + bounds.height / 2) / cellHeight)))
+        })
+    }
+    const shrink = (isColumns) => {
+        const current = page()
+        if (!current) {
+            return
+        }
+        if (armedRemoval !== isColumns && isLastFilled(isColumns)) {
+            armedRemoval = isColumns
+            render(false)
+            return
+        }
+        armedRemoval = null
+        library.removeCell(request.pageId, isColumns, isColumns ? current.extent.cols - 1 : current.extent.rows - 1)
+    }
+    const growZone = (isColumns) => {
+        const removal = create("button", "transfer-shrink", glyph("minus", { color: tokens.semantic.destructive, size: 14 }))
+        removal.setAttribute("aria-label", isColumns ? "Remove the last column" : "Remove the last row")
+        pressable(removal)
+        removal.addEventListener("click", () => shrink(isColumns))
+        const addition = create("button", "transfer-grow", glyph(isColumns ? "add_column" : "add_row", { color: tokens.semantic.create, size: 18 }))
+        addition.setAttribute("aria-label", isColumns ? "Add column" : "Add row")
+        pressable(addition)
+        addition.addEventListener("click", () => {
+            armedRemoval = null
+            library.expand(request.pageId, isColumns)
+        })
+        const zone = create("div", `transfer-zone ${isColumns ? "is-column" : "is-row"}`, removal, addition)
+        zone.removal = removal
+        return zone
+    }
+    const growColumn = growZone(true)
+    const growRow = growZone(false)
     const confirm = slabButton("Export", tokens.semantic.import, () => submit())
 
     const stripList = create("div", "transfer-strip-list")
@@ -629,12 +665,18 @@ export function transferSheet(app, request) {
             updatePdfColumn(groups)
         }
         const isGrowing = viewing && isEditable && Boolean(page())
-        grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(0, ${largestCellWidth}px))${isGrowing ? " 28px" : ""}`
+        grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(0, ${largestCellWidth}px))${isGrowing ? " 56px" : ""}`
         growColumn.hidden = !isGrowing
         growRow.hidden = !isGrowing
+        growColumn.removal.hidden = cols <= 1
+        growRow.removal.hidden = rows <= 1
+        growColumn.classList.toggle("is-armed", armedRemoval === true)
+        growRow.classList.toggle("is-armed", armedRemoval === false)
+        const doomed = new Set(viewing && armedRemoval !== null ? lastCells(armedRemoval) : [])
         grid.classList.toggle("is-viewing", viewing)
         for (const { element, badge, column, row } of cells) {
             const placement = viewing ? null : placed().get(cellKey(column, row))
+            element.classList.toggle("is-doomed", doomed.has(cellKey(column, row)))
             element.classList.toggle("is-selected", Boolean(placement))
             element.classList.toggle("is-shown", viewing)
             badge.textContent = viewing ? pageCount(row * cols + column, count) : placement ? pageCount(placement.index, count) : ""

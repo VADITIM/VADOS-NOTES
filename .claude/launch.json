@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "desktop-browser",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "C:/Users/vn/AppData/Local/Temp/claude/C--Users-vn--claude-spares-spare-2wltF8/bc3e2992-c26a-47be-a7ce-d5c0f542b9c3/scratchpad/serve.py",
+        "C:/Users/vn/source/VADOS-NOTES",
+        "5174"
+      ],
+      "port": 5174
+    },
+    {
+      "name": "grid-browser",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "C:/Users/vn/AppData/Local/Temp/claude/C--Users-vn--claude-spares-spare-uYhKD6/411dc813-0d56-4cf5-b0de-8b70c7e3a5f6/scratchpad/serve.py",
+        "C:/Users/vn/source/VADOS-NOTES-grid",
+        "5175"
+      ],
+      "port": 5175
+    }
+  ]
+}

@@ -91,6 +91,7 @@ private final class ElementCanvasView: UIView {
         isOpaque = false
         isUserInteractionEnabled = false
         contentMode = .redraw
+        layer.anchorPoint = .zero
     }
 
     required init?(coder: NSCoder) {
@@ -200,6 +201,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     var onEraseLift: (() -> Void)?
 
     private(set) var camera = CanvasCamera()
+    private var rasterCamera = CanvasCamera()
     private let cache = StrokePathCache()
     private let liveLayer = CAShapeLayer()
     private let liveMask = CAShapeLayer()
@@ -286,7 +288,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private func redraw(pageRect: CGRect) {
         layoutImports()
         guard !pageRect.isNull else { return }
-        let screen = CGRect(x: pageRect.minX * camera.scale + camera.offset.x, y: pageRect.minY * camera.scale + camera.offset.y, width: pageRect.width * camera.scale, height: pageRect.height * camera.scale)
+        let screen = CGRect(x: pageRect.minX * rasterCamera.scale + rasterCamera.offset.x, y: pageRect.minY * rasterCamera.scale + rasterCamera.offset.y, width: pageRect.width * rasterCamera.scale, height: pageRect.height * rasterCamera.scale)
         let dirty = screen.insetBy(dx: -Self.redrawMargin, dy: -Self.redrawMargin).integral.intersection(bounds)
         guard !dirty.isNull, !dirty.isEmpty else { return }
         elementCanvas.setNeedsDisplay(dirty)
@@ -330,6 +332,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         liveMarkerLayer.fillColor = nil
         liveMarkerLayer.lineCap = .round
         liveMarkerLayer.lineJoin = .round
+        liveMarkerLayer.anchorPoint = .zero
         liveMarkerLayer.mask = liveMarkerMask
         markerCanvas.layer.addSublayer(liveMarkerLayer)
         elementCanvas.render = { [weak self] context, rect in
@@ -437,6 +440,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         hasFitted = true
         fittedSize = bounds.size
         cameraChanged()
+        setNeedsDisplay()
     }
 
     private func isCameraFitted(inset: CGFloat) -> Bool {
@@ -451,11 +455,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         eraserLayer.frame = bounds
         lassoLayer.frame = bounds
         selectionLayer.frame = bounds
-        elementCanvas.frame = bounds
-        lineCanvas.frame = bounds
-        markerCanvas.frame = bounds
-        liveMarkerLayer.frame = bounds
-        liveMarkerMask.frame = bounds
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for canvas in rasterCanvases {
+            canvas.bounds = CGRect(origin: .zero, size: bounds.size)
+            canvas.center = .zero
+        }
+        liveMarkerLayer.bounds = CGRect(origin: .zero, size: bounds.size)
+        liveMarkerLayer.position = .zero
+        liveMarkerMask.frame = CGRect(origin: .zero, size: bounds.size)
+        CATransaction.commit()
         importContainer.frame = bounds
         importMask.frame = bounds
         if !hasFitted || fittedSize != bounds.size {
@@ -463,12 +472,38 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
     }
 
+    private var rasterCanvases: [ElementCanvasView] {
+        [elementCanvas, lineCanvas, markerCanvas]
+    }
+
     override func setNeedsDisplay() {
         super.setNeedsDisplay()
+        rasterCamera = camera
+        followCameraWithRaster()
         elementCanvas.setNeedsDisplay()
         lineCanvas.setNeedsDisplay()
         markerCanvas.setNeedsDisplay()
         layoutImports()
+    }
+
+    private func followCameraWithRaster() {
+        let zoom = camera.scale / rasterCamera.scale
+        let transform = CGAffineTransform(a: zoom, b: 0, c: 0, d: zoom, tx: camera.offset.x - rasterCamera.offset.x * zoom, ty: camera.offset.y - rasterCamera.offset.y * zoom)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for canvas in rasterCanvases {
+            canvas.layer.setAffineTransform(transform)
+        }
+        liveMarkerLayer.setAffineTransform(transform.inverted())
+        CATransaction.commit()
+    }
+
+    private func settleRaster() {
+        if rasterCamera != camera {
+            setNeedsDisplay()
+        } else {
+            layoutImports()
+        }
     }
 
     override func draw(_ rect: CGRect) {
@@ -477,7 +512,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         options.fillsOutside = !showsBackdrop
         options.drawsElements = false
         options.drawsLines = !hasImports
-        render(in: context, rect: rect, options: options)
+        render(in: context, rect: rect, options: options, camera: camera)
     }
 
     private func drawElements(in context: CGContext, rect: CGRect) {
@@ -486,7 +521,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         options.drawsImports = false
         options.drawsLines = false
         options.markerPass = .none
-        render(in: context, rect: rect, options: options)
+        render(in: context, rect: rect, options: options, camera: rasterCamera)
     }
 
     private func drawLines(in context: CGContext, rect: CGRect) {
@@ -494,7 +529,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         var options = renderOptions()
         options.drawsPaper = false
         options.drawsElements = false
-        render(in: context, rect: rect, options: options)
+        render(in: context, rect: rect, options: options, camera: rasterCamera)
     }
 
     private func drawMarkers(in context: CGContext, rect: CGRect) {
@@ -503,7 +538,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         options.drawsImports = false
         options.drawsLines = false
         options.markerPass = .only
-        render(in: context, rect: rect, options: options)
+        render(in: context, rect: rect, options: options, camera: rasterCamera)
     }
 
     private func renderOptions() -> RenderOptions {
@@ -556,7 +591,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         return sublayer
     }
 
-    private func render(in context: CGContext, rect: CGRect, options baseOptions: RenderOptions) {
+    private func render(in context: CGContext, rect: CGRect, options baseOptions: RenderOptions, camera: CanvasCamera) {
         guard var page else { return }
         var index = currentIndex()
         var options = baseOptions
@@ -1010,7 +1045,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         cameraSettleTimer?.invalidate()
         cameraSettleTimer = Timer.scheduledTimer(withTimeInterval: Self.cameraSettleSeconds, repeats: false) { [weak self] _ in
             self?.cameraSettleTimer = nil
-            self?.layoutImports()
+            self?.settleRaster()
         }
         if let page {
             camera = camera.constrained(to: page.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
@@ -1032,7 +1067,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
         showLasso()
         showSelection()
-        setNeedsDisplay()
+        super.setNeedsDisplay()
+        layoutImports()
+        if stroke != nil || selectionScaleAnchor != nil || selectionStart != nil || isTextLifted {
+            setNeedsDisplay()
+        } else {
+            followCameraWithRaster()
+        }
         onCameraChange?(camera)
     }
 

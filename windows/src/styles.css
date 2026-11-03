@@ -2374,6 +2374,78 @@ textarea.inline-title-field {
     display: none;
 }
 
+.transfer-zone {
+    display: flex;
+    align-self: stretch;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 6px;
+    outline: 1.5px dashed var(--palette-border-control);
+    overflow: hidden;
+}
+
+.transfer-zone.is-row {
+    flex-direction: column;
+}
+
+.transfer-zone[hidden] {
+    display: none;
+}
+
+.transfer-zone .transfer-grow {
+    flex: 1;
+    outline: none;
+    border-radius: 0;
+}
+
+.transfer-shrink {
+    display: flex;
+    flex: 0 0 20%;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--semantic-destructive) 8%, transparent);
+    cursor: pointer;
+    transition: background 160ms;
+}
+
+.transfer-zone.is-column .transfer-shrink {
+    border-right: 1.5px solid color-mix(in srgb, var(--semantic-destructive) 60%, transparent);
+}
+
+.transfer-zone.is-row .transfer-shrink {
+    border-bottom: 1.5px solid color-mix(in srgb, var(--semantic-destructive) 60%, transparent);
+}
+
+.transfer-shrink:hover,
+.transfer-zone.is-armed .transfer-shrink {
+    background: color-mix(in srgb, var(--semantic-destructive) 28%, transparent);
+}
+
+.transfer-shrink[hidden] {
+    display: none;
+}
+
+.transfer-cell.is-doomed::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--semantic-destructive) 22%, transparent);
+    pointer-events: none;
+}
+
+.transfer-cell.is-doomed::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    left: 29%;
+    top: calc(50% - 3px);
+    width: 42%;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--semantic-destructive);
+    pointer-events: none;
+}
+
 .transfer-grid.is-viewing .transfer-row {
     pointer-events: none;
 }

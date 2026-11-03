@@ -38,6 +38,7 @@ struct PageScreen: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var menu: MenuController
     @EnvironmentObject private var preferences: Preferences
+    @Environment(\.windowPush) private var windowPush
     @StateObject private var keyboard = KeyboardObserver()
     @Namespace private var ringSpace
     @State private var overlayCamera: CanvasCamera?
@@ -95,7 +96,7 @@ struct PageScreen: View {
         let _ = library.revision
         let _ = preferences.revision
         GeometryReader { proxy in
-            let canvasTop = proxy.frame(in: .global).minY
+            let canvasTop = proxy.frame(in: .global).minY - windowPush.height
             ZStack(alignment: .topLeading) {
                 Group {
                     if let page = library.page(pageId) {
