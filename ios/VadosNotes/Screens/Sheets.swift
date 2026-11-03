@@ -16,12 +16,10 @@ struct SheetHost: View {
     @State private var panelHeight: CGFloat = 0
     @State private var backdropSlide: CGFloat = -1
 
-    private static let seeThroughShare = 0.62
-
     private var seeThroughBackdrop: some View {
         GeometryReader { proxy in
             ZStack {
-                Palette.ground.opacity(Self.seeThroughShare)
+                Palette.ground
                 if preferences.showsAsciiBackground {
                     AsciiBackground(color: preferences.asciiBackgroundColor, opacity: preferences.asciiBackgroundOpacity, isMoving: preferences.isAsciiBackgroundMoving && preferences.doesAsciiBackgroundMoveInCanvas)
                         .allowsHitTesting(false)

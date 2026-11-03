@@ -86,7 +86,6 @@ final class Navigator: ObservableObject {
     @Published private(set) var isChromeLeaving = false
     @Published private(set) var isPageChromeShown = false
     @Published var query = ""
-    @Published private(set) var cellFocus: CellFocus?
     private(set) var isReturningFromPage = false
     private(set) var lastPage: (notebookId: String, pageId: String)?
     var openingTile: CGRect?
@@ -134,10 +133,6 @@ final class Navigator: ObservableObject {
             self?.switchRoute(route, from: tile)
             self?.isChromeLeaving = false
         }
-    }
-
-    func focus(_ cell: CellPosition) {
-        cellFocus = CellFocus(cell: cell, serial: (cellFocus?.serial ?? 0) + 1)
     }
 
     func showPageChrome(_ shown: Bool) {
@@ -331,16 +326,38 @@ extension View {
 struct RoundIconButton: View {
     let glyph: String
     var color: Color = Palette.textBody
+    var label: String?
     var isTinted = false
     var isEnabled = true
     let action: () -> Void
 
+    private static var morph: Animation {
+        Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)
+    }
+
     var body: some View {
         HoldableButton(action: action) {
-            GlyphView(name: glyph, color: color)
-                .frame(width: TopBar.controlHeight, height: TopBar.controlHeight)
-                .background(Circle().fill(isTinted ? color.opacity(0.14) : Palette.panel).background(Circle().fill(Palette.panelSolid)))
-                .overlay(Circle().stroke(isTinted ? color.opacity(0.55) : Palette.border, lineWidth: isTinted ? 1.5 : 1))
+            HStack(spacing: 8) {
+                ZStack {
+                    GlyphView(name: glyph, color: color)
+                        .id(glyph)
+                        .transition(.pop)
+                }
+                if let label {
+                    Text(label)
+                        .font(Typography.monoBold(13))
+                        .foregroundColor(color)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .transition(.pop)
+                }
+            }
+            .padding(.horizontal, label == nil ? 0 : 16)
+            .frame(minWidth: TopBar.controlHeight, minHeight: TopBar.controlHeight)
+            .background(Capsule().fill(isTinted ? color.opacity(0.14) : Palette.panel).background(Capsule().fill(Palette.panelSolid)))
+            .overlay(Capsule().stroke(isTinted ? color.opacity(0.55) : Palette.border, lineWidth: isTinted ? 1.5 : 1))
+            .animation(Self.morph, value: label == nil)
+            .animation(Self.morph, value: isTinted)
         }
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.38)
@@ -406,24 +423,14 @@ struct TopBar: View {
                 }
                 HStack(spacing: 14) {
                     if isPage {
-                        HoldableButton(action: openViewAll) {
-                            GlyphView(name: "view_all", color: Palette.view)
-                                .frame(width: TopBar.controlHeight, height: TopBar.controlHeight)
-                                .background(Circle().fill(Palette.panel))
-                                .overlay(Circle().stroke(Palette.border, lineWidth: 1))
-                        }
-                        .accessibilityLabel("View all")
-                        .transition(.popTogether)
+                        RoundIconButton(glyph: "view_all", color: Palette.view, action: openViewAll)
+                            .accessibilityLabel("View all")
+                            .transition(.popTogether)
                     }
                     if folderId != nil {
-                        HoldableButton(action: goBack) {
-                            GlyphView(name: "back", color: Palette.navigation)
-                                .frame(width: TopBar.controlHeight, height: TopBar.controlHeight)
-                                .background(Circle().fill(Palette.panel))
-                                .overlay(Circle().stroke(Palette.border, lineWidth: 1))
-                        }
-                        .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
-                        .transition(.popTogether)
+                        RoundIconButton(glyph: "back", color: Palette.navigation, action: goBack)
+                            .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
+                            .transition(.popTogether)
                     }
                     SettingsButton()
                 }

@@ -12,11 +12,6 @@ struct SelectionCommand: Equatable {
     let serial: Int
 }
 
-struct CellFocus: Equatable {
-    let cell: CellPosition
-    let serial: Int
-}
-
 struct CanvasCallbacks {
     var onCameraChange: (CanvasCamera) -> Void
     var onStroke: (Tool, String, [[Point]], Double) -> Void
@@ -53,7 +48,6 @@ struct CanvasView: UIViewRepresentable {
     let isReadOnly: Bool
     let topInset: CGFloat
     let selectionCommand: SelectionCommand?
-    let cellFocus: CellFocus?
     let callbacks: CanvasCallbacks
 
     func makeUIView(context: Context) -> InkCanvasView {
@@ -82,7 +76,6 @@ struct CanvasView: UIViewRepresentable {
         view.isReadOnly = isReadOnly
         view.topInset = topInset
         view.selectionCommand = selectionCommand
-        view.cellFocus = cellFocus
         view.onCameraChange = callbacks.onCameraChange
         view.onStroke = callbacks.onStroke
         view.onErase = callbacks.onErase

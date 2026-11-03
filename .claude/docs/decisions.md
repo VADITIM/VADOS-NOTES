@@ -512,3 +512,13 @@ One engine runs the whole move, `NavigationCarry` (`windows/src/modules/navigati
 - **Edge hide stays for now.** It is a drag on the bar body, not on the grabber, so the gestures do not conflict, but corner parking does the same job (getting the bar out of the way). Proposed for removal; waiting for a yes.
 - **Assumption:** all `motion.carry` values above, and the three springs (`morph` 0.28 / 0.8, `bubble_follow` 0.12 / 0.65, `dock` 0.36 / 0.82), were chosen on Windows with synthetic pointer input and have not been felt on an iPad.
 
+
+### View All: opaque, pans from pages, a continuous grid, the top bar's buttons (2026-11-03, iPad)
+
+- **Opaque backdrop (reverses f5dbfb6).** The 0.62 see-through ground was too distracting. The backdrop is `ground` at full opacity with `AsciiBackground` on it, and still slides in from the left and out to the right.
+- **Panning from a page.** The grid pages took the hold-to-carry gesture as their main gesture, so a drag that began on a page never reached the scroll view. It is now simultaneous, as on the strip: a drag pans, a hold of `tileDragHold` and then a drag carries or swaps the page with the same haptics.
+- **The + adds pages in place (reverses f5dbfb6).** The + no longer closes View All and opens the note at that page; `Navigator.focus`, `CellFocus` and `InkCanvasView.focus(on:)` are gone. Blank pages inside the note now show as pages (their blank paper thumbnail) and not as dashed + cells, which is why adding a column or row looked like nothing happened.
+- **Continuous grid.** A + cell exists only beside an existing page: one per row to the right of the last column and one per column under the last row, none in the corner. The page schema is a rectangle (`extent`), so a + on the right adds a whole column and a + below adds a whole row; the new pages pop in and View All stays open. The thin add-column and add-row strips are replaced by these cells. Import and Export show no + cells.
+- **Shared top buttons.** View All's top-right buttons are `RoundIconButton`, the canvas top bar's own button, which now also draws the canvas's View all and Back. The button gained an optional label and swaps its icon with the rotate pop (`pop`), with its width following when a label comes or goes. The file-private `TopButton`, `TopAction` and `TopFace` are gone. The invert button comes and goes with `popTogether`.
+- **Back ends Import and Export.** In Import or Export, back returns to View: the current-mode button changes back to View all (its count leaves and it narrows), invert leaves, and the chosen file and placements are dropped; Export's selection resets to all pages. In View, back closes View All as before.
+- The Windows/Linux port still has the old View All behaviour.
