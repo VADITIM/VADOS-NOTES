@@ -237,6 +237,10 @@ struct Tokens: Decodable {
         let journalCompactEntries: Int
     }
 
+    struct ImportTokens: Decodable {
+        let accents: [String]
+    }
+
     struct TitleTokens: Decodable {
         let backdropOpacity: Double
         let backdropRadius: Double
@@ -300,6 +304,7 @@ struct Tokens: Decodable {
     let background: BackgroundTokens
     let sync: SyncTokens
     let memory: MemoryTokens
+    let imports: ImportTokens
     let title: TitleTokens
     let menus: MenuTokens
     let folders: FolderTokens

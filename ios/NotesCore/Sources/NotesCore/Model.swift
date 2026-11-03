@@ -133,6 +133,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
     public var fontSize: Double?
     public var asset: String?
     public var sourcePage: Int?
+    public var sourceName: String?
     public var sourceSizeMillimetres: [Double]?
     public var placement: Placement?
     public var fit: Fit?
@@ -155,6 +156,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         case fontSize = "font_size"
         case asset
         case sourcePage = "source_page"
+        case sourceName = "source_name"
         case sourceSizeMillimetres = "source_size_mm"
         case placement
         case fit
@@ -186,6 +188,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         fontSize: Double? = nil,
         asset: String? = nil,
         sourcePage: Int? = nil,
+        sourceName: String? = nil,
         sourceSizeMillimetres: [Double]? = nil,
         placement: Placement? = nil,
         fit: Fit? = nil,
@@ -207,6 +210,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         self.fontSize = fontSize
         self.asset = asset
         self.sourcePage = sourcePage
+        self.sourceName = sourceName
         self.sourceSizeMillimetres = sourceSizeMillimetres
         self.placement = placement
         self.fit = fit

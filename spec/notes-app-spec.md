@@ -271,6 +271,7 @@ A Git Data API commit is atomic: either all pages in a flush land or none do.
   "order": 0,
   "asset": "sha256:9f3a...",
   "source_page": 0,
+  "source_name": "worksheet.pdf",
   "source_size_mm": [215.9, 279.4],
   "placement": { "x": 0, "y": 0, "scale": 1.0 },
   "fit": "fit_cell",
@@ -492,3 +493,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - Groups sync. Each group is its own file under `groups/`, its members carry its ID, and groups kept on a device before are moved into the repository on the next launch.
 - Windows and Linux are on par with the iPad again: the styled `.md` editor and the code nav with syntax highlighting, text on the guide rows, collapsible preset groups, the stack-wide edge hide, the cone slider, the capsule leave, settings module pops, the single-row folder head that shows only inside a folder, tool colours and the size preview dot, nav turning at edges while carried, the slot-under-the-pointer drag with groups, and the colour wheel in the icon and colour sheet.
 - Inside a folder every note is a 1×1 tile showing its first page, with its size as a caption. The name wraps to two lines and then gets smaller, and never leaves the tile. Previews are cached and drawn without holding up the screen, so a folder of 30 or more notes opens smoothly.
+- View All lists the note's PDF pages in a column on the far left, grouped by file under its name and a colour of its own. A green dot marks a page used in the note, a red one a page that is not. Tap a PDF page, then a note page, to put it there: it moves if it was already in the note, and replaces any other PDF page on that note page, leaving ink and text alone; one undo reverts it. Each file's header inverts all its pages at once.

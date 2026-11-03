@@ -32,6 +32,23 @@ private struct TransferDrag {
     var lastPainted: CellPosition?
 }
 
+private struct PdfPageReference: Equatable {
+    let asset: String
+    let index: Int
+}
+
+private struct PdfGroup: Identifiable {
+    let asset: String
+    let name: String
+    let sourceName: String?
+    let accent: Color
+    let elements: [Element]
+
+    var id: String {
+        asset
+    }
+}
+
 private enum TransferPart: Int, CaseIterable {
     case header
     case strip
@@ -60,11 +77,15 @@ struct TransferSheet: View {
     @State private var importRevision = 0
     @State private var isExporting = false
     @State private var shownParts: Set<TransferPart> = []
+    @State private var chosenPdfPage: PdfPageReference?
 
     private static let space = "transfer"
     private static let contentShare: CGFloat = 0.75
     private static let largestCellWidth: CGFloat = 150
     private static let stripWidth: CGFloat = 150
+    private static let pdfColumnWidth: CGFloat = 120
+    private static let pdfColumnReserve: CGFloat = 220
+    private static let pdfDotSize: CGFloat = 9
     private static let rowLabelWidth: CGFloat = 36
     private static let spacing: CGFloat = 10
     private static let dragSlop: CGFloat = 6
@@ -181,7 +202,7 @@ struct TransferSheet: View {
         let _ = library.revision
         GeometryReader { proxy in
             ScrollView {
-                module(width: proxy.size.width * Self.contentShare)
+                module(width: proxy.size.width * Self.contentShare, height: proxy.size.height)
                     .frame(width: proxy.size.width * Self.contentShare)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .top)
@@ -240,16 +261,18 @@ struct TransferSheet: View {
         RisingPart(isShown: shownParts.contains(part))
     }
 
-    private func module(width: CGFloat) -> some View {
+    private func module(width: CGFloat, height: CGFloat) -> some View {
         let isImport = mode == .import
         let chosen = placements.count
-        let gridWidth = width - 36 - Self.stripWidth - 18
+        let groups = mode == .view ? pdfGroups : []
+        let gridWidth = width - 36 - Self.stripWidth - 18 - (groups.isEmpty ? 0 : Self.pdfColumnWidth + 18)
         return SettingsModule(label: page.map { library.noteTitle($0) } ?? "Note") {
             HStack(spacing: 14) {
                 Segmented(options: [SegmentOption(value: TransferMode.view, title: "View all"), SegmentOption(value: TransferMode.export, title: "Export"), SegmentOption(value: TransferMode.import, title: "Import")], selected: mode) { picked in
                     guard picked != .import || isEditable else { return }
                     withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                         mode = picked
+                        chosenPdfPage = nil
                     }
                     if picked == .import && document == nil {
                         isPicking = true
@@ -270,6 +293,11 @@ struct TransferSheet: View {
             .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: hasPdfPages)
             .modifier(rising(.header))
             HStack(alignment: .top, spacing: 18) {
+                if !groups.isEmpty {
+                    pdfColumn(groups, height: max(Self.pdfColumnWidth * 2, height - Self.pdfColumnReserve))
+                        .modifier(rising(.strip))
+                        .transition(.popTogether)
+                }
                 strip
                     .frame(width: Self.stripWidth)
                     .modifier(rising(.strip))
@@ -340,6 +368,11 @@ struct TransferSheet: View {
                         Color.clear.preference(key: TransferFrames.self, value: [.page(index): proxy.frame(in: .named(Self.space))])
                     })
                     .gesture(stripGesture(index))
+                    .simultaneousGesture(TapGesture().onEnded {
+                        if mode == .view, chosenPdfPage != nil {
+                            placeChosenPdfPage(on: cell(at: index))
+                        }
+                    })
             }
         }
         .onAppear { renderSources(size: CGSize(width: Self.stripWidth, height: pageHeight)) }
@@ -504,6 +537,8 @@ struct TransferSheet: View {
                     drop()
                 } else if !current.isPainting, mode != .view, case .cell(let cell) = current.source {
                     paint(cell, isSelecting: false)
+                } else if mode == .view, chosenPdfPage != nil, case .cell(let cell) = current.source {
+                    placeChosenPdfPage(on: cell)
                 }
                 drag = nil
             }
@@ -656,6 +691,163 @@ struct TransferSheet: View {
         } completion: { rendered in
             guard sourcesKey == key else { return }
             sourceImages = rendered
+        }
+    }
+
+    private var pdfGroups: [PdfGroup] {
+        guard let page else { return [] }
+        let imports = page.elements.filter { $0.type == .importPage && $0.asset != nil }.sorted(by: Element.isOrderedBefore)
+        var assets: [String] = []
+        for element in imports {
+            if let asset = element.asset, !assets.contains(asset) {
+                assets.append(asset)
+            }
+        }
+        let accents = Tokens.shared.imports.accents
+        return assets.enumerated().map { position, asset in
+            let elements = imports.filter { $0.asset == asset }
+            let sourceName = elements.lazy.compactMap(\.sourceName).first
+            return PdfGroup(asset: asset, name: sourceName ?? "PDF \(position + 1)", sourceName: sourceName, accent: Color(hex: accents[position % accents.count]), elements: elements)
+        }
+    }
+
+    private func pdfPageSizes(_ group: PdfGroup) -> [[Double]] {
+        if let sizes = ImportImages.shared.pageSizes(of: group.asset), !sizes.isEmpty {
+            return sizes
+        }
+        let count = (group.elements.compactMap(\.sourcePage).max() ?? 0) + 1
+        return (0..<count).map { index in
+            group.elements.first { $0.sourcePage == index }?.sourceSizeMillimetres ?? [PaperGeometry.cellWidth, PaperGeometry.cellHeight]
+        }
+    }
+
+    private func isInverted(_ group: PdfGroup) -> Bool {
+        let live = group.elements.filter { !$0.deleted }
+        guard !live.isEmpty else { return group.elements.last?.inverted ?? false }
+        let isDark = preferences.paperStyle == .dark
+        return live.allSatisfy { ImportImages.shared.isInverted($0, isDark: isDark) }
+    }
+
+    private func setInverted(_ group: PdfGroup, to isInverted: Bool) {
+        Haptics.tick()
+        library.setInverted(group.elements.filter { !$0.deleted }.map(\.id), on: pageId, to: isInverted)
+    }
+
+    private func pdfColumn(_ groups: [PdfGroup], height: CGFloat) -> some View {
+        let _ = importRevision
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(groups) { group in
+                    pdfGroup(group)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .scrollIndicators(.hidden)
+        .scrollDisabled(drag?.isLifted == true)
+        .frame(width: Self.pdfColumnWidth, height: height, alignment: .top)
+    }
+
+    private func pdfGroup(_ group: PdfGroup) -> some View {
+        let sizes = pdfPageSizes(group)
+        let isShownInverted = isInverted(group)
+        let used = Set(group.elements.filter { !$0.deleted }.compactMap(\.sourcePage))
+        return VStack(alignment: .leading, spacing: Self.spacing) {
+            HStack(spacing: 6) {
+                Capsule()
+                    .fill(group.accent)
+                    .frame(width: 4, height: 30)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.name)
+                        .font(Typography.monoBold(11))
+                        .foregroundColor(Palette.textBright)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    MicroLabel(text: "\(used.count)/\(sizes.count)", color: group.accent)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    setInverted(group, to: !isShownInverted)
+                } label: {
+                    GlyphView(name: "invert", color: isShownInverted ? Palette.ground : group.accent, size: 15)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(isShownInverted ? group.accent : Palette.sunkenDeep))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(used.isEmpty || !isEditable)
+                .accessibilityLabel(isShownInverted ? "Original PDF" : "Invert PDF")
+            }
+            ForEach(sizes.indices, id: \.self) { index in
+                pdfPage(group, index: index, size: sizes[index], count: sizes.count, isShownInverted: isShownInverted, isUsed: used.contains(index))
+            }
+        }
+    }
+
+    private func pdfPage(_ group: PdfGroup, index: Int, size: [Double], count: Int, isShownInverted: Bool, isUsed: Bool) -> some View {
+        let reference = PdfPageReference(asset: group.asset, index: index)
+        let isChosen = chosenPdfPage == reference
+        let height = Self.pdfColumnWidth * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth)
+        return ZStack {
+            Palette.sunkenDeep
+            if let image = pdfImage(group.asset, index: index, size: size, isShownInverted: isShownInverted) {
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .aspectRatio(CGFloat(size[0] / max(1, size[1])), contentMode: .fit)
+                    .padding(4)
+            }
+        }
+        .frame(width: Self.pdfColumnWidth, height: height)
+        .overlay(alignment: .bottomLeading) {
+            Circle()
+                .fill(isUsed ? Palette.create : Palette.destructive)
+                .frame(width: Self.pdfDotSize, height: Self.pdfDotSize)
+                .overlay(Circle().stroke(Palette.ground, lineWidth: 1.5))
+                .padding(7)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Text("\(index + 1)/\(count)")
+                .font(Typography.monoBold(10))
+                .foregroundColor(Palette.ground)
+                .padding(.horizontal, 6)
+                .frame(minHeight: 18)
+                .background(Capsule().fill(group.accent))
+                .padding(5)
+        }
+        .clipShape(Self.cellShape)
+        .overlay(Self.cellShape.stroke(isChosen ? Palette.accent : group.accent, lineWidth: isChosen ? 3 : 1.5))
+        .scaleEffect(isChosen ? 1.04 : 1)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isChosen)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isUsed)
+        .contentShape(Self.cellShape)
+        .onTapGesture {
+            choose(reference)
+        }
+        .accessibilityLabel("\(group.name) page \(index + 1), \(isUsed ? "in the note" : "not in the note")")
+    }
+
+    private func pdfImage(_ asset: String, index: Int, size: [Double], isShownInverted: Bool) -> CGImage? {
+        let element = Element(id: "\(asset)-\(index)", type: .importPage, layer: .importLayer, order: 0, asset: asset, sourcePage: index, sourceSizeMillimetres: size, inverted: isShownInverted, updated: .distantPast, device: "")
+        let pixels = Double(Self.pdfColumnWidth * UIScreen.main.scale)
+        return ImportImages.shared.image(for: element, pixelsPerMillimetre: pixels / PaperGeometry.cellWidth, isDark: preferences.paperStyle == .dark, rendersNewLevel: false)
+    }
+
+    private func choose(_ reference: PdfPageReference) {
+        guard isEditable else { return }
+        Haptics.tick()
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            chosenPdfPage = chosenPdfPage == reference ? nil : reference
+        }
+    }
+
+    private func placeChosenPdfPage(on cell: CellPosition) {
+        guard let chosen = chosenPdfPage, isEditable, let group = pdfGroups.first(where: { $0.asset == chosen.asset }) else { return }
+        let sizes = pdfPageSizes(group)
+        guard sizes.indices.contains(chosen.index) else { return }
+        Haptics.landed()
+        library.placeImportPage(asset: chosen.asset, sourcePage: chosen.index, size: sizes[chosen.index], sourceName: group.sourceName, isInverted: isInverted(group), on: pageId, at: cell)
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            chosenPdfPage = nil
         }
     }
 

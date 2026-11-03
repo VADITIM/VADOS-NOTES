@@ -2024,6 +2024,136 @@ textarea.inline-title-field {
     align-items: start;
 }
 
+.transfer-body.has-pdfs {
+    grid-template-columns: 136px 168px minmax(0, 1fr);
+}
+
+.transfer-pdf-column {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+    scrollbar-width: none;
+    touch-action: pan-y;
+    user-select: none;
+    padding: 4px;
+}
+
+.transfer-pdf-column[hidden] {
+    display: none;
+}
+
+.transfer-pdf-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.transfer-pdf-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.transfer-pdf-bar {
+    flex: none;
+    width: 4px;
+    height: 30px;
+    border-radius: 2px;
+    background: var(--pdf-accent);
+}
+
+.transfer-pdf-heading {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.transfer-pdf-title {
+    font-weight: 700;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--palette-text-bright);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.transfer-pdf-invert {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: var(--pdf-accent);
+    background: var(--palette-sunken-deep);
+    transition: background 160ms, color 160ms;
+}
+
+.transfer-pdf-invert.is-inverted {
+    color: var(--palette-ground);
+    background: var(--pdf-accent);
+}
+
+.transfer-pdf-page {
+    position: relative;
+    flex: none;
+    aspect-ratio: 210 / 297;
+    border-radius: 6px;
+    outline: 1.5px solid var(--pdf-accent);
+    background: var(--palette-sunken-deep);
+    overflow: hidden;
+    cursor: pointer;
+    transition: outline-color 160ms, scale 160ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.transfer-pdf-page.is-chosen {
+    outline: 3px solid var(--palette-accent);
+    scale: 1.04;
+}
+
+.transfer-pdf-dot {
+    position: absolute;
+    left: 7px;
+    bottom: 7px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--palette-ground);
+    background: var(--semantic-destructive);
+    transition: background 160ms;
+    pointer-events: none;
+}
+
+.transfer-pdf-dot.is-used {
+    background: var(--semantic-create);
+}
+
+.transfer-pdf-label {
+    position: absolute;
+    right: 5px;
+    bottom: 5px;
+    min-height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+    font-size: 10px;
+    color: var(--palette-ground);
+    background: var(--pdf-accent);
+    pointer-events: none;
+}
+
 .transfer-strip {
     position: sticky;
     top: 0;

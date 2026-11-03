@@ -746,6 +746,75 @@ export function cellSwap(elements, first, second, centre) {
     return moved
 }
 
+export function importCell(element) {
+    const placement = element.placement
+    const size = element.source_size_mm
+    if (!placement || !size || size.length !== 2) {
+        return null
+    }
+    const x = placement.x + (size[0] * placement.scale) / 2
+    const y = placement.y + (size[1] * placement.scale) / 2
+    return { column: Math.floor(x / cellWidth), row: Math.floor(y / cellHeight) }
+}
+
+function isImportSource(element, asset, sourcePage) {
+    return !element.deleted && element.type === "import" && element.asset === asset && (element.source_page ?? 0) === sourcePage
+}
+
+export function isImportPlaced(elements, asset, sourcePage) {
+    return elements.some((element) => isImportSource(element, asset, sourcePage))
+}
+
+export function importPlacing(asset, sourcePage, target, elements, now, device, adding) {
+    const imports = elements.filter((element) => !element.deleted && element.type === "import")
+    const isSame = (element) => isImportSource(element, asset, sourcePage)
+    const isOnTarget = (element) => {
+        const cell = importCell(element)
+        return cell !== null && cell.column === target.column && cell.row === target.row
+    }
+    const edit = { before: [], after: [] }
+    if (imports.some((element) => isSame(element) && isOnTarget(element))) {
+        return edit
+    }
+    for (const occupant of imports) {
+        if (!isSame(occupant) && isOnTarget(occupant)) {
+            edit.before.push(occupant)
+            edit.after.push(tombstone(occupant, now, device))
+        }
+    }
+    const existing = imports.find(isSame)
+    const origin = existing ? importCell(existing) : null
+    if (existing && origin) {
+        const moved = translatedElement(existing, [(target.column - origin.column) * cellWidth, (target.row - origin.row) * cellHeight])
+        edit.before.push(existing)
+        edit.after.push({ ...moved, updated: now, device })
+    } else {
+        edit.after.push(adding())
+    }
+    return edit
+}
+
+export function editReversal(edit, current, now, device, newIdentifier) {
+    const beforeById = new Map(edit.before.map((element) => [element.id, element]))
+    const reverse = { before: [], after: [] }
+    for (const after of edit.after) {
+        const present = current(after.id) ?? after
+        const before = beforeById.get(after.id)
+        if (before) {
+            if (after.deleted && !before.deleted) {
+                reverse.after.push({ ...before, id: newIdentifier(), updated: now, device, deleted: false })
+            } else if (!after.deleted) {
+                reverse.before.push(present)
+                reverse.after.push({ ...before, updated: now, device })
+            }
+        } else if (!present.deleted) {
+            reverse.before.push(present)
+            reverse.after.push(tombstone(present, now, device))
+        }
+    }
+    return reverse
+}
+
 export function cellCountAlong(extent, isColumns) {
     return isColumns ? extent.cols : extent.rows
 }

@@ -1,8 +1,8 @@
 import { create, microLabel, pressable, segmented, setEnabled, slabButton } from "./components.js"
 import { exportCells } from "./exports.js"
-import { importFailureMessage, isImportInverted, readPdf, subscribeImports } from "./imports.js"
+import { importFailureMessage, importImage, importPageSizes, isImportInverted, readPdf, subscribeImports } from "./imports.js"
 import { importElement } from "./library.js"
-import { liveElements } from "./model.js"
+import { cellHeight, cellWidth, liveElements } from "./model.js"
 import { animate, duration } from "./motion.js"
 import * as preferences from "./preferences.js"
 import { renderCell } from "./renderer.js"
@@ -44,6 +44,7 @@ export function transferSheet(app, request) {
     let document_ = null
     const placements = { export: new Map(), import: new Map() }
     let gesture = null
+    let chosenPdfPage = null
 
     const isViewing = () => mode === "view"
     const placed = () => placements[mode] ?? new Map()
@@ -151,6 +152,7 @@ export function transferSheet(app, request) {
 
     const modeControl = segmented([{ value: "view", title: "View all" }, { value: "export", title: "Export" }, { value: "import", title: "Import" }], mode, (value) => {
         mode = value
+        chosenPdfPage = null
         render(true)
         if (mode === "import" && !document_) {
             choose()
@@ -194,6 +196,133 @@ export function transferSheet(app, request) {
 
     const grid = create("div", "transfer-grid")
     let cells = []
+
+    const pdfColumn = create("div", "transfer-pdf-column")
+    let pdfItems = []
+    let pdfSignature = ""
+    const pdfGroups = () => {
+        const current = page()
+        if (!current) {
+            return []
+        }
+        const imports = current.elements.filter((element) => element.type === "import" && element.asset)
+        const accents = tokens.imports.accents
+        return [...new Set(imports.map((element) => element.asset))].map((asset, position) => {
+            const elements = imports.filter((element) => element.asset === asset)
+            const live = elements.filter((element) => !element.deleted)
+            const sourceName = elements.find((element) => element.source_name)?.source_name ?? null
+            const measured = importPageSizes(asset)
+            const known = Math.max(...elements.map((element) => element.source_page ?? 0)) + 1
+            const sizes = measured?.length ? measured : Array.from({ length: known }, (_, index) => elements.find((element) => element.source_page === index)?.source_size_mm ?? [cellWidth, cellHeight])
+            return { asset, sourceName, name: sourceName ?? `PDF ${position + 1}`, accent: accents[position % accents.length], elements, live, sizes, used: new Set(live.map((element) => element.source_page ?? 0)) }
+        })
+    }
+    const isGroupInverted = (group) => {
+        if (!group.live.length) {
+            return group.elements.at(-1)?.inverted === true
+        }
+        return group.live.every((element) => isImportInverted(element, preferences.paperStyle() === "dark"))
+    }
+    const choosePdfPage = (asset, index) => {
+        if (!isEditable) {
+            return
+        }
+        chosenPdfPage = chosenPdfPage?.asset === asset && chosenPdfPage.index === index ? null : { asset, index }
+        render(false)
+    }
+    const placeChosenPdfPage = (cell) => {
+        const group = pdfGroups().find((candidate) => candidate.asset === chosenPdfPage?.asset)
+        const size = group?.sizes[chosenPdfPage.index]
+        if (!group || !size || !isEditable) {
+            return
+        }
+        const index = chosenPdfPage.index
+        chosenPdfPage = null
+        library.placeImportPage(group.asset, index, size, group.sourceName, isGroupInverted(group), request.pageId, cell)
+        render(false)
+    }
+    const layoutPdfColumn = (groups) => {
+        const signature = groups.map((group) => `${group.asset}|${group.name}|${group.sizes.length}`).join(",")
+        if (signature === pdfSignature) {
+            return
+        }
+        pdfSignature = signature
+        pdfItems = []
+        pdfColumn.replaceChildren(...groups.map((group) => {
+            const title = create("span", "transfer-pdf-title", group.name)
+            const count = microLabel("")
+            count.style.color = group.accent
+            const invert = create("button", "transfer-pdf-invert", glyph("invert", { color: "currentColor", size: 15 }))
+            pressable(invert)
+            invert.addEventListener("click", () => {
+                const current = pdfGroups().find((candidate) => candidate.asset === group.asset)
+                if (current?.live.length) {
+                    library.setInverted(current.live.map((element) => element.id), request.pageId, !isGroupInverted(current))
+                }
+            })
+            const bar = create("span", "transfer-pdf-bar")
+            const head = create("div", "transfer-pdf-head", bar, create("div", "transfer-pdf-heading", title, count), invert)
+            const pages = group.sizes.map((size, index) => {
+                const canvas = create("canvas", "transfer-canvas")
+                const dot = create("span", "transfer-pdf-dot")
+                const label = create("span", "transfer-pdf-label", pageCount(index, group.sizes.length))
+                const element = create("div", "transfer-pdf-page", canvas, dot, label)
+                element.addEventListener("click", () => choosePdfPage(group.asset, index))
+                pdfItems.push({ asset: group.asset, index, canvas, dot, element })
+                return element
+            })
+            const groupElement = create("div", "transfer-pdf-group", head, ...pages)
+            groupElement.style.setProperty("--pdf-accent", group.accent)
+            groupElement.count = count
+            groupElement.invert = invert
+            groupElement.asset = group.asset
+            return groupElement
+        }))
+    }
+    const updatePdfColumn = (groups) => {
+        layoutPdfColumn(groups)
+        for (const groupElement of pdfColumn.children) {
+            const group = groups.find((candidate) => candidate.asset === groupElement.asset)
+            const isInverted = isGroupInverted(group)
+            groupElement.count.textContent = `${group.used.size}/${group.sizes.length}`
+            groupElement.invert.classList.toggle("is-inverted", isInverted)
+            groupElement.invert.setAttribute("aria-label", isInverted ? "Original PDF" : "Invert PDF")
+            setEnabled(groupElement.invert, isEditable && group.live.length > 0)
+        }
+        for (const { asset, index, dot, element } of pdfItems) {
+            const group = groups.find((candidate) => candidate.asset === asset)
+            dot.classList.toggle("is-used", group.used.has(index))
+            element.classList.toggle("is-chosen", chosenPdfPage?.asset === asset && chosenPdfPage.index === index)
+        }
+    }
+    const drawPdfPages = () => {
+        if (pdfColumn.hidden) {
+            return
+        }
+        const groups = pdfGroups()
+        const isDark = preferences.paperStyle() === "dark"
+        const ratio = window.devicePixelRatio || 1
+        for (const { asset, index, canvas } of pdfItems) {
+            const group = groups.find((candidate) => candidate.asset === asset)
+            const size = group?.sizes[index]
+            const width = Math.round(canvas.clientWidth * ratio)
+            const height = Math.round(canvas.clientHeight * ratio)
+            if (!size || !width || !height) {
+                continue
+            }
+            const image = importImage({ asset, source_page: index, source_size_mm: size, inverted: isGroupInverted(group) }, width / cellWidth, isDark, false)
+            canvas.width = width
+            canvas.height = height
+            if (!image) {
+                continue
+            }
+            const inset = 4 * ratio
+            const scale = Math.min((width - inset * 2) / image.width, (height - inset * 2) / image.height)
+            const drawnWidth = image.width * scale
+            const drawnHeight = image.height * scale
+            canvas.getContext("2d").drawImage(image, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight)
+        }
+    }
 
     const assign = (index, target) => {
         const key = cellKey(target.column, target.row)
@@ -368,6 +497,8 @@ export function transferSheet(app, request) {
             drop()
         } else if (!gesture.isPainting && !isViewing() && gesture.source.kind === "cell" && event.type === "pointerup") {
             paint(gesture.source, false)
+        } else if (isViewing() && chosenPdfPage && event.type === "pointerup") {
+            placeChosenPdfPage(viewedCell(gesture.source))
         }
         gesture = null
     }
@@ -402,6 +533,7 @@ export function transferSheet(app, request) {
         for (const { canvas, column, row } of cells) {
             renderCell(canvas, shown, column, row, options)
         }
+        drawPdfPages()
         for (const { canvas, index } of stripItems) {
             if (isViewing()) {
                 const cell = cellAtPosition(index)
@@ -490,6 +622,12 @@ export function transferSheet(app, request) {
         layoutStrip()
         const count = total()
         const viewing = isViewing()
+        const groups = viewing ? pdfGroups() : []
+        pdfColumn.hidden = groups.length === 0
+        body.classList.toggle("has-pdfs", groups.length > 0)
+        if (groups.length) {
+            updatePdfColumn(groups)
+        }
         const isGrowing = viewing && isEditable && Boolean(page())
         grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(0, ${largestCellWidth}px))${isGrowing ? " 28px" : ""}`
         growColumn.hidden = !isGrowing
@@ -540,7 +678,7 @@ export function transferSheet(app, request) {
     }
 
     const header = create("div", "transfer-header", modeControl, appearanceControl, confirm)
-    const body = create("div", "transfer-body", strip, grid)
+    const body = create("div", "transfer-body", pdfColumn, strip, grid)
     const module = create("div", "settings-module transfer-module", create("div", "settings-module-header", microLabel(page() ? library.noteTitle(page()) : "Note")), header, body)
     squircle(module, { radius: squircleRadius.panel, fill: tokens.palette.panel_solid, border: tokens.palette.border })
     const panels = create("div", "settings-panels", module)
@@ -550,7 +688,12 @@ export function transferSheet(app, request) {
             app.navigator.show(null)
         }
     })
-    const unsubscribeImports = subscribeImports(() => requestAnimationFrame(drawCells))
+    const unsubscribeImports = subscribeImports(() => requestAnimationFrame(() => {
+        if (isViewing() && !pdfColumn.hidden) {
+            updatePdfColumn(pdfGroups())
+        }
+        drawCells()
+    }))
     const resize = () => requestAnimationFrame(drawCells)
     window.addEventListener("resize", resize)
     sheet.unsubscribe = () => {
@@ -559,7 +702,7 @@ export function transferSheet(app, request) {
         gesture?.ghost?.remove()
     }
     sheet.refresh = () => render(false)
-    sheet.riseParts = () => [header, strip, grid].forEach((part, position) => animate(part, [{ opacity: 0, transform: "translateY(16px)" }, { opacity: 1, transform: "translateY(0)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out", delay: duration("rise_delay") + position * duration("chrome_stagger") }))
+    sheet.riseParts = () => [header, pdfColumn, strip, grid].forEach((part, position) => animate(part, [{ opacity: 0, transform: "translateY(16px)" }, { opacity: 1, transform: "translateY(0)" }], { milliseconds: duration("overlay_enter"), curveName: "power_two_out", delay: duration("rise_delay") + position * duration("chrome_stagger") }))
     confirm.hidden = isViewing()
     render(false)
     if (mode === "import") {

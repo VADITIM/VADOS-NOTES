@@ -11,6 +11,7 @@ const whiteLuminance = 0.88
 const whiteShare = 0.8
 
 const documents = new Map()
+const pageSizes = new Map()
 const images = new Map()
 const listeners = new Set()
 let queue = Promise.resolve()
@@ -99,12 +100,37 @@ export async function readPdf(file) {
     for (let number = 1; number <= document.numPages; number += 1) {
         const page = await document.getPage(number)
         const viewport = page.getViewport({ scale: 1 })
-        pages.push([Math.round(viewport.width * millimetresPerPoint * 100) / 100, Math.round(viewport.height * millimetresPerPoint * 100) / 100])
+        pages.push(pageSize(viewport))
         inverted.push(isDark && isWhitePage(await sampleCanvas(page, viewport)))
     }
     await writeAsset(assetPath(asset), bytes)
     documents.set(asset, Promise.resolve(document))
-    return { asset, pages, inverted }
+    return { asset, name: file.name, pages, inverted }
+}
+
+function pageSize(viewport) {
+    return [Math.round(viewport.width * millimetresPerPoint * 100) / 100, Math.round(viewport.height * millimetresPerPoint * 100) / 100]
+}
+
+export function importPageSizes(asset) {
+    if (pageSizes.has(asset)) {
+        return pageSizes.get(asset)
+    }
+    pageSizes.set(asset, null)
+    queue = queue.then(async () => {
+        try {
+            const pdf = await documentFor(asset)
+            const sizes = []
+            for (let number = 1; number <= pdf.numPages; number += 1) {
+                sizes.push(pageSize((await pdf.getPage(number)).getViewport({ scale: 1 })))
+            }
+            pageSizes.set(asset, sizes)
+        } catch {
+            pageSizes.set(asset, [])
+        }
+        announce()
+    })
+    return null
 }
 
 async function sampleCanvas(page, viewport) {
@@ -154,6 +180,7 @@ export function reloadAssets(assets) {
     for (const asset of assets) {
         closeDocument(documents.get(asset))
         documents.delete(asset)
+        pageSizes.delete(asset)
         for (const key of [...images.keys()]) {
             if (key.startsWith(`${asset}|`)) {
                 images.delete(key)
@@ -266,7 +293,7 @@ function render(key, element, level, isDark) {
     })
 }
 
-export function importImage(element, pixelsPerMillimetre, isDark) {
+export function importImage(element, pixelsPerMillimetre, isDark, rendersNewLevel = true) {
     if (!element.asset || !element.source_size_mm) {
         return null
     }
@@ -274,11 +301,11 @@ export function importImage(element, pixelsPerMillimetre, isDark) {
     const prefix = `${element.asset}|${element.source_page}|`
     const key = `${prefix}${level}`
     let entry = images.get(key)
-    if (!entry) {
+    if (!entry && (rendersNewLevel || cachedEntries(element).length === 0)) {
         render(key, element, level, isDark)
         entry = images.get(key)
     }
-    if (!entry.canvas) {
+    if (!entry?.canvas) {
         entry = cachedEntries(element).sort((first, second) => Math.abs(first.level - level) - Math.abs(second.level - level))[0]
     }
     if (!entry?.canvas) {

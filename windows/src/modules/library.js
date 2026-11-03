@@ -7,9 +7,11 @@ import {
     cellSwap,
     cellWidth,
     decodeFile,
+    editReversal,
     encodeNotebook,
     encodePage,
     groupPath,
+    importPlacing,
     isNewer,
     isOrderedBefore,
     layerForTool,
@@ -44,7 +46,7 @@ function rounded(value) {
     return Math.round(value * 100) / 100
 }
 
-export function importElement(asset, index, [width, height], now, device, row = index, column = 0, isInverted = false) {
+export function importElement(asset, index, [width, height], now, device, row = index, column = 0, isInverted = false, sourceName = null) {
     const isA4 = Math.abs(width - cellWidth) <= sizeTolerance && Math.abs(height - cellHeight) <= sizeTolerance
     const scale = isA4 ? 1 : Math.min((cellWidth - importMarginMillimetres * 2) / width, (cellHeight - importMarginMillimetres * 2) / height)
     return {
@@ -54,6 +56,7 @@ export function importElement(asset, index, [width, height], now, device, row = 
         order: index,
         asset,
         source_page: index,
+        ...(sourceName ? { source_name: sourceName } : {}),
         source_size_mm: [width, height],
         placement: { x: rounded(column * cellWidth + (cellWidth - width * scale) / 2), y: rounded(row * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
         fit: isA4 ? "original" : "fit_cell",
@@ -295,7 +298,7 @@ export class Library {
             extent: { cols: 1, rows: Math.max(1, pdf?.pages.length ?? 1) },
         }
         this.applyHeader(header)
-        pdf?.pages.forEach((size, index) => this.applyElement(header.id, importElement(pdf.asset, index, size, now, this.device, index, 0, pdf.inverted?.[index] === true)))
+        pdf?.pages.forEach((size, index) => this.applyElement(header.id, importElement(pdf.asset, index, size, now, this.device, index, 0, pdf.inverted?.[index] === true, pdf.name)))
         return this.pagesById.get(header.id)
     }
 
@@ -309,7 +312,7 @@ export class Library {
         const firstOrder = page.elements.reduce((highest, element) => Math.max(highest, element.order), -1) + 1
         this.updatePage(pageId, { extent: { cols: page.extent.cols, rows: firstRow + pdf.pages.length } })
         pdf.pages.forEach((size, index) => {
-            const element = importElement(pdf.asset, index, size, now, this.device, firstRow + index, 0, pdf.inverted?.[index] === true)
+            const element = importElement(pdf.asset, index, size, now, this.device, firstRow + index, 0, pdf.inverted?.[index] === true, pdf.name)
             element.order = firstOrder + index
             this.applyElement(pageId, element)
         })
@@ -328,10 +331,30 @@ export class Library {
             this.updatePage(pageId, { extent: { cols: columns, rows } })
         }
         cells.filter((cell) => cell.index < pdf.pages.length).forEach((cell, position) => {
-            const element = importElement(pdf.asset, cell.index, pdf.pages[cell.index], now, this.device, cell.row, cell.column, pdf.inverted?.[cell.index] === true)
+            const element = importElement(pdf.asset, cell.index, pdf.pages[cell.index], now, this.device, cell.row, cell.column, pdf.inverted?.[cell.index] === true, pdf.name)
             element.order = firstOrder + position
             this.applyElement(pageId, element)
         })
+    }
+
+    placeImportPage(asset, sourcePage, size, sourceName, isInverted, pageId, cell) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId)) {
+            return
+        }
+        this.finishText()
+        const now = this.timestamp()
+        const edit = importPlacing(asset, sourcePage, cell, page.elements, now, this.device, () => ({
+            ...importElement(asset, sourcePage, size, now, this.device, cell.row, cell.column, isInverted, sourceName),
+            order: nextOrder(page, "import"),
+        }))
+        if (!edit.after.length) {
+            return
+        }
+        for (const element of edit.after) {
+            this.applyElement(pageId, element)
+        }
+        this.record(edit, pageId)
     }
 
     updatePage(pageId, changes) {
@@ -799,28 +822,12 @@ export class Library {
             return reverse
         }
         const now = this.timestamp()
-        const beforeById = new Map(step.before.map((element) => [element.id, element]))
-        for (const after of step.after) {
-            const current = this.page(pageId).elements.find((candidate) => candidate.id === after.id) ?? after
-            const before = beforeById.get(after.id)
-            if (before) {
-                if (after.deleted && !before.deleted) {
-                    const revived = { ...before, id: makeIdentifier("e", timestampMilliseconds(now)), updated: now, device: this.device, deleted: false }
-                    this.applyElement(pageId, revived)
-                    reverse.after.push(revived)
-                } else if (!after.deleted) {
-                    const restored = { ...before, updated: now, device: this.device }
-                    this.applyElement(pageId, restored)
-                    reverse.before.push(current)
-                    reverse.after.push(restored)
-                }
-            } else if (!current.deleted) {
-                const removed = tombstone(current, now, this.device)
-                this.applyElement(pageId, removed)
-                reverse.before.push(current)
-                reverse.after.push(removed)
-            }
+        const edit = editReversal(step, (id) => this.page(pageId).elements.find((candidate) => candidate.id === id), now, this.device, () => makeIdentifier("e", timestampMilliseconds(now)))
+        for (const element of edit.after) {
+            this.applyElement(pageId, element)
         }
+        reverse.before = edit.before
+        reverse.after = edit.after
         if (step.extent) {
             this.updatePage(pageId, { extent: step.extent.before })
             reverse.extent = { before: step.extent.after, after: step.extent.before }

@@ -43,6 +43,8 @@ final class ImportImages {
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
     private var documents: [String: PDFDocument] = [:]
+    private var measuredPageSizes: [String: [[Double]]] = [:]
+    private var measuring: Set<String> = []
     private var documentOrder: [String] = []
     private let imageContext = CIContext()
     var assetURL: (String) -> URL? = { _ in nil }
@@ -104,15 +106,41 @@ final class ImportImages {
         var inverted: [Bool] = []
         for index in 0..<document.pageCount {
             guard let page = document.page(at: index) else { continue }
-            let bounds = page.bounds(for: .mediaBox)
-            let isTurned = page.rotation % 180 != 0
-            let width = Double(isTurned ? bounds.height : bounds.width) * millimetresPerPoint
-            let height = Double(isTurned ? bounds.width : bounds.height) * millimetresPerPoint
-            pages.append([(width * 100).rounded() / 100, (height * 100).rounded() / 100])
+            pages.append(size(of: page))
             let sample = flattened(page, pixelSize: CGSize(width: edgeSampleCount * 2, height: edgeSampleCount * 2))
             inverted.append(isDark && sample.map(isWhitePage) == true)
         }
-        return ImportedDocument(asset: asset, pages: pages, inverted: inverted)
+        return ImportedDocument(asset: asset, name: url.lastPathComponent, pages: pages, inverted: inverted)
+    }
+
+    private static func size(of page: PDFPage) -> [Double] {
+        let bounds = page.bounds(for: .mediaBox)
+        let isTurned = page.rotation % 180 != 0
+        let width = Double(isTurned ? bounds.height : bounds.width) * millimetresPerPoint
+        let height = Double(isTurned ? bounds.width : bounds.height) * millimetresPerPoint
+        return [(width * 100).rounded() / 100, (height * 100).rounded() / 100]
+    }
+
+    func pageSizes(of asset: String) -> [[Double]]? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let sizes = measuredPageSizes[asset] {
+            return sizes
+        }
+        guard !measuring.contains(asset) else { return nil }
+        measuring.insert(asset)
+        let url = assetURL(asset)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let document = self.document(for: asset, at: url)
+            let sizes = document.map { document in (0..<document.pageCount).compactMap { document.page(at: $0).map(Self.size(of:)) } } ?? []
+            self.lock.lock()
+            self.measuredPageSizes[asset] = sizes
+            self.measuring.remove(asset)
+            self.lock.unlock()
+            Self.announce(asset)
+        }
+        return nil
     }
 
     private static func flattened(_ page: PDFPage, pixelSize: CGSize) -> CGImage? {
@@ -239,6 +267,7 @@ final class ImportImages {
             self.documentOrder.removeAll { assets.contains($0) }
             self.lock.lock()
             self.entries = self.entries.filter { key, _ in !assets.contains { key.hasPrefix("\($0)|") } }
+            self.measuredPageSizes = self.measuredPageSizes.filter { !assets.contains($0.key) }
             self.lock.unlock()
             DispatchQueue.main.async {
                 Self.revision += 1

@@ -28,6 +28,7 @@ struct StrokeReplacement {
 
 struct ImportedDocument {
     let asset: String
+    let name: String?
     let pages: [[Double]]
     var inverted: [Bool]
 
@@ -273,7 +274,7 @@ final class Library: ObservableObject {
         if let document {
             grouped {
                 for (index, size) in document.pages.enumerated() {
-                    apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now, isInverted: document.isInverted(index))), page: header.id)
+                    apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now, isInverted: document.isInverted(index), sourceName: document.name)), page: header.id)
                 }
             }
         }
@@ -290,7 +291,7 @@ final class Library: ObservableObject {
         }
         grouped {
             for (index, size) in document.pages.enumerated() {
-                var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index, isInverted: document.isInverted(index))
+                var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index, isInverted: document.isInverted(index), sourceName: document.name)
                 element.order = firstOrder + index
                 apply(.element(pageId: pageId, element: element), page: pageId)
             }
@@ -312,14 +313,32 @@ final class Library: ObservableObject {
         }
         grouped {
             for (position, placement) in placements.enumerated() {
-                var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column, isInverted: document.isInverted(placement.index))
+                var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column, isInverted: document.isInverted(placement.index), sourceName: document.name)
                 element.order = firstOrder + position
                 apply(.element(pageId: pageId, element: element), page: pageId)
             }
         }
     }
 
-    func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil, column: Int = 0, isInverted: Bool = false) -> Element {
+    func placeImportPage(asset: String, sourcePage: Int, size: [Double], sourceName: String?, isInverted: Bool, on pageId: String, at cell: CellPosition) {
+        guard let page = page(pageId), !isReadOnly(pageId) else { return }
+        finishText()
+        let now = store.timestamp()
+        let edit = ImportPlacing.placed(asset: asset, sourcePage: sourcePage, at: CellIndex(column: cell.column, row: cell.row), in: page.elements, now: now, device: device) {
+            var element = importElement(asset: asset, index: sourcePage, size: size, now: now, row: cell.row, column: cell.column, isInverted: isInverted, sourceName: sourceName)
+            element.order = page.nextOrder(in: .importLayer)
+            return element
+        }
+        guard !edit.after.isEmpty else { return }
+        grouped {
+            for element in edit.after {
+                apply(.element(pageId: pageId, element: element), page: pageId)
+            }
+        }
+        record(UndoStep(before: edit.before, after: edit.after), on: pageId)
+    }
+
+    func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil, column: Int = 0, isInverted: Bool = false, sourceName: String? = nil) -> Element {
         let width = size[0]
         let height = size[1]
         let cellWidth = PaperGeometry.cellWidth
@@ -336,6 +355,7 @@ final class Library: ObservableObject {
             order: index,
             asset: asset,
             sourcePage: index,
+            sourceName: sourceName,
             sourceSizeMillimetres: [width, height],
             placement: Placement(x: rounded(Double(column) * cellWidth + (cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
             fit: isA4 ? .original : .fitCell,
@@ -813,34 +833,13 @@ final class Library: ObservableObject {
     private func revert(_ step: UndoStep, on pageId: String) -> UndoStep {
         guard page(pageId) != nil, !isReadOnly(pageId) else { return UndoStep(before: [], after: []) }
         let now = store.timestamp()
-        let beforeById = Dictionary(step.before.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var reverse = UndoStep(before: [], after: [])
+        let edit = ElementEdit(before: step.before, after: step.after).reversal(current: { page(pageId)?.element(withId: $0) }, now: now, device: device) {
+            Identifier.make(prefix: Identifier.elementPrefix, date: now)
+        }
+        var reverse = UndoStep(before: edit.before, after: edit.after)
         grouped {
-            for after in step.after {
-                let current = page(pageId)?.element(withId: after.id) ?? after
-                if let before = beforeById[after.id] {
-                    if after.deleted && !before.deleted {
-                        var revived = before
-                        revived.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
-                        revived.updated = now
-                        revived.device = device
-                        revived.deleted = false
-                        apply(.element(pageId: pageId, element: revived), page: pageId)
-                        reverse.after.append(revived)
-                    } else if !after.deleted {
-                        var restored = before
-                        restored.updated = now
-                        restored.device = device
-                        apply(.element(pageId: pageId, element: restored), page: pageId)
-                        reverse.before.append(current)
-                        reverse.after.append(restored)
-                    }
-                } else if !current.deleted {
-                    let tombstone = current.tombstone(at: now, device: device)
-                    apply(.element(pageId: pageId, element: tombstone), page: pageId)
-                    reverse.before.append(current)
-                    reverse.after.append(tombstone)
-                }
+            for element in edit.after {
+                apply(.element(pageId: pageId, element: element), page: pageId)
             }
         }
         if let change = step.extent {
