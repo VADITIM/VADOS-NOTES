@@ -3,6 +3,7 @@ import UIKit
 
 enum TextRhythm {
     private static var offsets: [String: CGFloat] = [:]
+    private static let offsetsLock = NSLock()
 
     static var rowGap: CGFloat {
         CGFloat(PaperGeometry.rowSpacing)
@@ -36,7 +37,10 @@ enum TextRhythm {
 
     static func baselineOffset(font: UIFont, rows: Int, zoom: CGFloat) -> CGFloat {
         let key = "\(font.fontName)|\(font.pointSize)|\(rows)|\(zoom)"
-        if let cached = offsets[key] {
+        offsetsLock.lock()
+        let cached = offsets[key]
+        offsetsLock.unlock()
+        if let cached {
             return cached
         }
         let storage = NSTextStorage(string: "0", attributes: [.font: font, .paragraphStyle: paragraph(rows: rows, zoom: zoom)])
@@ -47,10 +51,12 @@ enum TextRhythm {
         storage.addLayoutManager(manager)
         let placed = manager.location(forGlyphAt: 0).y
         let target = (baseline - baselineLift + rowGap * CGFloat(rows - 1)) * zoom
-        if offsets.count > 500 {
+        offsetsLock.lock()
+        if offsets.count > Tokens.shared.memory.textLayoutEntries {
             offsets.removeAll()
         }
         offsets[key] = placed - target
+        offsetsLock.unlock()
         return placed - target
     }
 

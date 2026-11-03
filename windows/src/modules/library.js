@@ -31,7 +31,6 @@ import {
 import { deviceIdentity, loadFiles, readSetting, readSyncState, writeFile, writeSetting } from "./storage.js"
 import { tokens } from "./tokens.js"
 
-const undoLimit = 200
 const importMarginMillimetres = 5
 const sizeTolerance = 1
 const duplicateOffset = 8
@@ -748,6 +747,11 @@ export class Library {
         return (this.redoSteps.get(pageId) ?? []).length > 0
     }
 
+    noteClosed(pageId) {
+        this.undoSteps.delete(pageId)
+        this.redoSteps.delete(pageId)
+    }
+
     undo(pageId) {
         this.finishText()
         const step = this.undoSteps.get(pageId)?.pop()
@@ -818,8 +822,8 @@ export class Library {
     record(step, pageId) {
         const steps = this.stack(this.undoSteps, pageId)
         steps.push(step)
-        if (steps.length > undoLimit) {
-            steps.splice(0, steps.length - undoLimit)
+        if (steps.length > tokens.memory.undo_steps) {
+            steps.splice(0, steps.length - tokens.memory.undo_steps)
         }
         this.redoSteps.set(pageId, [])
         this.changed()

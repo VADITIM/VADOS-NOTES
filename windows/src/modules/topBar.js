@@ -7,6 +7,7 @@ import { tokens } from "./tokens.js"
 
 const searchPrompt = "Search"
 const bareTitleSize = 15
+const titleSpacing = 12
 
 function createdText(pageId) {
     const date = creationDate(pageId)
@@ -121,8 +122,8 @@ export class TopBar {
         this.folderPill.append(this.folderLabel, this.folderTitleHost)
         this.pageTitles = create("div", "page-titles")
         this.pageFolder = revealLabel(microLabel(""))
-        this.pageName = inlineTitle({ title: "Note", size: bareTitleSize, isSweeping: false, onRename: (title) => this.renameNote(title) })
-        this.pageNameReveal = revealLabel(this.pageName)
+        this.pageName = inlineTitle({ title: "Note", size: bareTitleSize, isSweeping: false, lines: tokens.title.lines, minimumScale: tokens.title.minimum_scale, onRename: (title) => this.renameNote(title) })
+        this.pageNameReveal = revealLabel(this.pageName, "page-name")
         this.pageDate = revealLabel(create("span", "page-date"))
         this.pageTitles.append(this.pageFolder, this.pageNameReveal, this.pageDate)
         this.left.append(this.folderPill, this.pageTitles)
@@ -276,7 +277,20 @@ export class TopBar {
             labelReveal(this.pageNameReveal, isPageShown, { delay: stagger })
             labelReveal(this.pageDate, isPageShown, { delay: stagger * 2 })
         }
+        this.pageTitles.classList.toggle("is-shown", isPageShown)
+        if (isPage) {
+            this.fitPageTitles()
+        }
         this.report()
+    }
+
+    fitPageTitles() {
+        const left = this.pageTitles.getBoundingClientRect().left
+        const right = this.controls.getBoundingClientRect().left
+        this.pageTitles.style.maxWidth = `${Math.max(0, right - left - titleSpacing)}px`
+        if (!this.pageName.isEditing()) {
+            this.pageName.fit()
+        }
     }
 
     report() {

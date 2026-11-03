@@ -14,7 +14,7 @@ import {
     wheelButton,
 } from "./controls.js"
 import { slotsFromTokens, swatchSlots } from "./menu.js"
-import { isImportInverted } from "./imports.js"
+import { isImportInverted, purgeImports } from "./imports.js"
 import { cellContaining, clampBox, liveElements } from "./model.js"
 import { duration, tween } from "./motion.js"
 import { popTogether } from "./pill.js"
@@ -93,6 +93,8 @@ export class PageScreen {
         window.removeEventListener("keydown", this.keyDown)
         this.canvas.destroy()
         this.closeEditor()
+        this.library.noteClosed(this.pageId)
+        purgeImports()
     }
 
     get library() {

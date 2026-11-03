@@ -130,7 +130,15 @@ struct PageScreen: View {
                 lastSubNavKey = key
             }
         }
-        .onAppear(perform: startFlight)
+        .onAppear {
+            library.noteOpened(pageId)
+            Thumbnails.shared.removeAll()
+            startFlight()
+        }
+        .onDisappear {
+            library.noteClosed(pageId)
+            ImportImages.shared.purge()
+        }
         .onChange(of: navigator.isChromeLeaving) { _, leaving in
             guard leaving else { return }
             library.finishText()

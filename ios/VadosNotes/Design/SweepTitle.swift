@@ -5,6 +5,8 @@ struct SweepTitle: View {
     var size: CGFloat = 34
     var color: Color = Palette.accent
     var isSweeping = true
+    var lines = 1
+    var minimumScale: CGFloat = 1
 
     @State private var barScale: CGFloat = 0
     @State private var barAnchor: UnitPoint = .leading
@@ -14,7 +16,9 @@ struct SweepTitle: View {
         Text(text.uppercased())
             .font(Typography.heading(size))
             .foregroundColor(Palette.textBright)
-            .lineLimit(1)
+            .lineLimit(lines)
+            .minimumScaleFactor(minimumScale)
+            .fixedSize(horizontal: false, vertical: lines > 1)
             .opacity(isTextShown || !isSweeping ? 1 : 0)
             .overlay(
                 Rectangle()

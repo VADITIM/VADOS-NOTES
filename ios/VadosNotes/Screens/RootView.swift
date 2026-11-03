@@ -463,10 +463,12 @@ struct TopBar: View {
         let stagger = Motion.chromeStaggerMilliseconds
         let page = navigator.lastPage
         let note = page.flatMap { library.page($0.pageId) }
+        let backdrop = Tokens.shared.title
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             MicroLabel(text: page.flatMap { library.notebook($0.notebookId)?.title } ?? "Folder")
+                .fixedSize()
                 .labelReveal(isShown)
-            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false) { title in
+            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false, lines: backdrop.lines, minimumScale: CGFloat(backdrop.minimumScale)) { title in
                 guard let page else { return }
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 library.updatePage(page.pageId) { $0.title = trimmed.isEmpty ? nil : title }
@@ -476,9 +478,17 @@ struct TopBar: View {
                 Text(Self.createdFormat.string(from: created))
                     .font(Typography.mono(10))
                     .foregroundColor(Palette.textMuted)
+                    .fixedSize()
                     .labelReveal(isShown, delay: stagger * 2)
             }
         }
+        .padding(.horizontal, CGFloat(backdrop.backdropPaddingHorizontal))
+        .padding(.vertical, CGFloat(backdrop.backdropPaddingVertical))
+        .background(
+            RoundedRectangle(cornerRadius: CGFloat(backdrop.backdropRadius), style: .continuous)
+                .fill(Color.black.opacity(isShown ? backdrop.backdropOpacity : 0))
+                .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isShown)
+        )
         .mask(CutoutShape(holes: titleCutouts).fill(style: FillStyle(eoFill: true)))
         .contentShape(CutoutShape(holes: titleCutouts), eoFill: true)
     }
@@ -529,6 +539,8 @@ struct InlineTitle: View {
     let title: String
     var size: CGFloat = 34
     var isSweeping = true
+    var lines = 1
+    var minimumScale: CGFloat = 1
     let onRename: (String) -> Void
 
     @State private var isEditing = false
@@ -537,7 +549,7 @@ struct InlineTitle: View {
 
     var body: some View {
         if isEditing {
-            TextField("", text: $text)
+            TextField("", text: $text, axis: .vertical)
                 .font(Typography.heading(size))
                 .foregroundColor(Palette.textBright)
                 .tint(Palette.accent)
@@ -545,22 +557,35 @@ struct InlineTitle: View {
                 .autocorrectionDisabled()
                 .focused($isFocused)
                 .submitLabel(.done)
-                .fixedSize()
+                .lineLimit(1...max(1, lines))
                 .onSubmit { isFocused = false }
-                .onChange(of: text) { _, next in onRename(next) }
+                .onChange(of: text) { _, next in
+                    guard next.contains(where: \.isNewline) else { return }
+                    text = next.filter { !$0.isNewline }
+                    isFocused = false
+                }
                 .onChange(of: isFocused) { _, focused in
                     if !focused {
-                        isEditing = false
+                        finish()
                     }
                 }
                 .onAppear { isFocused = true }
+                .onDisappear(perform: finish)
         } else {
-            SweepTitle(text: title, size: size, isSweeping: isSweeping)
+            SweepTitle(text: title, size: size, isSweeping: isSweeping, lines: lines, minimumScale: minimumScale)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     text = title
                     isEditing = true
                 }
+        }
+    }
+
+    private func finish() {
+        guard isEditing else { return }
+        isEditing = false
+        if text != title {
+            onRename(text)
         }
     }
 }

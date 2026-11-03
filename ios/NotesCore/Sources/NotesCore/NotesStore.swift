@@ -170,6 +170,83 @@ public final class NotesStore {
         }
     }
 
+    @discardableResult
+    public func compactJournal(above limit: Int) throws -> Bool {
+        let entries = journal.entries
+        guard entries.count > limit else { return false }
+        var sequencesByKey: [String: [Int]] = [:]
+        for entry in entries {
+            sequencesByKey[Self.compactionKey(of: entry.change), default: []].append(entry.sequence)
+        }
+        var elementsByPage: [String: [String: Element]] = [:]
+        var droppedByPage: [String: Int] = [:]
+        var kept: [JournalEntry] = []
+        for entry in entries {
+            let key = Self.compactionKey(of: entry.change)
+            let sequences = sequencesByKey[key] ?? []
+            guard entry.sequence == sequences.last else {
+                if let pageId = Self.pageId(of: entry.change) {
+                    droppedByPage[pageId] = min(droppedByPage[pageId] ?? entry.sequence, entry.sequence)
+                }
+                continue
+            }
+            guard sequences.count > 1 else {
+                kept.append(entry)
+                continue
+            }
+            var current = entry
+            switch entry.change {
+            case .notebook(let notebook):
+                if let merged = notebooks[notebook.id] {
+                    current.change = .notebook(merged)
+                }
+            case .page(let header):
+                if let merged = pages[header.id] {
+                    current.change = .page(merged.header)
+                }
+            case .element(let pageId, let element):
+                if elementsByPage[pageId] == nil, let page = pages[pageId] {
+                    elementsByPage[pageId] = Dictionary(page.elements.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                }
+                if let merged = elementsByPage[pageId]?[element.id] {
+                    current.change = .element(pageId: pageId, element: merged)
+                }
+            }
+            kept.append(current)
+        }
+        guard kept.count < entries.count else { return false }
+        for (pageId, sequence) in droppedByPage {
+            guard let page = pages[pageId] else { continue }
+            let entry = entries.first { $0.sequence == sequence }
+            kept.append(JournalEntry(sequence: sequence, device: entry?.device ?? device, timestamp: entry?.timestamp ?? now(), change: .page(page.header)))
+        }
+        kept.sort { $0.sequence < $1.sequence }
+        try journal.replace(with: kept)
+        return true
+    }
+
+    private static func compactionKey(of change: Change) -> String {
+        switch change {
+        case .notebook(let notebook):
+            return "notebook|\(notebook.id)"
+        case .page(let header):
+            return "page|\(header.id)"
+        case .element(let pageId, let element):
+            return "element|\(pageId)|\(element.id)"
+        }
+    }
+
+    private static func pageId(of change: Change) -> String? {
+        switch change {
+        case .notebook:
+            return nil
+        case .page(let header):
+            return header.id
+        case .element(let pageId, _):
+            return pageId
+        }
+    }
+
     func rebuild() {
         notebooks = snapshot.notebooks
         pages = snapshot.pages

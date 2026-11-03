@@ -247,6 +247,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private var hasFitted = false
     private var fittedSize: CGSize = .zero
     private var importObserver: NSObjectProtocol?
+    private var memoryObserver: NSObjectProtocol?
     private let palmGuard = PalmGuard()
     private var renderIndex: RenderIndex?
     private var cameraSettleTimer: Timer?
@@ -390,6 +391,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         importObserver = NotificationCenter.default.addObserver(forName: ImportImages.didRender, object: nil, queue: .main) { [weak self] _ in
             self?.layoutImports()
         }
+        memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.releaseMemory()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -397,9 +401,34 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     deinit {
-        if let importObserver {
-            NotificationCenter.default.removeObserver(importObserver)
+        for observer in [importObserver, memoryObserver].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    override func willMove(toWindow newWindow: UIWindow?) {
+        super.willMove(toWindow: newWindow)
+        guard newWindow == nil else { return }
+        stopGlide()
+        snapLink?.invalidate()
+        snapLink = nil
+        cameraSettleTimer?.invalidate()
+        cameraSettleTimer = nil
+        holdTimer?.invalidate()
+        holdTimer = nil
+        textHoldTimer?.invalidate()
+        textHoldTimer = nil
+        stroke?.stillTimer?.invalidate()
+    }
+
+    private func releaseMemory() {
+        cache.removeAll()
+        renderIndex = nil
+        MarkdownText.removeCachedLayouts()
+        for sublayer in importLayers.values where sublayer.isHidden {
+            sublayer.contents = nil
+        }
+        setNeedsDisplay()
     }
 
     func fit() {
@@ -950,7 +979,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         guard hypot(velocity.x, velocity.y) > Self.glideStopSpeed else { return }
         glideVelocity = velocity
         glideLast = CACurrentMediaTime()
-        let link = CADisplayLink(target: self, selector: #selector(stepGlide))
+        let link = CADisplayLink(target: DisplayLinkTarget { [weak self] in self?.stepGlide() }, selector: #selector(DisplayLinkTarget.step))
         link.add(to: .main, forMode: .common)
         glideLink = link
     }
@@ -961,7 +990,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         glideVelocity = .zero
     }
 
-    @objc private func stepGlide() {
+    private func stepGlide() {
         let now = CACurrentMediaTime()
         let elapsed = CGFloat(now - glideLast)
         glideLast = now
@@ -1047,12 +1076,12 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         Haptics.segment()
         snapLink?.invalidate()
         snapStart = CACurrentMediaTime()
-        let link = CADisplayLink(target: self, selector: #selector(stepSnap))
+        let link = CADisplayLink(target: DisplayLinkTarget { [weak self] in self?.stepSnap() }, selector: #selector(DisplayLinkTarget.step))
         link.add(to: .main, forMode: .common)
         snapLink = link
     }
 
-    @objc private func stepSnap() {
+    private func stepSnap() {
         guard let stroke else {
             snapLink?.invalidate()
             snapLink = nil
@@ -1341,5 +1370,17 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         isHolding = false
         isPanning = false
         hasMoved = false
+    }
+}
+
+final class DisplayLinkTarget: NSObject {
+    private let action: () -> Void
+
+    init(_ action: @escaping () -> Void) {
+        self.action = action
+    }
+
+    @objc func step() {
+        action()
     }
 }

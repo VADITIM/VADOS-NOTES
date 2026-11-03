@@ -209,9 +209,21 @@ export function linkButton({ glyphName, title, tint = tokens.palette.text_body, 
     return button
 }
 
-export function sweepTitle(text, { size = 34, isSweeping = true } = {}) {
+export function sweepTitle(text, { size = 34, isSweeping = true, lines = 1, minimumScale = 1 } = {}) {
     const title = create("span", "sweep-title")
     title.style.fontSize = `${size}px`
+    title.classList.toggle("wraps", lines > 1)
+    title.fit = () => {
+        if (lines <= 1) {
+            return
+        }
+        let scale = 1
+        title.style.fontSize = `${size}px`
+        while (scale > minimumScale && title.scrollHeight > title.clientHeight + 1) {
+            scale = Math.max(minimumScale, scale - 0.05)
+            title.style.fontSize = `${size * scale}px`
+        }
+    }
     const words = create("span", "sweep-text")
     const bar = create("span", "sweep-bar")
     title.append(words, bar)
@@ -222,6 +234,7 @@ export function sweepTitle(text, { size = 34, isSweeping = true } = {}) {
         }
         words.textContent = upper
         title.dataset.ready = "true"
+        title.fit()
         if (!isSweeping) {
             words.style.opacity = "1"
             return
@@ -244,10 +257,13 @@ export function sweepTitle(text, { size = 34, isSweeping = true } = {}) {
     return title
 }
 
-export function inlineTitle({ title, size = 34, isSweeping = true, onRename }) {
+export function inlineTitle({ title, size = 34, isSweeping = true, lines = 1, minimumScale = 1, onRename }) {
     const host = create("span", "inline-title")
-    const shown = sweepTitle(title, { size, isSweeping })
-    const input = create("input", "inline-title-field")
+    const shown = sweepTitle(title, { size, isSweeping, lines, minimumScale })
+    const input = create(lines > 1 ? "textarea" : "input", "inline-title-field")
+    if (lines > 1) {
+        input.rows = 1
+    }
     input.style.fontSize = `${size}px`
     input.spellcheck = false
     input.hidden = true
@@ -255,6 +271,10 @@ export function inlineTitle({ title, size = 34, isSweeping = true, onRename }) {
     let current = title
     const measure = () => {
         input.style.width = `${Math.max(2, input.value.length + 1)}ch`
+        if (lines > 1) {
+            input.style.height = "auto"
+            input.style.height = `${input.scrollHeight}px`
+        }
     }
     shown.addEventListener("click", () => {
         input.value = current
@@ -265,11 +285,16 @@ export function inlineTitle({ title, size = 34, isSweeping = true, onRename }) {
         input.select()
     })
     input.addEventListener("input", () => {
+        if (/[\r\n]/.test(input.value)) {
+            input.value = input.value.replace(/[\r\n]/g, "")
+            input.blur()
+            return
+        }
         measure()
-        onRename(input.value)
     })
     input.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === "Escape") {
+            event.preventDefault()
             input.blur()
         }
         event.stopPropagation()
@@ -277,6 +302,9 @@ export function inlineTitle({ title, size = 34, isSweeping = true, onRename }) {
     input.addEventListener("blur", () => {
         input.hidden = true
         shown.hidden = false
+        if (input.value !== current) {
+            onRename(input.value)
+        }
     })
     host.setTitle = (next) => {
         current = next
@@ -285,6 +313,7 @@ export function inlineTitle({ title, size = 34, isSweeping = true, onRename }) {
         }
     }
     host.isEditing = () => !input.hidden
+    host.fit = () => shown.fit()
     return host
 }
 

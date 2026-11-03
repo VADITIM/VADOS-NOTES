@@ -72,6 +72,7 @@ enum InkStyle {
     }
 
     private static var colors: [String: CGColor] = [:]
+    private static let colorsLock = NSLock()
 
     static func opaqueColor(for element: Element, style: PaperStyle) -> UIColor {
         UIColor(hex: Palette.inkOnPaper(element.color ?? "#1A1A1A", style: style))
@@ -80,6 +81,8 @@ enum InkStyle {
     static func strokeColor(for element: Element, style: PaperStyle, isOpaque: Bool) -> CGColor {
         let opacity = isOpaque ? nil : element.tool.map { tokens(for: $0).opacity }
         let key = "\(element.color ?? "")|\(style.rawValue)|\(opacity ?? -1)"
+        colorsLock.lock()
+        defer { colorsLock.unlock() }
         if let color = colors[key] {
             return color
         }
@@ -96,7 +99,9 @@ enum InkStyle {
 }
 
 final class StrokePathCache {
-    private static let pruneSlack = 256
+    private static var pruneSlack: Int {
+        Tokens.shared.memory.strokePathSlack
+    }
 
     private struct Entry {
         let updated: Date
@@ -115,6 +120,10 @@ final class StrokePathCache {
         let bounds = path.boundingBoxOfPath.insetBy(dx: inset, dy: inset)
         entries[element.id] = Entry(updated: element.updated, path: path, bounds: bounds)
         return (path, bounds)
+    }
+
+    func removeAll() {
+        entries = [:]
     }
 
     func prune(keeping liveCount: Int, isLive: (String) -> Bool) {
@@ -273,6 +282,7 @@ enum MarkdownText {
     }
 
     private static var cache: [String: Layout] = [:]
+    private static let cacheLock = NSLock()
     private static let indentCharacters: CGFloat = 3
 
     static func font(_ size: CGFloat, isBold: Bool) -> UIFont {
@@ -361,7 +371,7 @@ enum MarkdownText {
         let width = CGFloat(element.box?.width ?? Tokens.shared.text.boxWidth)
         let content = element.content ?? ""
         let key = "\(Preferences.writingFont)|\(fontSize)|\(width)|\(color.description)|\(paperStyle.rawValue)|\(content)"
-        if let cached = cache[key] {
+        if let cached = cachedLayout(key) {
             return cached
         }
         var top: CGFloat = 0
@@ -381,11 +391,29 @@ enum MarkdownText {
             top += measured
         }
         let layout = Layout(blocks: blocks, height: top)
-        if cache.count > 500 {
+        store(layout, for: key)
+        return layout
+    }
+
+    static func removeCachedLayouts() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cache.removeAll()
+    }
+
+    private static func cachedLayout(_ key: String) -> Layout? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cache[key]
+    }
+
+    private static func store(_ layout: Layout, for key: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if cache.count > Tokens.shared.memory.textLayoutEntries {
             cache.removeAll()
         }
         cache[key] = layout
-        return layout
     }
 
     static func draw(_ element: Element, at origin: CGPoint, color: UIColor, paperStyle: PaperStyle, in context: CGContext) {

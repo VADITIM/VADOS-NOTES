@@ -55,6 +55,8 @@ struct TransferSheet: View {
     @State private var frames: [TransferTarget: CGRect] = [:]
     @State private var images: [CellPosition: UIImage] = [:]
     @State private var sourceImages: [Int: UIImage] = [:]
+    @State private var cellsKey = ""
+    @State private var sourcesKey = ""
     @State private var importRevision = 0
     @State private var isExporting = false
     @State private var shownParts: Set<TransferPart> = []
@@ -620,27 +622,41 @@ struct TransferSheet: View {
     private func renderCells(cellSize: CGSize) {
         guard let shown = previewPage, cellSize.width > 0 else { return }
         let options = renderOptions()
-        var rendered: [CellPosition: UIImage] = [:]
-        for row in 0..<shown.extent.rows {
-            for column in 0..<shown.extent.columns {
-                let cell = CellPosition(column: column, row: row)
-                rendered[cell] = PageRenderer.cellThumbnail(of: shown, cell: cell, size: cellSize, options: options)
+        let key = renderKey(cellWidth: cellSize.width)
+        cellsKey = key
+        Thumbnails.shared.perform { () -> [CellPosition: UIImage] in
+            var rendered: [CellPosition: UIImage] = [:]
+            for row in 0..<shown.extent.rows {
+                for column in 0..<shown.extent.columns {
+                    let cell = CellPosition(column: column, row: row)
+                    rendered[cell] = PageRenderer.cellThumbnail(of: shown, cell: cell, size: cellSize, options: options)
+                }
             }
+            return rendered
+        } completion: { rendered in
+            guard cellsKey == key else { return }
+            images = rendered
         }
-        images = rendered
     }
 
     private func renderSources(size: CGSize) {
         guard var shown = page, let document else { return }
         let options = renderOptions()
         let now = Date()
-        var rendered: [Int: UIImage] = [:]
+        var sources: [Int: Page] = [:]
         shown.extent = .single
         for index in document.pages.indices {
             shown.elements = [library.importElement(asset: document.asset, index: index, size: document.pages[index], now: now, row: 0, column: 0, isInverted: document.isInverted(index))]
-            rendered[index] = PageRenderer.cellThumbnail(of: shown, cell: CellPosition(column: 0, row: 0), size: size, options: options)
+            sources[index] = shown
         }
-        sourceImages = rendered
+        let key = sourceKey
+        sourcesKey = key
+        Thumbnails.shared.perform {
+            sources.mapValues { PageRenderer.cellThumbnail(of: $0, cell: CellPosition(column: 0, row: 0), size: size, options: options) }
+        } completion: { rendered in
+            guard sourcesKey == key else { return }
+            sourceImages = rendered
+        }
     }
 
     private func cellHolding(_ index: Int, in chosen: [CellPosition: Int]) -> CellPosition? {

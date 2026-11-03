@@ -858,9 +858,19 @@ struct PageThumbnail: View {
 
     private func render(size: CGSize) {
         guard renderedKey != key, size.width > 0, size.height > 0 else { return }
-        renderedKey = key
+        let shownKey = key
+        renderedKey = shownKey
+        let sizedKey = "\(shownKey)-\(Int(size.width))x\(Int(size.height))"
+        if let cached = Thumbnails.shared.image(for: sizedKey) {
+            image = cached
+            return
+        }
         let options = RenderOptions(showsGuides: preferences.showsGuides, showsDividers: preferences.showsDividers, paperStyle: preferences.paperStyle, pixelScale: UIScreen.main.scale)
-        image = PageRenderer.thumbnail(of: page, size: size, options: options)
+        let shown = page
+        Thumbnails.shared.render(key: sizedKey, draw: { PageRenderer.thumbnail(of: shown, size: size, options: options) }) { rendered in
+            guard renderedKey == shownKey else { return }
+            image = rendered
+        }
     }
 }
 

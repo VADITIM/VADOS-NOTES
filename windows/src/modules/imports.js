@@ -6,7 +6,6 @@ import { tokens } from "./tokens.js"
 const millimetresPerPoint = 25.4 / 72
 const maximumImagePixels = 4096
 const minimumLevel = 0.5
-const cacheBytes = 192 * 1024 * 1024
 const edgeSampleCount = 48
 const whiteLuminance = 0.88
 const whiteShare = 0.8
@@ -123,11 +122,30 @@ export function isImportInverted(element, isDark) {
     return isDark && cachedEntries(element).some((entry) => entry.isWhite)
 }
 
+function cacheBytes() {
+    return tokens.memory.import_cache_megabytes * 1024 * 1024
+}
+
+function closeDocument(pending) {
+    pending?.then((pdf) => pdf.destroy()).catch(() => {})
+}
+
+export function purgeImports() {
+    images.clear()
+    queue = queue.then(() => {
+        for (const pending of documents.values()) {
+            closeDocument(pending)
+        }
+        documents.clear()
+    })
+}
+
 export function reloadAssets(assets) {
     if (!assets.length) {
         return
     }
     for (const asset of assets) {
+        closeDocument(documents.get(asset))
         documents.delete(asset)
         for (const key of [...images.keys()]) {
             if (key.startsWith(`${asset}|`)) {
@@ -139,10 +157,19 @@ export function reloadAssets(assets) {
 }
 
 function documentFor(asset) {
-    if (!documents.has(asset)) {
-        documents.set(asset, readAsset(assetPath(asset)).then(openDocument))
+    let pending = documents.get(asset)
+    if (pending) {
+        documents.delete(asset)
+    } else {
+        pending = readAsset(assetPath(asset)).then(openDocument)
     }
-    return documents.get(asset)
+    documents.set(asset, pending)
+    while (documents.size > Math.max(1, tokens.memory.import_documents)) {
+        const [oldest] = documents.keys()
+        closeDocument(documents.get(oldest))
+        documents.delete(oldest)
+    }
+    return pending
 }
 
 function levelFor(element, pixelsPerMillimetre) {
@@ -200,7 +227,7 @@ function evict() {
     let total = [...images.values()].reduce((sum, entry) => sum + entryBytes(entry), 0)
     const ordered = [...images.entries()].filter(([, entry]) => entry.canvas).sort((first, second) => first[1].lastUsed - second[1].lastUsed)
     for (const [key, entry] of ordered) {
-        if (total <= cacheBytes) {
+        if (total <= cacheBytes()) {
             break
         }
         total -= entryBytes(entry)
@@ -208,7 +235,7 @@ function evict() {
     }
 }
 
-function render(key, element, level) {
+function render(key, element, level, isDark) {
     images.set(key, { canvas: null, lastUsed: performance.now() })
     queue = queue.then(async () => {
         try {
@@ -220,7 +247,7 @@ function render(key, element, level) {
             canvas.height = Math.max(1, Math.ceil(viewport.height))
             await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise
             const entry = { canvas, isWhite: isWhitePage(canvas), level, lastUsed: performance.now() }
-            if (entry.isWhite) {
+            if (typeof element.inverted === "boolean" ? element.inverted : isDark && entry.isWhite) {
                 darkened(entry)
             }
             images.set(key, entry)
@@ -241,7 +268,7 @@ export function importImage(element, pixelsPerMillimetre, isDark) {
     const key = `${prefix}${level}`
     let entry = images.get(key)
     if (!entry) {
-        render(key, element, level)
+        render(key, element, level, isDark)
         entry = images.get(key)
     }
     if (!entry.canvas) {

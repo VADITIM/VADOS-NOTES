@@ -227,8 +227,39 @@ svg.squircle ~ * {
     display: flex;
     align-items: baseline;
     gap: 10px;
+    width: max-content;
     white-space: nowrap;
     pointer-events: auto;
+    padding: var(--title-backdrop-padding);
+    border-radius: var(--title-backdrop-radius);
+    background-color: transparent;
+    transition: background-color var(--duration-state) var(--curve-power-two-out);
+}
+
+.page-titles.is-shown {
+    background-color: var(--title-backdrop);
+}
+
+.page-titles > .label-reveal {
+    flex: none;
+}
+
+.page-titles > .page-name,
+.page-titles > .page-name > .reveal-text,
+.page-titles > .page-name .inline-title {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.sweep-title.wraps {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--title-lines);
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .top-bar-right {
@@ -358,6 +389,15 @@ svg.squircle ~ * {
     outline: none;
     padding: 0;
     line-height: 1.2;
+    max-width: 100%;
+}
+
+textarea.inline-title-field {
+    display: block;
+    resize: none;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    max-height: calc(var(--title-lines) * 1.2em);
 }
 
 .label-reveal {

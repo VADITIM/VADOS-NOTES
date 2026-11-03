@@ -152,6 +152,21 @@ export class StrokePathCache {
         this.entries.set(element.id, created)
         return created
     }
+
+    prune(liveCount, isLive) {
+        if (this.entries.size <= liveCount * 2 + tokens.memory.stroke_path_slack) {
+            return
+        }
+        for (const id of [...this.entries.keys()]) {
+            if (!isLive(id)) {
+                this.entries.delete(id)
+            }
+        }
+    }
+
+    removeAll() {
+        this.entries.clear()
+    }
 }
 
 const measuringContext = document.createElement("canvas").getContext("2d")
@@ -275,7 +290,7 @@ export function textLayout(element) {
         })
     }
     const layout = { lines, fontSize, height: top / layoutScale }
-    if (layoutCache.size > 2000) {
+    if (layoutCache.size > tokens.memory.text_layout_entries) {
         layoutCache.clear()
     }
     layoutCache.set(key, layout)

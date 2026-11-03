@@ -42,7 +42,7 @@ final class SyncCoordinator: ObservableObject {
     private var policy: FlushPolicy
     private var flushTimer: Timer?
     private var pullTimer: Timer?
-    private var isRunning = false
+    private(set) var isRunning = false
     private var isRunRequested = false
     private let pullIntervalSeconds: TimeInterval = 60
     private let retryIntervalSeconds: TimeInterval = 30

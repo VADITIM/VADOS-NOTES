@@ -227,6 +227,25 @@ struct Tokens: Decodable {
         }
     }
 
+    struct MemoryTokens: Decodable {
+        let importCacheMegabytes: Int
+        let importDocuments: Int
+        let thumbnailCacheMegabytes: Int
+        let strokePathSlack: Int
+        let textLayoutEntries: Int
+        let undoSteps: Int
+        let journalCompactEntries: Int
+    }
+
+    struct TitleTokens: Decodable {
+        let backdropOpacity: Double
+        let backdropRadius: Double
+        let backdropPaddingHorizontal: Double
+        let backdropPaddingVertical: Double
+        let lines: Int
+        let minimumScale: Double
+    }
+
     struct MenuSlotToken: Decodable {
         let slot: Int
         let action: String
@@ -278,6 +297,8 @@ struct Tokens: Decodable {
     let motion: MotionTokens
     let background: BackgroundTokens
     let sync: SyncTokens
+    let memory: MemoryTokens
+    let title: TitleTokens
     let menus: MenuTokens
     let folders: FolderTokens
     let syntax: SyntaxTokens
@@ -295,6 +316,8 @@ struct Tokens: Decodable {
         case motion
         case background
         case sync
+        case memory
+        case title
         case menus
         case folders
         case syntax

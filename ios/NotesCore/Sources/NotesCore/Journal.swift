@@ -97,7 +97,11 @@ public final class Journal {
 
     public func remove(sequences: Set<Int>) throws {
         guard !sequences.isEmpty else { return }
-        let remaining = entries.filter { !sequences.contains($0.sequence) }
+        try replace(with: entries.filter { !sequences.contains($0.sequence) })
+    }
+
+    public func replace(with remaining: [JournalEntry]) throws {
+        guard groupDepth == 0 else { return }
         var data = Data()
         for entry in remaining {
             data.append(try encoder.encode(entry))

@@ -108,6 +108,11 @@ export class InkCanvas {
         this.stopGlide()
         clearTimeout(this.holdTimer)
         clearTimeout(this.textHoldTimer)
+        clearTimeout(this.stroke?.stillTimer)
+        cancelAnimationFrame(this.frameRequest)
+        cancelAnimationFrame(this.overlayRequest)
+        cancelAnimationFrame(this.snap)
+        this.cache.removeAll()
         window.removeEventListener("keydown", this.keyDown)
         window.removeEventListener("keyup", this.keyUp)
     }
@@ -127,6 +132,13 @@ export class InkCanvas {
         if (previous !== this.page) {
             this.clearPendingFeedback()
             this.refreshSelection()
+        }
+        if (previous !== this.page && this.page) {
+            let live = null
+            this.cache.prune(this.page.elements.length, (id) => {
+                live ??= new Set(this.page.elements.map((element) => element.id))
+                return live.has(id)
+            })
         }
         this.layout()
         this.requestDraw()

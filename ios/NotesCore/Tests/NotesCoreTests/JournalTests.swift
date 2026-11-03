@@ -78,6 +78,49 @@ final class JournalTests: XCTestCase {
         XCTAssertEqual(try PageCodec.decodePage(try XCTUnwrap(reopened.encodedFile(at: RepositoryPath.page(notebook: notebook.id, page: header.id)))), before)
     }
 
+    func testCompactionKeepsOneEntryPerChangedThingAndTheSameState() throws {
+        let directory = Fixtures.temporaryDirectory()
+        let store = try NotesStore(directory: directory, device: "ipad-01")
+        let notebook = Notebook(id: "nb_01TEST", title: "Notes", updated: Fixtures.time(0), device: "ipad-01")
+        var header = PageHeader(id: "p_01TEST", notebook: notebook.id, updated: Fixtures.time(0), device: "ipad-01")
+        try store.apply(.notebook(notebook))
+        try store.apply(.page(header))
+        for second in 1...20 {
+            try store.apply(.element(pageId: header.id, element: Fixtures.stroke("e_A", at: Double(second))))
+        }
+        try store.apply(.element(pageId: header.id, element: Fixtures.stroke("e_B", at: 21, order: 1)))
+        try store.apply(.element(pageId: header.id, element: Fixtures.stroke("e_B", at: 21, order: 1).tombstone(at: Fixtures.time(22), device: "ipad-01")))
+        try store.apply(.element(pageId: header.id, element: Fixtures.stroke("e_B", at: 23, order: 1)))
+        try store.apply(.element(pageId: header.id, element: Fixtures.stroke("e_C", at: 24, order: 2)))
+        header.title = "Renamed"
+        header.updated = Fixtures.time(25)
+        try store.apply(.page(header))
+        let before = try XCTUnwrap(store.pages[header.id])
+        let lastSequence = store.journal.lastSequence
+
+        XCTAssertTrue(try store.compactJournal(above: 5))
+        let reopened = try NotesStore(directory: directory, device: "ipad-01")
+
+        XCTAssertLessThan(store.journal.entries.count, 8)
+        XCTAssertEqual(reopened.pages[header.id], before)
+        XCTAssertEqual(reopened.pages[header.id]?.liveElements.map(\.id), ["e_A", "e_C"])
+        XCTAssertEqual(reopened.journal.lastSequence, lastSequence)
+        XCTAssertEqual(Set(reopened.journal.entries.map(\.sequence)).count, reopened.journal.entries.count)
+        let next = try reopened.journal.append(.element(pageId: header.id, element: Fixtures.stroke("e_D", at: 30)), device: "ipad-01", timestamp: Fixtures.time(30))
+        XCTAssertEqual(next.sequence, (lastSequence ?? 0) + 1)
+    }
+
+    func testCompactionLeavesASmallJournalAlone() throws {
+        let directory = Fixtures.temporaryDirectory()
+        let store = try NotesStore(directory: directory, device: "ipad-01")
+        let notebook = Notebook(id: "nb_01TEST", title: "Notes", updated: Fixtures.time(0), device: "ipad-01")
+        try store.apply(.notebook(notebook))
+        try store.apply(.notebook(notebook))
+
+        XCTAssertFalse(try store.compactJournal(above: 5))
+        XCTAssertEqual(store.journal.entries.count, 2)
+    }
+
     func testFlushIsDueAfterFiveIdleSeconds() {
         var policy = FlushPolicy()
         policy.recordChange(page: "p_A", at: Fixtures.time(0))

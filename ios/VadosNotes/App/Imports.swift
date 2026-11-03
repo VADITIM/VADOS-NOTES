@@ -34,7 +34,6 @@ final class ImportImages {
     private static let millimetresPerPoint = 25.4 / 72
     private static let maximumImagePixels = 4096.0
     private static let minimumLevel = 0.5
-    private static let cacheBytes = 192 * 1024 * 1024
     private static let edgeSampleCount = 48
     private static let whiteLuminance = 0.88
     private static let whiteShare = 0.8
@@ -43,8 +42,44 @@ final class ImportImages {
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
     private var documents: [String: PDFDocument] = [:]
+    private var documentOrder: [String] = []
     private let imageContext = CIContext()
     var assetURL: (String) -> URL? = { _ in nil }
+
+    private static var cacheBytes: Int {
+        Tokens.shared.memory.importCacheMegabytes * 1024 * 1024
+    }
+
+    private init() {
+        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.purge()
+        }
+    }
+
+    func purge() {
+        lock.lock()
+        entries = [:]
+        lock.unlock()
+        queue.async { [weak self] in
+            self?.documents = [:]
+            self?.documentOrder = []
+        }
+    }
+
+    private func document(for asset: String, at url: URL?) -> PDFDocument? {
+        if let document = documents[asset] {
+            documentOrder.removeAll { $0 == asset }
+            documentOrder.append(asset)
+            return document
+        }
+        guard let document = url.flatMap({ PDFDocument(url: $0) }) else { return nil }
+        documents[asset] = document
+        documentOrder.append(asset)
+        while documentOrder.count > max(1, Tokens.shared.memory.importDocuments) {
+            documents[documentOrder.removeFirst()] = nil
+        }
+        return document
+    }
 
     @MainActor
     static func importDocument(from url: URL, into library: Library) throws -> ImportedDocument {
@@ -118,7 +153,7 @@ final class ImportImages {
         defer { lock.unlock() }
         if entries[key] == nil, rendersNewLevel || !entries.contains(where: { $0.key.hasPrefix(prefix) && $0.value.image != nil }) {
             entries[key] = Entry(level: level, lastUsed: Date())
-            render(key: key, element: element, level: level)
+            render(key: key, element: element, level: level, isDark: isDark)
         }
         var chosenKey = key
         if entries[key]?.image == nil {
@@ -153,15 +188,13 @@ final class ImportImages {
         }
     }
 
-    private func render(key: String, element: Element, level: Double) {
+    private func render(key: String, element: Element, level: Double, isDark: Bool) {
         guard let asset = element.asset, let size = element.sourceSizeMillimetres else { return }
         let pageIndex = element.sourcePage ?? 0
         let url = assetURL(asset)
         queue.async { [weak self] in
             guard let self else { return }
-            let document = self.documents[asset] ?? url.flatMap { PDFDocument(url: $0) }
-            self.documents[asset] = document
-            guard let page = document?.page(at: pageIndex) else {
+            guard let page = self.document(for: asset, at: url)?.page(at: pageIndex) else {
                 self.update(key) { $0.isFailed = true }
                 return
             }
@@ -171,7 +204,7 @@ final class ImportImages {
                 return
             }
             let isWhite = Self.isWhitePage(image)
-            let darkened = isWhite ? self.darkened(image) : nil
+            let darkened = element.inverted ?? (isDark && isWhite) ? self.darkened(image) : nil
             self.update(key) { entry in
                 entry.image = image
                 entry.darkened = darkened
@@ -201,6 +234,7 @@ final class ImportImages {
             for asset in assets {
                 self.documents[asset] = nil
             }
+            self.documentOrder.removeAll { assets.contains($0) }
             self.lock.lock()
             self.entries = self.entries.filter { key, _ in !assets.contains { key.hasPrefix("\($0)|") } }
             self.lock.unlock()

@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import NotesCore
+import UIKit
 
 struct ExtentChange {
     let before: Extent
@@ -60,7 +61,8 @@ final class Library: ObservableObject {
     let sync: SyncCoordinator
     private var undoSteps: [String: [UndoStep]] = [:]
     private var redoSteps: [String: [UndoStep]] = [:]
-    private let undoLimit = 200
+    private var openPageId: String?
+    private var memoryObserver: NSObjectProtocol?
     private let importMargin = 5.0
     private let sizeTolerance = 1.0
     private let duplicateOffset = 8.0
@@ -70,6 +72,44 @@ final class Library: ObservableObject {
         sync = SyncCoordinator(store: store)
         sync.onStoreChanged = { [weak self] in
             self?.revision += 1
+        }
+        memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.releaseMemory()
+            }
+        }
+        compactJournal()
+    }
+
+    private var undoLimit: Int {
+        Tokens.shared.memory.undoSteps
+    }
+
+    func noteOpened(_ pageId: String) {
+        openPageId = pageId
+    }
+
+    func noteClosed(_ pageId: String) {
+        if openPageId == pageId {
+            openPageId = nil
+        }
+        undoSteps[pageId] = nil
+        redoSteps[pageId] = nil
+        compactJournal()
+    }
+
+    private func releaseMemory() {
+        undoSteps = undoSteps.filter { $0.key == openPageId }
+        redoSteps = redoSteps.filter { $0.key == openPageId }
+        compactJournal()
+    }
+
+    private func compactJournal() {
+        guard !sync.isRunning else { return }
+        do {
+            try store.compactJournal(above: Tokens.shared.memory.journalCompactEntries)
+        } catch {
+            lastError = String(describing: error)
         }
     }
 
