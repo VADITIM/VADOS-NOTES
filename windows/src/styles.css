@@ -236,10 +236,7 @@ svg.squircle ~ * {
     position: absolute;
     left: 0;
     top: 0;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    width: max-content;
+    box-sizing: border-box;
     white-space: nowrap;
     pointer-events: auto;
     padding: var(--title-backdrop-padding);
@@ -252,17 +249,17 @@ svg.squircle ~ * {
     background-color: var(--title-backdrop);
 }
 
-.page-titles > .label-reveal {
-    flex: none;
+.page-titles-content {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
 }
 
-.page-titles > .page-name,
-.page-titles > .page-name > .reveal-text,
-.page-titles > .page-name .inline-title {
-    display: block;
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 100%;
+.page-titles-content > * {
+    flex: none;
 }
 
 .sweep-title.wraps {

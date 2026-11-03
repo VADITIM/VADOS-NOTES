@@ -137,10 +137,11 @@ export class TopBar {
         }
         this.pageTitles = create("div", "page-titles")
         this.pageFolder = revealLabel(microLabel(""))
-        this.pageName = inlineTitle({ title: "Note", size: bareTitleSize, isSweeping: false, lines: tokens.title.lines, minimumScale: tokens.title.minimum_scale, onRename: (title) => this.renameNote(title) })
+        this.pageName = inlineTitle({ title: "Note", size: bareTitleSize, isSweeping: false, onRename: (title) => this.renameNote(title) })
         this.pageNameReveal = revealLabel(this.pageName, "page-name")
         this.pageDate = revealLabel(create("span", "page-date"))
-        this.pageTitles.append(this.pageFolder, this.pageNameReveal, this.pageDate)
+        this.pageContent = create("div", "page-titles-content", this.pageFolder, this.pageNameReveal, this.pageDate)
+        this.pageTitles.append(this.pageContent)
         this.left.append(this.folderPill, this.pageTitles)
         this.search = new SearchField((value) => {
             this.app.navigator.query = value
@@ -305,10 +306,7 @@ export class TopBar {
     fitPageTitles() {
         const left = this.pageTitles.getBoundingClientRect().left
         const right = this.controls.getBoundingClientRect().left
-        this.pageTitles.style.maxWidth = `${Math.max(0, right - left - titleSpacing)}px`
-        if (!this.pageName.isEditing()) {
-            this.pageName.fit()
-        }
+        this.pageTitles.style.width = `${Math.max(0, right - left - titleSpacing)}px`
     }
 
     report() {

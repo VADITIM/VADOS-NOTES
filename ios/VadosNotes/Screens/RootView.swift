@@ -476,7 +476,7 @@ struct TopBar: View {
             MicroLabel(text: page.flatMap { library.notebook($0.notebookId)?.title } ?? "Folder")
                 .fixedSize()
                 .labelReveal(isShown)
-            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false, lines: backdrop.lines, minimumScale: CGFloat(backdrop.minimumScale)) { title in
+            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false, holdsWidth: true) { title in
                 guard let page else { return }
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 library.updatePage(page.pageId) { $0.title = trimmed.isEmpty ? nil : title }
@@ -490,6 +490,14 @@ struct TopBar: View {
                     .labelReveal(isShown, delay: stagger * 2)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .mask(
+            HStack(spacing: 0) {
+                Rectangle()
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 32)
+            }
+        )
         .padding(.horizontal, CGFloat(backdrop.backdropPaddingHorizontal))
         .padding(.vertical, CGFloat(backdrop.backdropPaddingVertical))
         .background(
@@ -549,6 +557,7 @@ struct InlineTitle: View {
     var isSweeping = true
     var lines = 1
     var minimumScale: CGFloat = 1
+    var holdsWidth = false
     let onRename: (String) -> Void
 
     @State private var isEditing = false
@@ -580,7 +589,7 @@ struct InlineTitle: View {
                 .onAppear { isFocused = true }
                 .onDisappear(perform: finish)
         } else {
-            SweepTitle(text: title, size: size, isSweeping: isSweeping, lines: lines, minimumScale: minimumScale)
+            SweepTitle(text: title, size: size, isSweeping: isSweeping, lines: lines, minimumScale: minimumScale, holdsWidth: holdsWidth)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     text = title
