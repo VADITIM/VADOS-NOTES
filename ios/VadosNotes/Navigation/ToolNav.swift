@@ -636,8 +636,8 @@ struct ToolNav<PanelContent: View>: View {
         let layout = orientation == .horizontal ? AnyLayout(HStackLayout(spacing: NavMetrics.spacing)) : AnyLayout(VStackLayout(spacing: NavMetrics.spacing))
         let isSizing = sizingDrag != nil
         let isBubble = carry.morph >= 0.5
-        let contentShare = min(1, max(0, 1 - carry.morph * 2))
-        let bubbleShare = NavMetrics.bubbleDiameter / max(1, max(navSize.width, navSize.height))
+        let contentShare: CGFloat = min(1, max(0, 1 - carry.morph * 2))
+        let bubbleShare: CGFloat = NavMetrics.bubbleDiameter / max(1, max(navSize.width, navSize.height))
         return layout {
             grip(layer: layer, center: center)
                 .revealedElement()
@@ -672,7 +672,7 @@ struct ToolNav<PanelContent: View>: View {
         .animation(Motion.wash, value: selectedId)
         .padding(NavMetrics.padding)
         .opacity(contentShare)
-        .scaleEffect(1 - (1 - bubbleShare) * min(1, carry.morph))
+        .scaleEffect(1 - (1 - bubbleShare) * min(CGFloat(1), carry.morph))
         .background(PillShell(scale: navigationMotion.shellScale, spread: navigationMotion.shellSpread, isWide: orientation == .horizontal, stroke: carry.state == .carried ? Palette.accent : Palette.border, morph: carry.morph, bubbleDiameter: NavMetrics.bubbleDiameter, stretchAmount: carry.stretchAmount, stretchAngle: carry.stretchAngle))
         .contentShape(Capsule())
         .simultaneousGesture(sizableItem == nil ? nil : sizingGesture())
@@ -1144,11 +1144,12 @@ struct ToolNav<PanelContent: View>: View {
         let reach = CGFloat(settings.grabberReach)
         let edgeLine = CGFloat(settings.grabberInset) + thickness / 2
         let facesLeading = isVertical && center.x > carryLayer.width / 2
+        let barShare: CGFloat = min(1, max(0, 1 - carry.morph * 2))
         let crossOffset = isVertical ? (facesLeading ? edgeLine - reach : reach - edgeLine) : 0
         return Capsule()
             .fill(Palette.borderHover)
             .frame(width: isVertical ? thickness : length, height: isVertical ? length : thickness)
-            .opacity(min(1, max(0, 1 - carry.morph * 2)))
+            .opacity(barShare)
             .frame(width: isVertical ? reach * 2 : length + reach * 2, height: isVertical ? length + reach * 2 : reach * 2)
             .contentShape(Rectangle())
             .offset(x: crossOffset, y: isVertical ? 0 : edgeLine - reach)
@@ -1164,9 +1165,11 @@ struct ToolNav<PanelContent: View>: View {
         let glyphName = selected.map { $0.glyph.isEmpty ? "move" : $0.glyph } ?? "move"
         let shown = shownSize(carry.morph)
         let isReachable = carry.morph >= 0.5 || carry.isActive
+        let faceShare: CGFloat = min(1, max(0, carry.morph * 2 - 1))
+        let faceScale: CGFloat = 0.6 + 0.4 * min(1, max(0, carry.morph))
         return GlyphView(name: glyphName, color: selected?.tint ?? Palette.textBody, size: NavMetrics.glyphSize)
-            .opacity(min(1, max(0, carry.morph * 2 - 1)))
-            .scaleEffect(0.6 + 0.4 * min(1, max(0, carry.morph)))
+            .opacity(faceShare)
+            .scaleEffect(faceScale)
             .frame(width: shown.width, height: shown.height)
             .contentShape(Capsule())
             .gesture(carryGesture(center: center, waitsForTravel: carry.state == .parked))
