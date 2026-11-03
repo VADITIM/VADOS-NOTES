@@ -525,6 +525,8 @@ The first iPad build was tried by hand. This pass replaces the bullets above whe
 - **No hold for a bubble turn.** A bubble turns instantly and the travel and unfold start in the same frame (`turnTo` returns 0). The dock target is recomputed every frame from the bar's measured size, so a size that arrives a frame late (SwiftUI preferences) cannot leave the bar short of the edge. A visible bar still mutates first and travels after.
 - **Springy unfold.** Unfolding (morph target 0) uses its own `unfold` spring (0.34 / 0.56): about 9% overshoot in length, so the bar opens past its size and settles back. The morph is no longer clamped at 0 on Windows, so that overshoot shows. `dock` is now 0.38 / 0.7 for a soft bounce against the edge.
 - **Assumption:** the new values were tuned on Windows with synthetic input (a dock lands about 0.4 s after a fling, with a 9% length overshoot) and still need a feel on the iPad.
+- **The jump after landing (iPad bug).** The engine switched to idle, then called `onLand`, which saved the placement in a transaction without animation. SwiftUI applied the two in separate updates. In the first one the bar was placed from the old placement (where the drag began) with the placement spring on, so it jumped back that way and sprang home. `NavCarry` now calls `onLand` before it changes the state. Windows keeps its order: its landing is one synchronous step, and `syncStage` needs the final state.
+- The engine is written up for reuse as V/AS `components/29-physics-motion.md`.
 
 
 ### View All: opaque, pans from pages, a continuous grid, the top bar's buttons (2026-11-03, iPad)
@@ -543,4 +545,10 @@ The first iPad build was tried by hand. This pass replaces the bullets above whe
 - **One sliding window.** The staggered `RisingPart` entrance of the header, strip and grid is gone. `SheetHost` draws the transfer content inside the same container as its backdrop, so everything except the buttons slides in from the left and out to the right together.
 - **Pan reach.** With a 450 pt margin on every side, a narrow grid could barely be dragged left. The trailing margin is now `max(450, 2 × canvas width − grid width − gutter)`, so the canvas always pans left at least one full screen width past page 1, 1.
 - **Contrast and corners.** The window's ground is `sunkenDeep`, page outlines are `borderHover`, axis numbers are `textBright`, separators are `borderControl`, and blank or + cells are lighter (`sunken`, `ground`), so they stand off the darker ground. Blue (`navigation`) diagonal slices, a solid wedge and three thinning bands within 168 pt, sit in the top-left and bottom-right corners behind the content.
+- The Windows/Linux port still has the old View All behaviour.
+
+### View All pushes the canvas (2026-11-03, iPad)
+
+- **Push, not slide over (supersedes "One sliding window" and the window ground and corner slices above).** The window enters from the left and pushes the canvas off to the right; on leaving, the canvas pushes it back out to the left. `Navigator.windowPush` runs from 0 to 1: `RootView` offsets the screen by `windowPush × width` and `SheetHost` offsets the transfer content by `(windowPush − 1) × width`, so the two edges stay joined. Both directions use `powerThreeInOut` over `sheetDrop`, since a push that eases only one way lands abruptly. A handed-off View All starts at 1, and the host resets it to 0 when it goes.
+- **One background.** The window draws no ground, ASCII layer or corner slices of its own. The app's ground and ASCII background stay still behind the canvas and the window alike. The brighter outlines, numbers and cells stay.
 - The Windows/Linux port still has the old View All behaviour.

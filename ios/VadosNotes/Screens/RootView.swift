@@ -86,6 +86,7 @@ final class Navigator: ObservableObject {
     @Published private(set) var isChromeLeaving = false
     @Published private(set) var isPageChromeShown = false
     @Published var query = ""
+    @Published var windowPush: CGFloat = 0
     private(set) var isReturningFromPage = false
     private(set) var lastPage: (notebookId: String, pageId: String)?
     var openingTile: CGRect?
@@ -209,6 +210,7 @@ struct RootView: View {
                     .transition(isFlight ? .flight : navigator.isReturningFromPage ? .returning : .section)
                     .environment(\.chromeLayout, chromeLayout)
                     .onPreferenceChange(NavCoverKey.self) { navCovers = $0 }
+                    .offset(x: navigator.windowPush * proxy.size.width)
                 VStack {
                     TopBar(titleCutouts: titleCutouts)
                         .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 }
