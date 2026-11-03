@@ -179,6 +179,7 @@ struct Tokens: Decodable {
         let morph: SpringToken
         let bubbleFollow: SpringToken
         let dock: SpringToken
+        let unfold: SpringToken
     }
 
     struct ScaleTokens: Decodable {
@@ -209,7 +210,10 @@ struct Tokens: Decodable {
         let bounce: Double
         let bubbleDiameter: Double
         let cornerZone: Double
-        let edgeZone: Double
+        let edgeShare: Double
+        let throwEdgeShare: Double
+        let dockVelocity: Double
+        let fingerCentreFrom: Double
         let stretchPerVelocity: Double
         let stretchLimit: Double
         let velocityWindow: Double

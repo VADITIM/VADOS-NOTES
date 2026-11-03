@@ -50,6 +50,7 @@ enum Motion {
     static let morphSpring = springs.morph
     static let bubbleFollowSpring = springs.bubbleFollow
     static let dockSpring = springs.dock
+    static let unfoldSpring = springs.unfold
 
     static func backOut(_ milliseconds: Int, delay: Int = 0) -> Animation {
         animation(curves.backOut, milliseconds, delay)
@@ -437,7 +438,7 @@ struct PillShell: View {
                 .rotationEffect(.radians(stretchAngle))
                 .scaleEffect(scale)
                 .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
-                .frame(width: full.width, height: full.height)
+                .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 }

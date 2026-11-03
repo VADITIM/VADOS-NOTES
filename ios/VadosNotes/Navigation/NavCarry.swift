@@ -61,7 +61,8 @@ final class NavCarry: ObservableObject {
     private var grabOffset = CGSize.zero
     private var isLatched = false
     private var isHolding = false
-    private var lastWall: NavEdge?
+    private var dockEdge: NavEdge = .bottom
+    private var dockFrom = CGPoint.zero
     private var phase = 0
     private var turnUntil: Double = 0
     private var displayLink: CADisplayLink?
@@ -114,7 +115,6 @@ final class NavCarry: ObservableObject {
         grabOffset = CGSize(width: point.x - current.x, height: point.y - current.y)
         isLatched = morph >= 0.5
         samples = [(point, Self.now())]
-        lastWall = nil
         corner = nil
         run()
     }
@@ -150,7 +150,7 @@ final class NavCarry: ObservableObject {
         switch zone {
         case .corner(let name): park(name)
         case .edge(let edge, _): dock(edge)
-        case .open: dock(nil)
+        case .open: dock(nearestEdge(center ?? finger))
         }
     }
 
@@ -203,34 +203,40 @@ final class NavCarry: ObservableObject {
         return "\(vertical)-\(horizontal)"
     }
 
-    private func edgeZone(_ point: CGPoint) -> NavCarryZone {
-        guard let host else { return .open }
+    private func edgeAt(_ point: CGPoint, share: CGFloat) -> NavEdge? {
+        guard let host else { return nil }
         let bounds = host.bounds()
-        let size = host.shownSize(morph)
-        let reach = settings.edgeZone
-        let isLeft = point.x - size.width / 2 <= reach
-        let isRight = point.x + size.width / 2 >= bounds.width - reach
-        let isTop = point.y - size.height / 2 <= reach
-        let isBottom = point.y + size.height / 2 >= bounds.height - reach
-        let isAtSide = isLeft || isRight
-        let isAtEnd = isTop || isBottom
-        guard isAtSide || isAtEnd else { return .open }
-        let orientation: NavOrientation = isAtSide && isAtEnd ? host.orientation() : isAtSide ? .vertical : .horizontal
-        let sideEdge: NavEdge = point.x < bounds.width / 2 ? .left : .right
-        let endEdge: NavEdge = point.y < bounds.height / 2 ? .top : .bottom
-        if orientation == .vertical {
-            let edge: NavEdge = isLeft && isRight ? sideEdge : isLeft ? .left : isRight ? .right : sideEdge
-            return .edge(edge, orientation)
-        }
-        let edge: NavEdge = isTop && isBottom ? endEdge : isTop ? .top : isBottom ? .bottom : endEdge
-        return .edge(edge, orientation)
+        let width = max(1, bounds.width)
+        let height = max(1, bounds.height)
+        let distances: [(NavEdge, CGFloat)] = [(.left, point.x / width), (.right, (bounds.width - point.x) / width), (.top, point.y / height), (.bottom, (bounds.height - point.y) / height)]
+        guard let nearest = distances.min(by: { $0.1 < $1.1 }), nearest.1 <= share else { return nil }
+        return nearest.0
     }
 
     private func carriedZone() -> NavCarryZone {
         if let name = cornerAt(finger) {
             return .corner(name)
         }
-        return edgeZone(center ?? finger)
+        guard let edge = edgeAt(finger, share: CGFloat(settings.edgeShare)) else { return .open }
+        return .edge(edge, edge.orientation)
+    }
+
+    private func wallAhead(_ point: CGPoint, _ heading: CGVector) -> (edge: NavEdge, point: CGPoint)? {
+        guard let host else { return nil }
+        let bounds = host.bounds()
+        var arrivals: [(NavEdge, CGFloat)] = []
+        if heading.dx < 0 {
+            arrivals.append((.left, -point.x / heading.dx))
+        } else if heading.dx > 0 {
+            arrivals.append((.right, (bounds.width - point.x) / heading.dx))
+        }
+        if heading.dy < 0 {
+            arrivals.append((.top, -point.y / heading.dy))
+        } else if heading.dy > 0 {
+            arrivals.append((.bottom, (bounds.height - point.y) / heading.dy))
+        }
+        guard let first = arrivals.min(by: { $0.1 < $1.1 }) else { return nil }
+        return (first.0, CGPoint(x: point.x + heading.dx * first.1, y: point.y + heading.dy * first.1))
     }
 
     private func nearestEdge(_ point: CGPoint) -> NavEdge {
@@ -248,7 +254,6 @@ final class NavCarry: ObservableObject {
         let share = speed > limit ? limit / speed : 1
         velocity = CGVector(dx: released.dx * share, dy: released.dy * share)
         morphTarget = 1
-        lastWall = nil
         run()
     }
 
@@ -263,21 +268,29 @@ final class NavCarry: ObservableObject {
         run()
     }
 
-    private func dock(_ edge: NavEdge?) {
+    private func dock(_ edge: NavEdge) {
         guard let host, let current = center else { return }
         phase += 1
         let dockPhase = phase
         state = .docking
         corner = nil
+        dockEdge = edge
+        dockFrom = current
         target = current
         isHolding = true
+        let speed = hypot(velocity.dx, velocity.dy)
+        let limit = CGFloat(settings.dockVelocity)
+        if speed > limit {
+            velocity = CGVector(dx: velocity.dx * limit / speed, dy: velocity.dy * limit / speed)
+        }
         let time = Self.now()
-        if let edge, edge.orientation != host.orientation() {
+        if edge.orientation != host.orientation() {
             turnUntil = max(turnUntil, time + host.turnTo(edge.orientation, morph >= 0.5))
         }
         let travel = { [weak self] in
             guard let self, dockPhase == self.phase, let host = self.host, let from = self.center else { return }
             self.isHolding = false
+            self.dockFrom = from
             self.target = host.dockSpot(edge, from)
             self.morphTarget = 0
             self.run()
@@ -303,6 +316,9 @@ final class NavCarry: ObservableObject {
         let time = Self.now()
         var remaining = min(0.05, (time - lastFrame) / 1000)
         lastFrame = time
+        if state == .docking, !isHolding, let host {
+            target = host.dockSpot(dockEdge, dockFrom)
+        }
         while remaining > 0, isActive {
             let step = min(remaining, Self.substep)
             advance(step, time)
@@ -323,7 +339,7 @@ final class NavCarry: ObservableObject {
         case .thrown: advanceThrown(step)
         default: advanceSettling(step)
         }
-        morphVelocity += Self.force(morph, morphVelocity, morphTarget, Motion.morphSpring) * step
+        morphVelocity += Self.force(morph, morphVelocity, morphTarget, morphTarget == 0 ? Motion.unfoldSpring : Motion.morphSpring) * step
         morph += morphVelocity * step
     }
 
@@ -339,7 +355,9 @@ final class NavCarry: ObservableObject {
             }
         case .open: morphTarget = freeMorph()
         }
-        let offsetShare = Self.share(1 - morph)
+        let from = CGFloat(settings.fingerCentreFrom)
+        let centring = Self.share((morph - from) / (1 - from))
+        let offsetShare = 1 - centring * centring * (3 - 2 * centring)
         let wanted = CGPoint(x: finger.x - grabOffset.width * offsetShare, y: finger.y - grabOffset.height * offsetShare)
         target = host.clamped(wanted, host.shownSize(morph))
         followVelocity.dx += Self.force(follow.x, followVelocity.dx, target.x, Motion.bubbleFollowSpring) * step
@@ -375,7 +393,6 @@ final class NavCarry: ObservableObject {
                 return
             }
             velocity.dx = -into * settings.bounce
-            lastWall = isLow ? .left : .right
         }
         if point.y < lowY || point.y > highY {
             let isLow = point.y < lowY
@@ -388,16 +405,18 @@ final class NavCarry: ObservableObject {
                 return
             }
             velocity.dy = -into * settings.bounce
-            lastWall = isLow ? .top : .bottom
         }
         center = point
-        if hypot(velocity.dx, velocity.dy) < settings.restVelocity {
-            if let name = cornerAt(point) {
-                park(name)
-            } else {
-                dock(lastWall ?? nearestEdge(point))
-            }
+        let speed = hypot(velocity.dx, velocity.dy)
+        let ahead = speed < CGFloat(settings.restVelocity) ? nil : wallAhead(point, velocity)
+        let zoneEdge = edgeAt(point, share: CGFloat(settings.throwEdgeShare))
+        let isHeadingIn = ahead.map { $0.edge == zoneEdge && cornerAt($0.point) == nil } ?? false
+        guard isHeadingIn || speed < CGFloat(settings.dockVelocity) else { return }
+        if let name = cornerAt(point) {
+            park(name)
+            return
         }
+        dock(zoneEdge ?? ahead?.edge ?? nearestEdge(point))
     }
 
     private func advanceSettling(_ step: Double) {

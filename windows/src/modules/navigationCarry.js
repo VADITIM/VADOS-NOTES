@@ -40,7 +40,6 @@ export class NavigationCarry {
         this.turnUntil = 0
         this.isHolding = false
         this.corner = null
-        this.lastWall = null
     }
 
     get isActive() {
@@ -74,7 +73,6 @@ export class NavigationCarry {
         this.grabOffset = [finger[0] - center[0], finger[1] - center[1]]
         this.isLatched = this.morph >= 0.5
         this.samples = [{ point: [...finger], time: now }]
-        this.lastWall = null
         this.corner = null
         this.run()
     }
@@ -111,7 +109,7 @@ export class NavigationCarry {
         } else if (zone.kind === "edge") {
             this.dock(zone.edge)
         } else {
-            this.dock(null)
+            this.dock(this.nearestEdge(this.center))
         }
     }
 
@@ -167,26 +165,11 @@ export class NavigationCarry {
         return vertical && horizontal ? `${vertical}-${horizontal}` : null
     }
 
-    edgeZone(center) {
+    edgeAt(point, share) {
         const { width, height } = this.host.bounds()
-        const size = this.host.shownSize(this.morph)
-        const reach = settings().edge_zone
-        const isLeft = center[0] - size[0] / 2 <= reach
-        const isRight = center[0] + size[0] / 2 >= width - reach
-        const isTop = center[1] - size[1] / 2 <= reach
-        const isBottom = center[1] + size[1] / 2 >= height - reach
-        const isAtSide = isLeft || isRight
-        const isAtEnd = isTop || isBottom
-        if (!isAtSide && !isAtEnd) {
-            return { kind: "open" }
-        }
-        const orientation = isAtSide && isAtEnd ? this.host.orientation() : isAtSide ? "vertical" : "horizontal"
-        const sideEdge = center[0] < width / 2 ? "left" : "right"
-        const endEdge = center[1] < height / 2 ? "top" : "bottom"
-        if (orientation === "vertical") {
-            return { kind: "edge", orientation, edge: isLeft && isRight ? sideEdge : isLeft ? "left" : isRight ? "right" : sideEdge }
-        }
-        return { kind: "edge", orientation, edge: isTop && isBottom ? endEdge : isTop ? "top" : isBottom ? "bottom" : endEdge }
+        const distances = [["left", point[0] / width], ["right", (width - point[0]) / width], ["top", point[1] / height], ["bottom", (height - point[1]) / height]]
+        const nearest = distances.reduce((best, next) => (next[1] < best[1] ? next : best))
+        return nearest[1] <= share ? nearest[0] : null
     }
 
     carriedZone() {
@@ -194,7 +177,28 @@ export class NavigationCarry {
         if (corner) {
             return { kind: "corner", corner }
         }
-        return this.edgeZone(this.center)
+        const edge = this.edgeAt(this.finger, settings().edge_share)
+        return edge ? { kind: "edge", edge, orientation: edgeOrientation(edge) } : { kind: "open" }
+    }
+
+    wallAhead(center, velocity) {
+        const { width, height } = this.host.bounds()
+        const arrivals = []
+        if (velocity[0] < 0) {
+            arrivals.push(["left", -center[0] / velocity[0]])
+        } else if (velocity[0] > 0) {
+            arrivals.push(["right", (width - center[0]) / velocity[0]])
+        }
+        if (velocity[1] < 0) {
+            arrivals.push(["top", -center[1] / velocity[1]])
+        } else if (velocity[1] > 0) {
+            arrivals.push(["bottom", (height - center[1]) / velocity[1]])
+        }
+        if (!arrivals.length) {
+            return null
+        }
+        const [edge, seconds] = arrivals.reduce((best, next) => (next[1] < best[1] ? next : best))
+        return { edge, point: [center[0] + velocity[0] * seconds, center[1] + velocity[1] * seconds] }
     }
 
     nearestEdge(center) {
@@ -212,7 +216,6 @@ export class NavigationCarry {
         const share = speed > limit ? limit / speed : 1
         this.velocity = [velocity[0] * share, velocity[1] * share]
         this.morphTarget = 1
-        this.lastWall = null
         this.run()
     }
 
@@ -232,10 +235,16 @@ export class NavigationCarry {
         this.state = "docking"
         this.corner = null
         this.dockEdge = edge
+        this.dockFrom = [...this.center]
         this.target = [...this.center]
         this.isHolding = true
+        const speed = Math.hypot(...this.velocity)
+        const limit = settings().dock_velocity
+        if (speed > limit) {
+            this.velocity = [this.velocity[0] * limit / speed, this.velocity[1] * limit / speed]
+        }
         const now = performance.now()
-        if (edge && edgeOrientation(edge) !== this.host.orientation()) {
+        if (edgeOrientation(edge) !== this.host.orientation()) {
             this.turnUntil = Math.max(this.turnUntil, now + this.host.turnTo(edgeOrientation(edge), this.morph >= 0.5))
         }
         const travel = () => {
@@ -243,7 +252,8 @@ export class NavigationCarry {
                 return
             }
             this.isHolding = false
-            this.target = this.host.dockSpot(edge, this.center)
+            this.dockFrom = [...this.center]
+            this.target = this.host.dockSpot(edge, this.dockFrom)
             this.morphTarget = 0
             this.run()
         }
@@ -269,6 +279,9 @@ export class NavigationCarry {
         this.isInFrame = true
         let remaining = Math.min(0.05, (now - this.last) / 1000)
         this.last = now
+        if (this.state === "docking" && !this.isHolding) {
+            this.target = this.host.dockSpot(this.dockEdge, this.dockFrom)
+        }
         while (remaining > 0 && this.isActive) {
             const step = Math.min(remaining, substep)
             this.advance(step, now)
@@ -290,7 +303,7 @@ export class NavigationCarry {
         } else {
             this.advanceSettling(step)
         }
-        this.morphVelocity += springForce(this.morph, this.morphVelocity, this.morphTarget, "morph") * step
+        this.morphVelocity += springForce(this.morph, this.morphVelocity, this.morphTarget, this.morphTarget === 0 ? "unfold" : "morph") * step
         this.morph += this.morphVelocity * step
     }
 
@@ -300,7 +313,9 @@ export class NavigationCarry {
         if (zone.kind === "edge" && zone.orientation !== this.host.orientation()) {
             this.turnUntil = Math.max(this.turnUntil, now + this.host.turnTo(zone.orientation, this.morph >= 0.5))
         }
-        const offsetShare = clampShare(1 - this.morph)
+        const from = settings().finger_centre_from
+        const centring = clampShare((this.morph - from) / (1 - from))
+        const offsetShare = 1 - centring * centring * (3 - 2 * centring)
         const wanted = [this.finger[0] - this.grabOffset[0] * offsetShare, this.finger[1] - this.grabOffset[1] * offsetShare]
         this.target = this.host.clamped(wanted, this.host.shownSize(this.morph))
         for (const axis of [0, 1]) {
@@ -313,7 +328,7 @@ export class NavigationCarry {
     }
 
     advanceThrown(step) {
-        const { throw_decay: decay, bounce, rest_velocity: rest, corner_zone: cornerReach } = settings()
+        const { throw_decay: decay, bounce, rest_velocity: rest, corner_zone: cornerReach, dock_velocity: dockVelocity, throw_edge_share: throwShare } = settings()
         const keep = Math.pow(decay, step * 1000)
         this.velocity = [this.velocity[0] * keep, this.velocity[1] * keep]
         this.center = [this.center[0] + this.velocity[0] * step, this.center[1] + this.velocity[1] * step]
@@ -321,8 +336,8 @@ export class NavigationCarry {
         const size = this.host.shownSize(this.morph)
         const margin = this.host.edgeMargin()
         const walls = [
-            { axis: 0, low: margin + size[0] / 2, high: width - margin - size[0] / 2, lowEdge: "left", highEdge: "right", across: 1, acrossTotal: height },
-            { axis: 1, low: margin + size[1] / 2, high: height - margin - size[1] / 2, lowEdge: "top", highEdge: "bottom", across: 0, acrossTotal: width },
+            { axis: 0, low: margin + size[0] / 2, high: width - margin - size[0] / 2, across: 1, acrossTotal: height },
+            { axis: 1, low: margin + size[1] / 2, high: height - margin - size[1] / 2, across: 0, acrossTotal: width },
         ]
         for (const wall of walls) {
             const value = this.center[wall.axis]
@@ -346,16 +361,20 @@ export class NavigationCarry {
                 }
             }
             this.velocity[wall.axis] = -velocityIntoWall * bounce
-            this.lastWall = isLow ? wall.lowEdge : wall.highEdge
         }
-        if (Math.hypot(...this.velocity) < rest) {
-            const corner = this.cornerAt(this.center)
-            if (corner) {
-                this.park(corner)
-            } else {
-                this.dock(this.lastWall ?? this.nearestEdge(this.center))
-            }
+        const speed = Math.hypot(...this.velocity)
+        const ahead = speed < rest ? null : this.wallAhead(this.center, this.velocity)
+        const zoneEdge = this.edgeAt(this.center, throwShare)
+        const isHeadingIn = Boolean(ahead && zoneEdge === ahead.edge && !this.cornerAt(ahead.point))
+        if (!isHeadingIn && speed >= dockVelocity) {
+            return
         }
+        const corner = this.cornerAt(this.center)
+        if (corner) {
+            this.park(corner)
+            return
+        }
+        this.dock(zoneEdge ?? ahead?.edge ?? this.nearestEdge(this.center))
     }
 
     advanceSettling(step) {

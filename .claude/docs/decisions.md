@@ -512,6 +512,20 @@ One engine runs the whole move, `NavigationCarry` (`windows/src/modules/navigati
 - **Edge hide stays for now.** It is a drag on the bar body, not on the grabber, so the gestures do not conflict, but corner parking does the same job (getting the bar out of the way). Proposed for removal; waiting for a yes.
 - **Assumption:** all `motion.carry` values above, and the three springs (`morph` 0.28 / 0.8, `bubble_follow` 0.12 / 0.65, `dock` 0.36 / 0.82), were chosen on Windows with synthetic pointer input and have not been felt on an iPad.
 
+### Carrying the nav, second pass: edges only, an even shrink, a springy unfold (2026-11-03, iPad, Windows and Linux)
+
+The first iPad build was tried by hand. This pass replaces the bullets above where they disagree: the bubble face, the "Edge lock" zone, "A thrown bubble docks to the last wall it hit", the `press` hold, and the `dock` spring values.
+
+- **Even shrink (iPad bug).** `PillShell` sized the shrinking capsule inside its `GeometryReader` without recentring it, so the bubble shrank into the bar's top-left corner. It sat away from the finger, the fading tool glyph was left where the bar used to be, and the unfold grew out of that corner and seemed to jump when it finished. The capsule is now centred in the bar's frame. Windows already centred it.
+- **Shrink first, then gather.** The grab offset no longer fades with the morph from the start. It holds until the morph reaches `finger_centre_from` (0.35), then eases (smoothstep) to zero by the full bubble. The bar shrinks in place first, then the circle slides under the finger.
+- **The bubble face is the grabber mark,** a `grabber_length` × `grabber_thickness` bar, no longer the selected tool's glyph. **Assumption:** this is what "the active tool doesn't disappear" asked for. A tool icon in the circle read as a tool that stayed behind.
+- **Grabber on the inner side** for horizontal bars too: the top edge when the bar is in the lower half, the bottom edge when it is in the upper half. Vertical bars already faced the screen centre.
+- **Edges only.** The toolbar rests against an edge or parks in a corner, never in open space. While carried, the finger inside `edge_share` (0.1) of the screen's width (left and right) or height (top and bottom) picks that edge and unfolds the bar towards it. Using the finger instead of the frame removes the feedback where an unfolding bar pulled itself in and out of the zone. A drop in open space docks to the nearest edge. Corners still win inside `corner_zone`.
+- **Throws open early.** A thrown bubble docks as soon as its speed falls below `dock_velocity` (900 pt/s), or at once when it heads into the edge it is within `throw_edge_share` (0.2) of, unless its path ends in a corner. It docks to that zone's edge, else to the wall ahead of it, else the nearest edge. The dock keeps the throw's velocity, capped at `dock_velocity`, so the momentum carries into the settle instead of stopping dead.
+- **No hold for a bubble turn.** A bubble turns instantly and the travel and unfold start in the same frame (`turnTo` returns 0). The dock target is recomputed every frame from the bar's measured size, so a size that arrives a frame late (SwiftUI preferences) cannot leave the bar short of the edge. A visible bar still mutates first and travels after.
+- **Springy unfold.** Unfolding (morph target 0) uses its own `unfold` spring (0.34 / 0.56): about 9% overshoot in length, so the bar opens past its size and settles back. The morph is no longer clamped at 0 on Windows, so that overshoot shows. `dock` is now 0.38 / 0.7 for a soft bounce against the edge.
+- **Assumption:** the new values were tuned on Windows with synthetic input (a dock lands about 0.4 s after a fling, with a 9% length overshoot) and still need a feel on the iPad.
+
 
 ### View All: opaque, pans from pages, a continuous grid, the top bar's buttons (2026-11-03, iPad)
 

@@ -1106,7 +1106,7 @@ struct ToolNav<PanelContent: View>: View {
             withTransaction(transaction) {
                 orientation = wanted
             }
-            return Double(Motion.pressMilliseconds)
+            return 0
         }
         let changeAt = Double(Motion.navigationMutateLeaveMilliseconds) * 3 / 2
         let total = changeAt + Double(Motion.navigationSwitchMilliseconds * 2)
@@ -1132,7 +1132,7 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private func grabberAlignment(center: CGPoint, layer: CGSize) -> Alignment {
-        guard orientation == .vertical else { return .top }
+        guard orientation == .vertical else { return center.y > layer.height / 2 ? .top : .bottom }
         return center.x > layer.width / 2 ? .leading : .trailing
     }
 
@@ -1145,14 +1145,16 @@ struct ToolNav<PanelContent: View>: View {
         let edgeLine = CGFloat(settings.grabberInset) + thickness / 2
         let facesLeading = isVertical && center.x > carryLayer.width / 2
         let barShare: CGFloat = min(1, max(0, 1 - carry.morph * 2))
+        let facesUp = !isVertical && center.y > carryLayer.height / 2
         let crossOffset = isVertical ? (facesLeading ? edgeLine - reach : reach - edgeLine) : 0
+        let endOffset = isVertical ? 0 : (facesUp ? edgeLine - reach : reach - edgeLine)
         return Capsule()
             .fill(Palette.borderHover)
             .frame(width: isVertical ? thickness : length, height: isVertical ? length : thickness)
             .opacity(barShare)
             .frame(width: isVertical ? reach * 2 : length + reach * 2, height: isVertical ? length + reach * 2 : reach * 2)
             .contentShape(Rectangle())
-            .offset(x: crossOffset, y: isVertical ? 0 : edgeLine - reach)
+            .offset(x: crossOffset, y: endOffset)
             .opacity(navigationMotion.areElementsShown ? 1 : 0)
             .animation(Motion.powerTwoOut(Motion.navigationElementMilliseconds), value: navigationMotion.areElementsShown)
             .gesture(carryGesture(center: center, waitsForTravel: false))
@@ -1161,13 +1163,13 @@ struct ToolNav<PanelContent: View>: View {
     }
 
     private func bubbleFace(center: CGPoint) -> some View {
-        let selected = groups.joined().first { $0.id == selectedId }
-        let glyphName = selected.map { $0.glyph.isEmpty ? "move" : $0.glyph } ?? "move"
         let shown = shownSize(carry.morph)
         let isReachable = carry.morph >= 0.5 || carry.isActive
         let faceShare: CGFloat = min(1, max(0, carry.morph * 2 - 1))
         let faceScale: CGFloat = 0.6 + 0.4 * min(1, max(0, carry.morph))
-        return GlyphView(name: glyphName, color: selected?.tint ?? Palette.textBody, size: NavMetrics.glyphSize)
+        return Capsule()
+            .fill(Palette.borderHover)
+            .frame(width: CGFloat(Motion.carry.grabberLength), height: CGFloat(Motion.carry.grabberThickness))
             .opacity(faceShare)
             .scaleEffect(faceScale)
             .frame(width: shown.width, height: shown.height)

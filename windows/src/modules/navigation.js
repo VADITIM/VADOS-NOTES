@@ -141,7 +141,7 @@ class PillBody {
 
     paint() {
         const [barWidth, barHeight] = this.shownSize ?? this.size
-        const morph = Math.max(0, this.morph)
+        const morph = this.morph
         const width = barWidth + (this.bubbleDiameter - barWidth) * morph
         const height = barHeight + (this.bubbleDiameter - barHeight) * morph
         const offsetX = (this.size[0] - width) / 2
@@ -156,7 +156,7 @@ class PillBody {
         const contentShare = Math.min(1, Math.max(0, 1 - morph * 2))
         this.content.style.opacity = contentShare < 1 ? String(contentShare) : ""
         const bubbleShare = this.bubbleDiameter / Math.max(1, Math.max(barWidth, barHeight))
-        this.content.style.scale = morph > 0.001 ? String(1 - (1 - bubbleShare) * Math.min(1, morph)) : ""
+        this.content.style.scale = Math.abs(morph) > 0.001 ? String(1 - (1 - bubbleShare) * Math.min(1, morph)) : ""
         this.element.style.visibility = this.motion.isPresent ? "visible" : "hidden"
         this.element.classList.toggle("is-interactive", this.motion.areElementsShown)
         this.element.classList.toggle("is-bubble", morph >= 0.5)
@@ -1125,7 +1125,7 @@ export class ToolNav {
             this.orientation = orientation
             this.carry.swapGrab()
             this.rebuildForOrientation()
-            return duration("press")
+            return 0
         }
         for (const element of this.items.elements.values()) {
             turnOut(element, { milliseconds: duration("navigation_mutate_leave") })
@@ -1180,14 +1180,12 @@ export class ToolNav {
         face.style.top = `${(size[1] - diameter) / 2}px`
         face.style.opacity = String(Math.min(1, Math.max(0, morph * 2 - 1)))
         face.style.scale = String(0.6 + 0.4 * Math.min(1, Math.max(0, morph)))
-        const selected = this.props?.groups.flat().find((item) => item.id === this.props.selectedId)
-        const glyphName = selected?.glyph ?? "move"
-        const color = selected?.tint ?? tokens.palette.text_body
-        if (face.dataset.glyph !== `${glyphName}${color}`) {
-            face.dataset.glyph = `${glyphName}${color}`
-            face.replaceChildren(glyph(glyphName, { color, size: navMetrics.glyphSize }))
-        }
         const carry = tokens.motion.carry
+        if (!face.firstElementChild) {
+            face.append(create("span", "navigation-grabber-bar"))
+        }
+        face.firstElementChild.style.width = `${carry.grabber_length}px`
+        face.firstElementChild.style.height = `${carry.grabber_thickness}px`
         const isVertical = this.orientation === "vertical"
         const bar = this.grabber.firstElementChild
         const crossLength = carry.grabber_reach * 2
@@ -1203,8 +1201,10 @@ export class ToolNav {
             this.grabber.style.left = `${line - crossLength / 2}px`
             this.grabber.style.top = `${size[1] / 2 - alongLength / 2}px`
         } else {
+            const facesUp = (this.navigationCenter?.value?.[1] ?? window.innerHeight) > window.innerHeight / 2
+            const line = facesUp ? edgeLine : size[1] - edgeLine
             this.grabber.style.left = `${size[0] / 2 - alongLength / 2}px`
-            this.grabber.style.top = `${edgeLine - crossLength / 2}px`
+            this.grabber.style.top = `${line - crossLength / 2}px`
         }
         bar.style.opacity = String(Math.min(1, Math.max(0, 1 - morph * 2)))
     }
