@@ -14,11 +14,12 @@ import {
     wheelButton,
 } from "./controls.js"
 import { slotsFromTokens, swatchSlots } from "./menu.js"
-import { cellContaining, clampBox } from "./model.js"
+import { isImportInverted } from "./imports.js"
+import { cellContaining, clampBox, liveElements } from "./model.js"
 import { duration, tween } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
-import { fontMetrics, lineHeightOf, textRect, writingFamily } from "./renderer.js"
+import { fontMetrics, importRect, lineHeightOf, textRect, writingFamily } from "./renderer.js"
 import { inkOnPaper, isLight, tokens } from "./tokens.js"
 
 const millimetresPerPoint = 0.35278
@@ -793,7 +794,12 @@ export class PageScreen {
         const showsGuides = preferences.showsGuides()
         const showsDividers = preferences.showsDividers()
         const hasClipboard = this.library.clipboard.length > 0
-        const actions = ["paste", "expand_columns", "shrink_columns", "expand_rows", "shrink_rows", "toggle_guides", "toggle_dividers", "delete_page"]
+        const heldImport = page ? liveElements(page).find((element) => {
+            const rect = element.type === "import" ? importRect(element) : null
+            return rect && pagePoint.x >= rect.x && pagePoint.x < rect.x + rect.width && pagePoint.y >= rect.y && pagePoint.y < rect.y + rect.height
+        }) : null
+        const isHeldImportInverted = heldImport ? isImportInverted(heldImport, preferences.paperStyle() === "dark") : false
+        const actions = ["paste", "expand_columns", "shrink_columns", "expand_rows", "shrink_rows", "toggle_guides", "toggle_dividers", "invert_import", "delete_page"]
         const slots = slotsFromTokens(tokens.menus.page.filter((slot) => actions.includes(slot.action)), {
             title: (action) => ({
                 paste: "Paste",
@@ -803,6 +809,7 @@ export class PageScreen {
                 shrink_rows: "Remove row",
                 toggle_guides: showsGuides ? "Guides off" : "Guides on",
                 toggle_dividers: showsDividers ? "Cell lines off" : "Cell lines on",
+                invert_import: isHeldImportInverted ? "Original PDF" : "Invert PDF",
                 delete_page: "Delete note",
             })[action] ?? action,
             isEnabled: (action) => {
@@ -813,6 +820,7 @@ export class PageScreen {
                 case "shrink_columns": return Boolean(page) && !isReadOnly && page.extent.cols > 1
                 case "shrink_rows": return Boolean(page) && !isReadOnly && page.extent.rows > 1
                 case "toggle_dividers": return (page ? page.extent.cols * page.extent.rows : 1) > 1
+                case "invert_import": return Boolean(heldImport) && !isReadOnly
                 case "delete_page": return Boolean(page)
                 default: return true
                 }
@@ -826,6 +834,7 @@ export class PageScreen {
                 case "shrink_rows": this.library.removeCell(this.pageId, false, cellContaining(page.extent, pagePoint, false)); break
                 case "toggle_guides": preferences.setShowsGuides(!showsGuides); break
                 case "toggle_dividers": preferences.setShowsDividers(!showsDividers); break
+                case "invert_import": this.library.setInverted([heldImport.id], this.pageId, !isHeldImportInverted); break
                 case "delete_page":
                     this.library.deletePage(this.pageId)
                     this.app.navigator.go({ kind: "notebook", notebookId: this.notebookId })

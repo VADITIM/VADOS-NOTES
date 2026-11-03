@@ -2019,6 +2019,28 @@ svg.squircle ~ * {
     opacity: 1;
 }
 
+.transfer-grow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 6px;
+    outline: 1.5px dashed var(--palette-border-control);
+    background: var(--palette-sunken-deep);
+    cursor: pointer;
+    transition: outline-color 160ms;
+}
+
+.transfer-grow:hover {
+    outline-color: var(--semantic-create);
+}
+
+.transfer-grow[hidden] {
+    display: none;
+}
+
 .transfer-grid.is-viewing .transfer-row {
     pointer-events: none;
 }

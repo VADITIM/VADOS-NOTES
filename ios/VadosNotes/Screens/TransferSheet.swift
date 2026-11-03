@@ -67,6 +67,7 @@ struct TransferSheet: View {
     private static let spacing: CGFloat = 10
     private static let dragSlop: CGFloat = 6
     private static let cellShape = Squircle(radius: 8)
+    private static let growDepth: CGFloat = 28
 
     init(pageId: String, initialMode: TransferMode) {
         self.pageId = pageId
@@ -79,6 +80,34 @@ struct TransferSheet: View {
 
     private var isEditable: Bool {
         !library.isReadOnly(pageId)
+    }
+
+    private var isGrowable: Bool {
+        mode == .view && isEditable && page != nil
+    }
+
+    private var noteImports: [Element] {
+        page?.liveElements.filter { $0.type == .importPage } ?? []
+    }
+
+    private var hasPdfPages: Bool {
+        !noteImports.isEmpty || (mode == .import && document != nil)
+    }
+
+    private var isShowingInverted: Bool {
+        if mode == .import, let document {
+            return !document.inverted.isEmpty && document.inverted.allSatisfy { $0 }
+        }
+        let imports = noteImports
+        return !imports.isEmpty && imports.allSatisfy { ImportImages.shared.isInverted($0, isDark: preferences.paperStyle == .dark) }
+    }
+
+    private func setInverted(_ isInverted: Bool) {
+        if var pending = document {
+            pending.inverted = pending.pages.map { _ in isInverted }
+            document = pending
+        }
+        library.setInverted(noteImports.map(\.id), on: pageId, to: isInverted)
     }
 
     private var placements: [CellPosition: Int] {
@@ -132,7 +161,7 @@ struct TransferSheet: View {
         let now = Date()
         shown.extent = extent
         shown.elements += ordered.map { placement in
-            library.importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column)
+            library.importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column, isInverted: document.isInverted(placement.index))
         }
         return shown
     }
@@ -224,8 +253,11 @@ struct TransferSheet: View {
                         isPicking = true
                     }
                 }
-                Segmented(options: [SegmentOption(value: false, title: "Normal"), SegmentOption(value: true, title: "Inverted")], selected: preferences.invertsPdfPages) { isInverted in
-                    preferences.setInvertsPdfPages(isInverted)
+                if hasPdfPages {
+                    Segmented(options: [SegmentOption(value: false, title: "Normal"), SegmentOption(value: true, title: "Inverted")], selected: isShowingInverted) { isInverted in
+                        setInverted(isInverted)
+                    }
+                    .transition(.popTogether)
                 }
                 if mode != .view {
                     SlabButton(title: isImport ? "Import \(chosen) of \(document?.pages.count ?? 0)" : "Export \(chosen) page\(chosen == 1 ? "" : "s")", color: Palette.importAsset, isEnabled: chosen > 0 && !isExporting, action: submit)
@@ -233,6 +265,7 @@ struct TransferSheet: View {
                 }
             }
             .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: mode)
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: hasPdfPages)
             .modifier(rising(.header))
             HStack(alignment: .top, spacing: 18) {
                 strip
@@ -352,9 +385,13 @@ struct TransferSheet: View {
 
     private func grid(width: CGFloat) -> some View {
         let shape = extent
-        let available = width - Self.rowLabelWidth - Self.spacing * CGFloat(shape.columns)
+        let isGrowing = isGrowable
+        let growReach = isGrowing ? Self.growDepth + Self.spacing : 0
+        let available = width - Self.rowLabelWidth - Self.spacing * CGFloat(shape.columns) - growReach
         let cellWidth = max(24, min(Self.largestCellWidth, available / CGFloat(max(1, shape.columns))))
         let cellHeight = cellWidth * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth)
+        let cellsWidth = cellWidth * CGFloat(shape.columns) + Self.spacing * CGFloat(shape.columns - 1)
+        let cellsHeight = cellHeight * CGFloat(shape.rows) + Self.spacing * CGFloat(shape.rows - 1)
         let firstNewRow = page?.extent.rows ?? shape.rows
         let count = total
         return HStack(alignment: .top, spacing: Self.spacing) {
@@ -374,28 +411,66 @@ struct TransferSheet: View {
                     .disabled(mode == .view)
                 }
             }
-            VStack(spacing: Self.spacing) {
-                ForEach(0..<shape.rows, id: \.self) { row in
-                    HStack(spacing: Self.spacing) {
-                        ForEach(0..<shape.columns, id: \.self) { column in
-                            let cell = CellPosition(column: column, row: row)
-                            let index = mode == .view ? row * shape.columns + column : placements[cell]
-                            pageTile(image: images[cell], label: index.map { "\($0 + 1)/\(count)" }, isSelected: mode != .view && index != nil, isNew: row >= firstNewRow, target: .cell(cell))
-                                .frame(width: cellWidth, height: cellHeight)
-                                .background(GeometryReader { proxy in
-                                    Color.clear.preference(key: TransferFrames.self, value: [.cell(cell): proxy.frame(in: .named(Self.space))])
-                                })
+            VStack(alignment: .leading, spacing: Self.spacing) {
+                HStack(alignment: .top, spacing: Self.spacing) {
+                    cells(shape: shape, cellWidth: cellWidth, cellHeight: cellHeight, firstNewRow: firstNewRow, count: count)
+                    if isGrowing {
+                        growButton(glyph: "add_column", label: "Add column") {
+                            library.expand(pageId, columns: true)
                         }
+                        .frame(width: Self.growDepth, height: cellsHeight)
+                        .transition(.popTogether)
                     }
                 }
+                if isGrowing {
+                    growButton(glyph: "add_row", label: "Add row") {
+                        library.expand(pageId, columns: false)
+                    }
+                    .frame(width: cellsWidth, height: Self.growDepth)
+                    .transition(.popTogether)
+                }
             }
-            .gesture(gridGesture)
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isGrowing)
         }
         .frame(maxWidth: .infinity)
         .onAppear { renderCells(cellSize: CGSize(width: cellWidth, height: cellHeight)) }
         .onChange(of: renderKey(cellWidth: cellWidth)) { _, _ in
             renderCells(cellSize: CGSize(width: cellWidth, height: cellHeight))
         }
+    }
+
+    private func growButton(glyph: String, label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.landed()
+            action()
+        } label: {
+            GlyphView(name: glyph, color: Palette.create, size: 18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Self.cellShape.fill(Palette.sunkenDeep))
+                .overlay(Self.cellShape.stroke(Palette.borderControl, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+                .contentShape(Self.cellShape)
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel(label)
+    }
+
+    private func cells(shape: Extent, cellWidth: CGFloat, cellHeight: CGFloat, firstNewRow: Int, count: Int) -> some View {
+        VStack(spacing: Self.spacing) {
+            ForEach(0..<shape.rows, id: \.self) { row in
+                HStack(spacing: Self.spacing) {
+                    ForEach(0..<shape.columns, id: \.self) { column in
+                        let cell = CellPosition(column: column, row: row)
+                        let index = mode == .view ? row * shape.columns + column : placements[cell]
+                        pageTile(image: images[cell], label: index.map { "\($0 + 1)/\(count)" }, isSelected: mode != .view && index != nil, isNew: row >= firstNewRow, target: .cell(cell))
+                            .frame(width: cellWidth, height: cellHeight)
+                            .background(GeometryReader { proxy in
+                                Color.clear.preference(key: TransferFrames.self, value: [.cell(cell): proxy.frame(in: .named(Self.space))])
+                            })
+                    }
+                }
+            }
+        }
+        .gesture(gridGesture)
     }
 
     private var gridGesture: some Gesture {
@@ -530,12 +605,12 @@ struct TransferSheet: View {
     }
 
     private var sourceKey: String {
-        "\(document?.asset ?? "")|\(importRevision)|\(preferences.paperStyle.rawValue)|\(preferences.showsGuides)|\(preferences.invertsPdfPages)"
+        "\(document?.asset ?? "")|\(importRevision)|\(preferences.paperStyle.rawValue)|\(preferences.showsGuides)|\(document?.inverted ?? [])"
     }
 
     private func renderKey(cellWidth: CGFloat) -> String {
         let shown = mode == .import ? ordered.map { "\($0.cell.column).\($0.cell.row).\($0.index)" }.joined(separator: ",") : ""
-        return "\(mode.rawValue)|\(shown)|\(document?.asset ?? "")|\(library.revision)|\(importRevision)|\(Int(cellWidth))|\(preferences.paperStyle.rawValue)|\(preferences.showsGuides)|\(preferences.invertsPdfPages)"
+        return "\(mode.rawValue)|\(shown)|\(document?.asset ?? "")|\(library.revision)|\(importRevision)|\(Int(cellWidth))|\(preferences.paperStyle.rawValue)|\(preferences.showsGuides)|\(document?.inverted ?? [])"
     }
 
     private func renderOptions() -> RenderOptions {
@@ -562,7 +637,7 @@ struct TransferSheet: View {
         var rendered: [Int: UIImage] = [:]
         shown.extent = .single
         for index in document.pages.indices {
-            shown.elements = [library.importElement(asset: document.asset, index: index, size: document.pages[index], now: now, row: 0, column: 0)]
+            shown.elements = [library.importElement(asset: document.asset, index: index, size: document.pages[index], now: now, row: 0, column: 0, isInverted: document.isInverted(index))]
             rendered[index] = PageRenderer.cellThumbnail(of: shown, cell: CellPosition(column: 0, row: 0), size: size, options: options)
         }
         sourceImages = rendered

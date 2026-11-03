@@ -332,6 +332,7 @@ final class PillMotion: ObservableObject {
 
     func enter() {
         step += 1
+        isMutating = false
         let isMidLeave = isPresent && shellScale > 0
         if !isMidLeave {
             var transaction = Transaction()
@@ -374,6 +375,7 @@ final class PillMotion: ObservableObject {
     func leave(keepsShape: Bool = false, then finish: @escaping () -> Void = {}) {
         guard isPresent else { return }
         step += 1
+        isMutating = false
         areElementsShown = false
         let elementsGone = Motion.navigationLeaveElementMilliseconds
         let narrowed = elementsGone + Motion.navigationLeaveSpreadMilliseconds * 3 / 4

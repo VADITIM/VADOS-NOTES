@@ -85,13 +85,6 @@ export function setShowsGuides(value) {
     write("showsGuides", value)
 }
 
-export function invertsPdfPages() {
-    return readSetting("invertsPdfPages", true)
-}
-
-export function setInvertsPdfPages(value) {
-    write("invertsPdfPages", value)
-}
 
 export function showsDividers() {
     return readSetting("showsDividers", true)

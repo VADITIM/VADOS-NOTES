@@ -151,18 +151,6 @@ final class Preferences: ObservableObject {
         read("showsDividers", true)
     }
 
-    nonisolated static var invertsPdfPages: Bool {
-        UserDefaults.standard.object(forKey: "invertsPdfPages") as? Bool ?? true
-    }
-
-    var invertsPdfPages: Bool {
-        Self.invertsPdfPages
-    }
-
-    func setInvertsPdfPages(_ value: Bool) {
-        write("invertsPdfPages", value)
-    }
-
     func setShowsGuides(_ value: Bool) {
         write("showsGuides", value)
     }

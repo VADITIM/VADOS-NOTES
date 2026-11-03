@@ -136,6 +136,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
     public var sourceSizeMillimetres: [Double]?
     public var placement: Placement?
     public var fit: Fit?
+    public var inverted: Bool?
     public var updated: Date
     public var device: String
     public var deleted: Bool
@@ -157,6 +158,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         case sourceSizeMillimetres = "source_size_mm"
         case placement
         case fit
+        case inverted
         case updated
         case device
         case deleted
@@ -187,6 +189,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         sourceSizeMillimetres: [Double]? = nil,
         placement: Placement? = nil,
         fit: Fit? = nil,
+        inverted: Bool? = nil,
         updated: Date,
         device: String,
         deleted: Bool = false
@@ -207,6 +210,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         self.sourceSizeMillimetres = sourceSizeMillimetres
         self.placement = placement
         self.fit = fit
+        self.inverted = inverted
         self.updated = updated
         self.device = device
         self.deleted = deleted

@@ -1,7 +1,8 @@
 import { create, microLabel, pressable, segmented, setEnabled, slabButton } from "./components.js"
 import { exportCells } from "./exports.js"
-import { importFailureMessage, readPdf, subscribeImports } from "./imports.js"
+import { importFailureMessage, isImportInverted, readPdf, subscribeImports } from "./imports.js"
 import { importElement } from "./library.js"
+import { liveElements } from "./model.js"
 import { animate, duration } from "./motion.js"
 import * as preferences from "./preferences.js"
 import { renderCell } from "./renderer.js"
@@ -115,12 +116,12 @@ export function transferSheet(app, request) {
             return current
         }
         const now = new Date().toISOString()
-        const shown = byIndex().map((placement) => importElement(document_.asset, placement.index, document_.pages[placement.index], now, library.device, placement.row, placement.column))
+        const shown = byIndex().map((placement) => importElement(document_.asset, placement.index, document_.pages[placement.index], now, library.device, placement.row, placement.column, document_.inverted?.[placement.index] === true))
         return { ...current, extent: extent(), elements: [...current.elements, ...shown] }
     }
     const sourcePage = (index) => {
         const now = new Date().toISOString()
-        return { extent: { cols: 1, rows: 1 }, elements: [importElement(document_.asset, index, document_.pages[index], now, library.device, 0, 0)] }
+        return { extent: { cols: 1, rows: 1 }, elements: [importElement(document_.asset, index, document_.pages[index], now, library.device, 0, 0, document_.inverted?.[index] === true)] }
     }
 
     const fileTitle = create("span", "pdf-choice-title", "Choose PDF")
@@ -158,7 +159,30 @@ export function transferSheet(app, request) {
     if (!isEditable) {
         setEnabled(modeControl.children[3], false)
     }
-    const appearanceControl = segmented([{ value: false, title: "Normal" }, { value: true, title: "Inverted" }], preferences.invertsPdfPages(), (value) => preferences.setInvertsPdfPages(value))
+    const noteImports = () => (page() ? liveElements(page()).filter((element) => element.type === "import") : [])
+    const hasPdfPages = () => noteImports().length > 0 || (mode === "import" && Boolean(document_))
+    const isShowingInverted = () => {
+        if (mode === "import" && document_) {
+            return document_.inverted.length > 0 && document_.inverted.every(Boolean)
+        }
+        const imports = noteImports()
+        return imports.length > 0 && imports.every((element) => isImportInverted(element, preferences.paperStyle() === "dark"))
+    }
+    const appearanceControl = segmented([{ value: false, title: "Normal" }, { value: true, title: "Inverted" }], isShowingInverted(), (isInverted) => {
+        if (document_) {
+            document_ = { ...document_, inverted: document_.pages.map(() => isInverted) }
+        }
+        library.setInverted(noteImports().map((element) => element.id), request.pageId, isInverted)
+        render(false)
+    })
+    const growColumn = create("button", "transfer-grow", glyph("add_column", { color: tokens.semantic.create, size: 18 }))
+    growColumn.setAttribute("aria-label", "Add column")
+    pressable(growColumn)
+    growColumn.addEventListener("click", () => library.expand(request.pageId, true))
+    const growRow = create("button", "transfer-grow", glyph("add_row", { color: tokens.semantic.create, size: 18 }))
+    growRow.setAttribute("aria-label", "Add row")
+    pressable(growRow)
+    growRow.addEventListener("click", () => library.expand(request.pageId, false))
     const confirm = slabButton("Export", tokens.semantic.import, () => submit())
 
     const stripList = create("div", "transfer-strip-list")
@@ -396,7 +420,6 @@ export function transferSheet(app, request) {
     const layoutGrid = () => {
         const current = page()
         const { cols, rows } = extent()
-        grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(0, ${largestCellWidth}px))`
         cells = []
         const children = []
         for (let row = 0; row < rows; row += 1) {
@@ -414,7 +437,11 @@ export function transferSheet(app, request) {
                 children.push(element)
             }
         }
-        grid.replaceChildren(...children)
+        growColumn.style.gridColumn = String(cols + 2)
+        growColumn.style.gridRow = `1 / span ${rows}`
+        growRow.style.gridColumn = `2 / span ${cols}`
+        growRow.style.gridRow = String(rows + 1)
+        grid.replaceChildren(...children, growColumn, growRow)
         grid.dataset.shape = `${cols}x${rows}`
     }
 
@@ -463,6 +490,10 @@ export function transferSheet(app, request) {
         layoutStrip()
         const count = total()
         const viewing = isViewing()
+        const isGrowing = viewing && isEditable && Boolean(page())
+        grid.style.gridTemplateColumns = `auto repeat(${cols}, minmax(0, ${largestCellWidth}px))${isGrowing ? " 28px" : ""}`
+        growColumn.hidden = !isGrowing
+        growRow.hidden = !isGrowing
         grid.classList.toggle("is-viewing", viewing)
         for (const { element, badge, column, row } of cells) {
             const placement = viewing ? null : placed().get(cellKey(column, row))
@@ -482,7 +513,8 @@ export function transferSheet(app, request) {
         const chosen = placed().size
         confirm.setTitle(isImport ? `Import ${chosen} of ${document_?.pages.length ?? 0}` : `Export ${chosen} page${chosen === 1 ? "" : "s"}`)
         setEnabled(confirm, chosen > 0)
-        appearanceControl.select(preferences.invertsPdfPages(), true)
+        appearanceControl.style.display = hasPdfPages() ? "" : "none"
+        appearanceControl.select(isShowingInverted(), true)
         requestAnimationFrame(drawCells)
         if (isAnimated) {
             animate(grid, [{ opacity: 0.4 }, { opacity: 1 }], { milliseconds: duration("state"), curveName: "power_two_out" })

@@ -28,6 +28,7 @@ final class ImportImages {
         var level: Double
         var lastUsed: Date
         var isFailed = false
+        var isDarkening = false
     }
 
     private static let millimetresPerPoint = 25.4 / 72
@@ -62,15 +63,43 @@ final class ImportImages {
             throw ImportError.unreadable
         }
         let asset = try library.store.assets.add(data)
-        let pages: [[Double]] = (0..<document.pageCount).compactMap { index in
-            guard let page = document.page(at: index) else { return nil }
+        let isDark = Preferences.shared.paperStyle == .dark
+        var pages: [[Double]] = []
+        var inverted: [Bool] = []
+        for index in 0..<document.pageCount {
+            guard let page = document.page(at: index) else { continue }
             let bounds = page.bounds(for: .mediaBox)
             let isTurned = page.rotation % 180 != 0
             let width = Double(isTurned ? bounds.height : bounds.width) * millimetresPerPoint
             let height = Double(isTurned ? bounds.width : bounds.height) * millimetresPerPoint
-            return [(width * 100).rounded() / 100, (height * 100).rounded() / 100]
+            pages.append([(width * 100).rounded() / 100, (height * 100).rounded() / 100])
+            let sample = flattened(page, pixelSize: CGSize(width: edgeSampleCount * 2, height: edgeSampleCount * 2))
+            inverted.append(isDark && sample.map(isWhitePage) == true)
         }
-        return ImportedDocument(asset: asset, pages: pages)
+        return ImportedDocument(asset: asset, pages: pages, inverted: inverted)
+    }
+
+    private static func flattened(_ page: PDFPage, pixelSize: CGSize) -> CGImage? {
+        let thumbnail = page.thumbnail(of: pixelSize, for: .mediaBox)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: pixelSize, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: pixelSize))
+            thumbnail.draw(in: CGRect(origin: .zero, size: pixelSize))
+        }.cgImage
+    }
+
+    func isInverted(_ element: Element, isDark: Bool) -> Bool {
+        if let inverted = element.inverted {
+            return inverted
+        }
+        guard isDark, let asset = element.asset else { return false }
+        let prefix = "\(asset)|\(element.sourcePage ?? 0)|"
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.contains { $0.key.hasPrefix(prefix) && $0.value.isWhite }
     }
 
     private func level(for element: Element, pixelsPerMillimetre: Double) -> Double {
@@ -101,12 +130,29 @@ final class ImportImages {
         }
         guard var entry = entries[chosenKey], let image = entry.image else { return nil }
         entry.lastUsed = Date()
-        if isDark && entry.isWhite {
-            entries[chosenKey] = entry
-            return entry.darkened ?? image
-        }
         entries[chosenKey] = entry
+        guard element.inverted ?? (isDark && entry.isWhite) else { return image }
+        if let darkened = entry.darkened {
+            return darkened
+        }
+        darken(key: chosenKey, image: image)
         return image
+    }
+
+    private func darken(key: String, image: CGImage) {
+        guard entries[key]?.isDarkening == false else { return }
+        entries[key]?.isDarkening = true
+        queue.async { [weak self] in
+            guard let self else { return }
+            let darkened = self.darkened(image) ?? image
+            self.update(key) { entry in
+                entry.darkened = darkened
+                entry.isDarkening = false
+            }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Self.didRender, object: nil)
+            }
+        }
     }
 
     private func render(key: String, element: Element, level: Double) {
@@ -122,7 +168,7 @@ final class ImportImages {
                 return
             }
             let pixelSize = CGSize(width: max(1, (size[0] * level).rounded(.up)), height: max(1, (size[1] * level).rounded(.up)))
-            guard let image = page.thumbnail(of: pixelSize, for: .mediaBox).cgImage else {
+            guard let image = Self.flattened(page, pixelSize: pixelSize) else {
                 self.update(key) { $0.isFailed = true }
                 return
             }

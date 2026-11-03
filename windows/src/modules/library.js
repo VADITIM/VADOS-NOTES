@@ -42,7 +42,7 @@ function rounded(value) {
     return Math.round(value * 100) / 100
 }
 
-export function importElement(asset, index, [width, height], now, device, row = index, column = 0) {
+export function importElement(asset, index, [width, height], now, device, row = index, column = 0, isInverted = false) {
     const isA4 = Math.abs(width - cellWidth) <= sizeTolerance && Math.abs(height - cellHeight) <= sizeTolerance
     const scale = isA4 ? 1 : Math.min((cellWidth - importMarginMillimetres * 2) / width, (cellHeight - importMarginMillimetres * 2) / height)
     return {
@@ -55,6 +55,7 @@ export function importElement(asset, index, [width, height], now, device, row = 
         source_size_mm: [width, height],
         placement: { x: rounded(column * cellWidth + (cellWidth - width * scale) / 2), y: rounded(row * cellHeight + (cellHeight - height * scale) / 2), scale: Math.round(scale * 10000) / 10000 },
         fit: isA4 ? "original" : "fit_cell",
+        inverted: isInverted,
         updated: now,
         device,
         deleted: false,
@@ -285,7 +286,7 @@ export class Library {
             extent: { cols: 1, rows: Math.max(1, pdf?.pages.length ?? 1) },
         }
         this.applyHeader(header)
-        pdf?.pages.forEach((size, index) => this.applyElement(header.id, importElement(pdf.asset, index, size, now, this.device)))
+        pdf?.pages.forEach((size, index) => this.applyElement(header.id, importElement(pdf.asset, index, size, now, this.device, index, 0, pdf.inverted?.[index] === true)))
         return this.pagesById.get(header.id)
     }
 
@@ -299,7 +300,7 @@ export class Library {
         const firstOrder = page.elements.reduce((highest, element) => Math.max(highest, element.order), -1) + 1
         this.updatePage(pageId, { extent: { cols: page.extent.cols, rows: firstRow + pdf.pages.length } })
         pdf.pages.forEach((size, index) => {
-            const element = importElement(pdf.asset, index, size, now, this.device, firstRow + index)
+            const element = importElement(pdf.asset, index, size, now, this.device, firstRow + index, 0, pdf.inverted?.[index] === true)
             element.order = firstOrder + index
             this.applyElement(pageId, element)
         })
@@ -318,7 +319,7 @@ export class Library {
             this.updatePage(pageId, { extent: { cols: columns, rows } })
         }
         cells.filter((cell) => cell.index < pdf.pages.length).forEach((cell, position) => {
-            const element = importElement(pdf.asset, cell.index, pdf.pages[cell.index], now, this.device, cell.row, cell.column)
+            const element = importElement(pdf.asset, cell.index, pdf.pages[cell.index], now, this.device, cell.row, cell.column, pdf.inverted?.[cell.index] === true)
             element.order = firstOrder + position
             this.applyElement(pageId, element)
         })
@@ -628,6 +629,10 @@ export class Library {
 
     scaleElements(elementIds, pageId, anchor, factor) {
         this.transformElements(elementIds, pageId, (element) => scaledElement(element, anchor, factor))
+    }
+
+    setInverted(elementIds, pageId, isInverted) {
+        this.transformElements(elementIds, pageId, (element) => (element.type === "import" && element.inverted !== isInverted ? { ...element, inverted: isInverted } : null))
     }
 
     setStrokeWidth(elementIds, pageId, width) {

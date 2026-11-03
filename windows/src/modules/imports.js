@@ -1,4 +1,5 @@
 import { cellHeight, cellWidth } from "./model.js"
+import { paperStyle } from "./preferences.js"
 import { readAsset, writeAsset } from "./storage.js"
 import { tokens } from "./tokens.js"
 
@@ -86,14 +87,40 @@ export async function readPdf(file) {
     const bytes = new Uint8Array(await file.arrayBuffer())
     const asset = await assetIdentifier(bytes)
     const document = await openDocument(bytes.slice())
+    const isDark = paperStyle() === "dark"
     const pages = []
+    const inverted = []
     for (let number = 1; number <= document.numPages; number += 1) {
-        const viewport = (await document.getPage(number)).getViewport({ scale: 1 })
+        const page = await document.getPage(number)
+        const viewport = page.getViewport({ scale: 1 })
         pages.push([Math.round(viewport.width * millimetresPerPoint * 100) / 100, Math.round(viewport.height * millimetresPerPoint * 100) / 100])
+        inverted.push(isDark && isWhitePage(await sampleCanvas(page, viewport)))
     }
     await writeAsset(assetPath(asset), bytes)
     documents.set(asset, Promise.resolve(document))
-    return { asset, pages }
+    return { asset, pages, inverted }
+}
+
+async function sampleCanvas(page, viewport) {
+    const scale = (edgeSampleCount * 2) / Math.max(viewport.width, viewport.height)
+    const sampled = page.getViewport({ scale })
+    const canvas = document.createElement("canvas")
+    canvas.width = Math.max(1, Math.ceil(sampled.width))
+    canvas.height = Math.max(1, Math.ceil(sampled.height))
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: sampled }).promise
+    return canvas
+}
+
+function cachedEntries(element) {
+    const prefix = `${element.asset}|${element.source_page}|`
+    return [...images.entries()].filter(([key, entry]) => key.startsWith(prefix) && entry.canvas).map(([, entry]) => entry)
+}
+
+export function isImportInverted(element, isDark) {
+    if (typeof element.inverted === "boolean") {
+        return element.inverted
+    }
+    return isDark && cachedEntries(element).some((entry) => entry.isWhite)
 }
 
 export function reloadAssets(assets) {
@@ -218,14 +245,12 @@ export function importImage(element, pixelsPerMillimetre, isDark) {
         entry = images.get(key)
     }
     if (!entry.canvas) {
-        entry = [...images.entries()]
-            .filter(([candidate, value]) => candidate.startsWith(prefix) && value.canvas)
-            .map(([, value]) => value)
-            .sort((first, second) => Math.abs(first.level - level) - Math.abs(second.level - level))[0]
+        entry = cachedEntries(element).sort((first, second) => Math.abs(first.level - level) - Math.abs(second.level - level))[0]
     }
     if (!entry?.canvas) {
         return null
     }
     entry.lastUsed = performance.now()
-    return isDark && entry.isWhite ? darkened(entry) : entry.canvas
+    const isInverted = typeof element.inverted === "boolean" ? element.inverted : isDark && entry.isWhite
+    return isInverted ? darkened(entry) : entry.canvas
 }

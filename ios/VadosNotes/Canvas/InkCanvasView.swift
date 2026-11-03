@@ -446,7 +446,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             sublayer.transform = CATransform3DMakeScale(camera.scale, camera.scale, 1)
             sublayer.isHidden = hidden.contains(element.id) || !rect.intersects(screenPage)
             guard !sublayer.isHidden else { continue }
-            if let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark && Preferences.invertsPdfPages) {
+            if let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark) {
                 if (sublayer.contents as AnyObject?) !== image {
                     sublayer.contents = image
                 }

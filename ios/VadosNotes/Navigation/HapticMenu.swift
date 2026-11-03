@@ -51,6 +51,7 @@ struct MenuSlot: Identifiable {
         "shrink_rows": Arrangement(section: 1, rank: 1, glyph: "remove_row", lane: 1, isIconOnly: true),
         "toggle_guides": Arrangement(section: 2, rank: 0, glyph: "guides"),
         "toggle_dividers": Arrangement(section: 2, rank: 1, glyph: "cell_lines"),
+        "invert_import": Arrangement(section: 2, rank: 2, glyph: "invert"),
         "delete_notebook": Arrangement(section: 3, rank: 0, glyph: "trash"),
         "delete_page": Arrangement(section: 3, rank: 0, glyph: "trash"),
         "cut": Arrangement(section: 0, rank: 0, glyph: "cut", isIconOnly: true),

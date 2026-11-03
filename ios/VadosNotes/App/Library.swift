@@ -28,6 +28,11 @@ struct StrokeReplacement {
 struct ImportedDocument {
     let asset: String
     let pages: [[Double]]
+    var inverted: [Bool]
+
+    func isInverted(_ index: Int) -> Bool {
+        inverted.indices.contains(index) && inverted[index]
+    }
 }
 
 struct CellPosition: Hashable {
@@ -219,7 +224,7 @@ final class Library: ObservableObject {
         apply(.page(header), page: header.id)
         if let document {
             for (index, size) in document.pages.enumerated() {
-                apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now)), page: header.id)
+                apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now, isInverted: document.isInverted(index))), page: header.id)
             }
         }
         return page(header.id) ?? Page(header: header)
@@ -234,7 +239,7 @@ final class Library: ObservableObject {
             header.extent = Extent(columns: header.extent.columns, rows: firstRow + document.pages.count)
         }
         for (index, size) in document.pages.enumerated() {
-            var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index)
+            var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index, isInverted: document.isInverted(index))
             element.order = firstOrder + index
             apply(.element(pageId: pageId, element: element), page: pageId)
         }
@@ -254,13 +259,13 @@ final class Library: ObservableObject {
             }
         }
         for (position, placement) in placements.enumerated() {
-            var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column)
+            var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column, isInverted: document.isInverted(placement.index))
             element.order = firstOrder + position
             apply(.element(pageId: pageId, element: element), page: pageId)
         }
     }
 
-    func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil, column: Int = 0) -> Element {
+    func importElement(asset: String, index: Int, size: [Double], now: Date, row: Int? = nil, column: Int = 0, isInverted: Bool = false) -> Element {
         let width = size[0]
         let height = size[1]
         let cellWidth = PaperGeometry.cellWidth
@@ -280,6 +285,7 @@ final class Library: ObservableObject {
             sourceSizeMillimetres: [width, height],
             placement: Placement(x: rounded(Double(column) * cellWidth + (cellWidth - width * scale) / 2), y: rounded(Double(row ?? index) * cellHeight + (cellHeight - height * scale) / 2), scale: (scale * 10000).rounded() / 10000),
             fit: isA4 ? .original : .fitCell,
+            inverted: isInverted,
             updated: now,
             device: device
         )
@@ -416,6 +422,25 @@ final class Library: ObservableObject {
             apply(.element(pageId: pageId, element: recolored), page: pageId)
             step.before.append(element)
             step.after.append(recolored)
+        }
+        if !step.after.isEmpty {
+            record(step, on: pageId)
+        }
+    }
+
+    func setInverted(_ elementIds: [String], on pageId: String, to isInverted: Bool) {
+        guard let page = page(pageId), !isReadOnly(pageId) else { return }
+        let now = store.timestamp()
+        var step = UndoStep(before: [], after: [])
+        for id in elementIds {
+            guard let element = page.element(withId: id), !element.deleted, element.type == .importPage, element.inverted != isInverted else { continue }
+            var changed = element
+            changed.inverted = isInverted
+            changed.updated = now
+            changed.device = device
+            apply(.element(pageId: pageId, element: changed), page: pageId)
+            step.before.append(element)
+            step.after.append(changed)
         }
         if !step.after.isEmpty {
             record(step, on: pageId)

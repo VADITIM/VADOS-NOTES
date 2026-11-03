@@ -25,6 +25,7 @@ const arrangement = {
     shrink_rows: { section: 1, rank: 1, glyph: "remove_row", lane: 1, isIconOnly: true },
     toggle_guides: { section: 2, rank: 0, glyph: "guides" },
     toggle_dividers: { section: 2, rank: 1, glyph: "cell_lines" },
+    invert_import: { section: 2, rank: 2, glyph: "invert" },
     delete_notebook: { section: 3, rank: 0, glyph: "trash" },
     delete_page: { section: 3, rank: 0, glyph: "trash" },
     cut: { section: 0, rank: 0, glyph: "cut", isIconOnly: true },
