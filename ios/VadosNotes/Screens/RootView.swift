@@ -184,6 +184,7 @@ struct RootView: View {
     @StateObject private var navigator = Navigator()
     @StateObject private var menu = MenuController()
     @StateObject private var preferences = Preferences.shared
+    @StateObject private var transferBar = TransferBar()
     @State private var chromeLayout = ChromeLayout()
     @State private var navCovers: [CGRect] = []
     @Environment(\.scenePhase) private var scenePhase
@@ -215,7 +216,7 @@ struct RootView: View {
                         .onPreferenceChange(ChromeFramesKey.self) { chromeLayout.frames = $0 }
                     Spacer(minLength: 0)
                 }
-                .zIndex(1)
+                .zIndex(navigator.sheet?.isSeeThrough == true ? 3 : 1)
                 MenuOverlay(controller: menu)
                     .zIndex(1)
                 if let sheet = navigator.sheet {
@@ -235,6 +236,7 @@ struct RootView: View {
         .environmentObject(navigator)
         .environmentObject(menu)
         .environmentObject(preferences)
+        .environmentObject(transferBar)
         .preferredColorScheme(.dark)
         .onAppear {
             ImportImages.shared.assetURL = { [library] asset in library.assetURL(asset) }
@@ -364,17 +366,20 @@ struct RoundIconButton: View {
     }
 }
 
-struct SettingsButton: View {
-    @EnvironmentObject private var navigator: Navigator
-
-    var body: some View {
-        RoundIconButton(glyph: "gear", action: { navigator.show(.settings) })
-    }
+private struct ControlFace {
+    var glyph: String
+    var color: Color = Palette.textBody
+    var label: String?
+    var isTinted = false
+    var isEnabled = true
+    var title: String
+    var action: () -> Void
 }
 
 struct TopBar: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
+    @EnvironmentObject private var transferBar: TransferBar
     @Environment(\.screenInsets) private var insets
     @State private var headFolderId: String?
     var titleCutouts: [CGRect] = []
@@ -402,13 +407,17 @@ struct TopBar: View {
         !isPage && folderId != nil
     }
 
+    private var isTransferring: Bool {
+        navigator.sheet?.isSeeThrough == true && !navigator.isSheetLeaving
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             ZStack(alignment: .topLeading) {
                 folderTitles
                     .reportsChrome("title", isActive: isHeadShown)
                 pageTitles
-                    .allowsHitTesting(isPage)
+                    .allowsHitTesting(isPage && !isTransferring)
                     .reportsChrome("title", isActive: isPage)
             }
             Spacer(minLength: 12)
@@ -422,18 +431,22 @@ struct TopBar: View {
                     }
                 }
                 HStack(spacing: 14) {
+                    if isTransferring {
+                        transferExtras
+                    }
                     if isPage {
-                        RoundIconButton(glyph: "view_all", color: Palette.view, action: openViewAll)
-                            .accessibilityLabel("View all")
+                        control(firstFace)
                             .transition(.popTogether)
                     }
                     if folderId != nil {
-                        RoundIconButton(glyph: "back", color: Palette.navigation, action: goBack)
+                        control(secondFace)
                             .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
                             .transition(.popTogether)
                     }
-                    SettingsButton()
+                    control(thirdFace)
                 }
+                .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isTransferring)
+                .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: transferBar.state)
                 .reportsChrome("controls")
             }
         }
@@ -444,6 +457,62 @@ struct TopBar: View {
             if let next {
                 headFolderId = next
             }
+        }
+    }
+
+    private func control(_ face: ControlFace) -> some View {
+        RoundIconButton(glyph: face.glyph, color: face.color, label: face.label, isTinted: face.isTinted, isEnabled: face.isEnabled, action: face.action)
+            .accessibilityLabel(face.title)
+    }
+
+    private var firstFace: ControlFace {
+        guard isTransferring else {
+            return ControlFace(glyph: "view_all", color: Palette.view, title: "View all", action: openViewAll)
+        }
+        return transferFace(.import)
+    }
+
+    private var secondFace: ControlFace {
+        guard isTransferring else {
+            return ControlFace(glyph: "back", color: Palette.navigation, title: "Back", action: goBack)
+        }
+        return transferFace(.export)
+    }
+
+    private var thirdFace: ControlFace {
+        guard isTransferring else {
+            return ControlFace(glyph: "gear", title: "Settings") { navigator.show(.settings) }
+        }
+        let title = transferBar.state.mode == .view ? "Back to the note" : "Back to view all"
+        return ControlFace(glyph: "back", color: Palette.navigation, title: title) { transferBar.perform(.back) }
+    }
+
+    private func transferFace(_ target: TransferMode) -> ControlFace {
+        let state = transferBar.state
+        let isCurrent = state.mode == target
+        let isImport = target == .import
+        let title = isImport ? "Import" : "Export"
+        let isEnabled = (!isImport || state.isEditable) && (!isCurrent || state.isSubmittable)
+        return ControlFace(glyph: isImport ? "import" : "export", color: isImport ? Palette.importAsset : Palette.edit, label: isCurrent ? state.count : nil, isTinted: isCurrent, isEnabled: isEnabled, title: isCurrent ? "\(title) \(state.count ?? "") pages" : title) {
+            transferBar.perform(isCurrent ? .submit : .pick(target))
+        }
+    }
+
+    @ViewBuilder
+    private var transferExtras: some View {
+        let state = transferBar.state
+        if state.mode == .view {
+            if state.isEditable {
+                control(ControlFace(glyph: "check", color: state.isSelecting ? Palette.create : Palette.textBody, isTinted: state.isSelecting, title: state.isSelecting ? "Stop selecting" : "Select pages") { transferBar.perform(.select) })
+                    .transition(.popTogether)
+                if state.isSelecting {
+                    control(ControlFace(glyph: "trash", color: Palette.destructive, isTinted: true, isEnabled: state.hasSelection, title: "Clear selected pages") { transferBar.perform(.clear) })
+                        .transition(.popTogether)
+                }
+            }
+        } else {
+            control(ControlFace(glyph: "invert", color: Palette.importAsset, isTinted: state.isInvertOn, isEnabled: state.isInvertible, title: state.isInvertOn ? "Show PDF pages as they are" : "Invert PDF pages") { transferBar.perform(.invert) })
+                .transition(.popTogether)
         }
     }
 
@@ -479,7 +548,7 @@ struct TopBar: View {
     }
 
     private var pageTitles: some View {
-        let isShown = isPage && navigator.isPageChromeShown
+        let isShown = isPage && navigator.isPageChromeShown && !isTransferring
         let stagger = Motion.chromeStaggerMilliseconds
         let page = navigator.lastPage
         let note = page.flatMap { library.page($0.pageId) }

@@ -8,6 +8,32 @@ enum TransferMode: String {
     case `import`
 }
 
+struct TransferBarState: Equatable {
+    var mode: TransferMode = .view
+    var isEditable = false
+    var isSelecting = false
+    var hasSelection = false
+    var isInvertOn = false
+    var isInvertible = false
+    var count: String?
+    var isSubmittable = false
+}
+
+enum TransferBarAction {
+    case pick(TransferMode)
+    case back
+    case submit
+    case invert
+    case select
+    case clear
+}
+
+@MainActor
+final class TransferBar: ObservableObject {
+    @Published var state = TransferBarState()
+    var perform: (TransferBarAction) -> Void = { _ in }
+}
+
 private enum TransferTarget: Hashable {
     case cell(CellPosition)
     case page(Int)
@@ -46,18 +72,13 @@ private struct PdfGroup: Identifiable {
     }
 }
 
-private enum TransferPart: Int, CaseIterable {
-    case header
-    case strip
-    case grid
-}
-
 struct TransferSheet: View {
     let pageId: String
 
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
+    @EnvironmentObject private var transferBar: TransferBar
     @State private var mode: TransferMode
     @State private var document: ImportedDocument?
     @State private var documentName: String?
@@ -74,7 +95,6 @@ struct TransferSheet: View {
     @State private var sourcesKey = ""
     @State private var importRevision = 0
     @State private var isExporting = false
-    @State private var shownParts: Set<TransferPart> = []
     @State private var chosenPdfPage: PdfPageReference?
     @State private var chosenImportPage: Int?
     @State private var isSelecting = false
@@ -202,30 +222,15 @@ struct TransferSheet: View {
                 if isSideShown {
                     sideColumn(groups)
                         .frame(height: proxy.size.height)
-                        .modifier(rising(.strip))
                         .transition(.popTogether)
                     Rectangle()
-                        .fill(Palette.border)
+                        .fill(Palette.borderControl)
                         .frame(width: 1, height: proxy.size.height)
-                        .modifier(rising(.strip))
                 }
                 canvas(size: canvasSize)
                     .frame(width: canvasSize.width, height: canvasSize.height)
-                    .modifier(rising(.grid))
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-            .overlay(alignment: .top) {
-                HStack(alignment: .top, spacing: 12) {
-                    leadingControls
-                        .modifier(rising(.header))
-                    Spacer(minLength: 0)
-                    topButtons
-                        .modifier(rising(.header))
-                }
-                .padding(.leading, sideWidth + Self.canvasGutter)
-                .padding(.trailing, Self.canvasGutter)
-                .padding(.top, 12)
-            }
             .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSideShown)
             .coordinateSpace(name: Self.space)
             .onPreferenceChange(TransferFrames.self) { frames = $0 }
@@ -251,34 +256,19 @@ struct TransferSheet: View {
         }
         .onAppear {
             selectAll()
-            showParts(true)
+            transferBar.perform = perform
+            transferBar.state = barState
             if mode == .import {
                 isPicking = true
             }
         }
-        .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
-            if isLeaving {
-                showParts(false)
-            }
+        .onChange(of: barState) { _, next in
+            transferBar.state = next
         }
-    }
-
-    private func showParts(_ isShown: Bool) {
-        guard isShown else {
-            withAnimation(Motion.powerTwoIn(Motion.overlayLeaveMilliseconds)) {
-                shownParts = []
-            }
-            return
+        .onDisappear {
+            transferBar.state = TransferBarState()
+            transferBar.perform = { _ in }
         }
-        for part in TransferPart.allCases {
-            withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds, delay: Motion.riseDelayMilliseconds + part.rawValue * Motion.chromeStaggerMilliseconds)) {
-                _ = shownParts.insert(part)
-            }
-        }
-    }
-
-    private func rising(_ part: TransferPart) -> some ViewModifier {
-        RisingPart(isShown: shownParts.contains(part))
     }
 
     private func pick(_ picked: TransferMode) {
@@ -296,70 +286,35 @@ struct TransferSheet: View {
         }
     }
 
-    @ViewBuilder
-    private var leadingControls: some View {
-        HStack(spacing: 12) {
-            if mode == .view && isEditable {
-                RoundIconButton(glyph: "check", color: isSelecting ? Palette.create : Palette.textBody, isTinted: isSelecting) {
-                    Haptics.tick()
-                    withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
-                        isSelecting.toggle()
-                        selectedCells = []
-                    }
-                }
-                .accessibilityLabel(isSelecting ? "Stop selecting" : "Select pages")
-                .transition(.popTogether)
-                if isSelecting {
-                    RoundIconButton(glyph: "trash", color: Palette.destructive, isTinted: true, isEnabled: !selectedCells.isEmpty, action: clearSelected)
-                        .accessibilityLabel("Clear selected pages")
-                        .transition(.popTogether)
-                }
-            }
-        }
-        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSelecting)
-        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: mode)
-    }
-
-    private var otherModes: [TransferMode] {
-        switch mode {
-        case .view: return [.import, .export]
-        case .export: return [.import, .view]
-        case .import: return [.view, .export]
-        }
-    }
-
-    private var topButtons: some View {
-        HStack(spacing: 14) {
-            if mode != .view {
-                RoundIconButton(glyph: "invert", color: Palette.importAsset, isTinted: isInvertOn, isEnabled: isInvertible, action: toggleInverted)
-                    .accessibilityLabel(isInvertOn ? "Show PDF pages as they are" : "Invert PDF pages")
-                    .transition(.popTogether)
-            }
-            modeButton(otherModes[0])
-            modeButton(otherModes[1])
-            RoundIconButton(glyph: "back", color: Palette.navigation, action: goBack)
-                .accessibilityLabel(mode == .view ? "Back to the note" : "Back to view all")
-            currentButton
-        }
-    }
-
-    private func modeButton(_ target: TransferMode) -> some View {
-        RoundIconButton(glyph: glyph(for: target), color: tint(for: target), isEnabled: target != .import || isEditable) {
-            pick(target)
-        }
-        .accessibilityLabel(title(for: target))
-    }
-
-    private var currentButton: some View {
-        let isTransferring = mode != .view
+    private var barState: TransferBarState {
         let chosen = placements.count
-        let label = isTransferring ? (mode == .import ? "\(chosen)/\(document?.pages.count ?? 0)" : "\(chosen)") : nil
-        return RoundIconButton(glyph: glyph(for: mode), color: tint(for: mode), label: label, isTinted: true, isEnabled: !isTransferring || (chosen > 0 && !isExporting)) {
-            if isTransferring {
-                submit()
-            }
+        let count: String?
+        switch mode {
+        case .view: count = nil
+        case .export: count = "\(chosen)"
+        case .import: count = "\(chosen)/\(document?.pages.count ?? 0)"
         }
-        .accessibilityLabel(isTransferring ? (mode == .import ? "Import \(chosen) pages" : "Export \(chosen) pages") : title(for: .view))
+        return TransferBarState(mode: mode, isEditable: isEditable, isSelecting: isSelecting, hasSelection: !selectedCells.isEmpty, isInvertOn: mode != .view && isInvertOn, isInvertible: mode != .view && isInvertible, count: count, isSubmittable: chosen > 0 && !isExporting)
+    }
+
+    private func perform(_ action: TransferBarAction) {
+        switch action {
+        case .pick(let picked): pick(picked)
+        case .back: goBack()
+        case .submit: submit()
+        case .invert: toggleInverted()
+        case .select: toggleSelecting()
+        case .clear: clearSelected()
+        }
+    }
+
+    private func toggleSelecting() {
+        guard mode == .view, isEditable else { return }
+        Haptics.tick()
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            isSelecting.toggle()
+            selectedCells = []
+        }
     }
 
     private func goBack() {
@@ -395,30 +350,6 @@ struct TransferSheet: View {
             library.setInverted(ids, on: pageId, to: isOn)
         } else {
             setInverted(isOn)
-        }
-    }
-
-    private func glyph(for shown: TransferMode) -> String {
-        switch shown {
-        case .view: return "view_all"
-        case .export: return "export"
-        case .import: return "import"
-        }
-    }
-
-    private func tint(for shown: TransferMode) -> Color {
-        switch shown {
-        case .view: return Palette.view
-        case .export: return Palette.edit
-        case .import: return Palette.importAsset
-        }
-    }
-
-    private func title(for shown: TransferMode) -> String {
-        switch shown {
-        case .view: return "View all"
-        case .export: return "Export"
-        case .import: return "Import"
         }
     }
 
@@ -546,7 +477,7 @@ struct TransferSheet: View {
                     .resizable()
                     .opacity(isSelected || mode == .view ? 1 : 0.55)
             } else {
-                Palette.sunkenDeep
+                Palette.sunken
             }
             if let label {
                 Text(label)
@@ -570,7 +501,7 @@ struct TransferSheet: View {
             }
         }
         .clipShape(Self.cellShape)
-        .overlay(Self.cellShape.stroke(isHovered ? Palette.importAsset : isSelected ? Palette.accent : Palette.border, style: StrokeStyle(lineWidth: isSelected || isHovered ? 2.5 : 1.5, dash: isDashed ? [5, 4] : [])))
+        .overlay(Self.cellShape.stroke(isHovered ? Palette.importAsset : isSelected ? Palette.accent : Palette.borderHover, style: StrokeStyle(lineWidth: isSelected || isHovered ? 2.5 : 1.5, dash: isDashed ? [5, 4] : [])))
         .overlay(
             Self.cellShape
                 .stroke(Palette.textBright, lineWidth: 1.5)
@@ -593,7 +524,8 @@ struct TransferSheet: View {
                     .padding(.top, Self.controlsReserve)
                     .padding(.leading, Self.canvasGutter)
                     .id(Self.originId)
-                    .padding(Self.canvasMargin)
+                    .padding([.top, .leading, .bottom], Self.canvasMargin)
+                    .padding(.trailing, trailingReach(size))
             }
             .scrollIndicators(.hidden)
             .scrollDisabled(drag?.isLifted == true)
@@ -610,11 +542,20 @@ struct TransferSheet: View {
         }
     }
 
+    private var gridWidth: CGFloat {
+        let columns = CGFloat(extent.columns + (isGrowable ? 1 : 0))
+        return Self.axisLabelSize + Self.spacing + columns * Self.cellWidth + max(0, columns - 1) * Self.spacing
+    }
+
+    private func trailingReach(_ size: CGSize) -> CGFloat {
+        max(Self.canvasMargin, size.width * 2 - gridWidth - Self.canvasGutter)
+    }
+
     private func axisLabel(_ number: Int) -> some View {
         Text("\(number)")
             .font(Typography.monoBold(12))
             .tracking(1.5)
-            .foregroundColor(Palette.textMuted)
+            .foregroundColor(Palette.textBright)
     }
 
     private var grid: some View {
@@ -635,7 +576,7 @@ struct TransferSheet: View {
             }
             .overlay(alignment: .bottom) {
                 Rectangle()
-                    .fill(Palette.border)
+                    .fill(Palette.borderControl)
                     .frame(height: 1)
                     .padding(.leading, Self.axisLabelSize + Self.spacing)
             }
@@ -655,7 +596,7 @@ struct TransferSheet: View {
                 }
                 .overlay(alignment: .trailing) {
                     Rectangle()
-                        .fill(Palette.border)
+                        .fill(Palette.borderControl)
                         .frame(width: 1)
                 }
                 VStack(alignment: .leading, spacing: Self.spacing) {
@@ -705,10 +646,10 @@ struct TransferSheet: View {
             Haptics.landed()
             action()
         } label: {
-            GlyphView(name: "plus", color: Palette.textMuted, size: 22)
+            GlyphView(name: "plus", color: Palette.textBody, size: 22)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Self.cellShape.fill(Palette.sunkenDeep))
-                .overlay(Self.cellShape.stroke(Palette.borderControl, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+                .background(Self.cellShape.fill(Palette.ground))
+                .overlay(Self.cellShape.stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
                 .contentShape(Self.cellShape)
         }
         .buttonStyle(PressableStyle())
@@ -1202,15 +1143,5 @@ struct TransferSheet: View {
         Haptics.landed()
         library.placeDocument(document, to: pageId, placements: ordered)
         navigator.show(nil)
-    }
-}
-
-private struct RisingPart: ViewModifier {
-    let isShown: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(isShown ? 1 : 0)
-            .offset(y: isShown ? 0 : 16)
     }
 }

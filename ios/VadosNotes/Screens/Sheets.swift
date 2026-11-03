@@ -16,15 +16,33 @@ struct SheetHost: View {
     @State private var panelHeight: CGFloat = 0
     @State private var backdropSlide: CGFloat = -1
 
-    private var seeThroughBackdrop: some View {
+    private static let sliceReach: CGFloat = 168
+
+    private var seeThroughWindow: some View {
         GeometryReader { proxy in
             ZStack {
-                Palette.ground
+                Palette.sunkenDeep
                 if preferences.showsAsciiBackground {
                     AsciiBackground(color: preferences.asciiBackgroundColor, opacity: preferences.asciiBackgroundOpacity, isMoving: preferences.isAsciiBackgroundMoving && preferences.doesAsciiBackgroundMoveInCanvas)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
+                CornerSlices()
+                    .fill(Palette.navigation)
+                    .frame(width: Self.sliceReach, height: Self.sliceReach)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                CornerSlices()
+                    .fill(Palette.navigation)
+                    .rotationEffect(.degrees(180))
+                    .frame(width: Self.sliceReach, height: Self.sliceReach)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                content
+                    .padding(.top, insets.top)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
             .offset(x: backdropSlide * proxy.size.width)
         }
@@ -42,7 +60,7 @@ struct SheetHost: View {
     var body: some View {
         ZStack(alignment: request.isNaming ? .bottom : .top) {
             if request.isSeeThrough {
-                seeThroughBackdrop
+                seeThroughWindow
             } else {
                 (request.isFullScreen ? Palette.ground : Color.black.opacity(0.45))
                     .opacity(isBackdropShown ? 1 : 0)
@@ -50,9 +68,11 @@ struct SheetHost: View {
                     .onTapGesture { navigator.show(nil) }
             }
             if request.isFullScreen {
-                content
-                    .padding(.top, insets.top)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                if !request.isSeeThrough {
+                    content
+                        .padding(.top, insets.top)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
             } else if isShown {
                 if request.isNaming {
                     content
@@ -167,6 +187,24 @@ struct SheetHost: View {
         case .transfer(let pageId, let mode):
             TransferSheet(pageId: pageId, initialMode: mode)
         }
+    }
+}
+
+private struct CornerSlices: Shape {
+    private static let bands: [ClosedRange<CGFloat>] = [0...0.38, 0.5...0.62, 0.72...0.8, 0.88...0.93]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for band in Self.bands {
+            let near = band.lowerBound * rect.width
+            let far = band.upperBound * rect.width
+            path.move(to: CGPoint(x: rect.minX + near, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.minX + far, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + far))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + near))
+            path.closeSubpath()
+        }
+        return path
     }
 }
 
