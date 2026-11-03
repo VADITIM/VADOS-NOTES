@@ -21,6 +21,7 @@ export function applyDesignVariables(root) {
     root.style.setProperty("--title-backdrop-radius", `${title.backdrop_radius}px`)
     root.style.setProperty("--title-backdrop-padding", `${title.backdrop_padding_vertical}px ${title.backdrop_padding_horizontal}px`)
     root.style.setProperty("--title-lines", String(title.lines))
+    root.style.setProperty("--tile-name-lines", String(title.tile_name_lines))
     for (const name of Object.keys(tokens.motion.curves)) {
         root.style.setProperty(`--curve-${name.replaceAll("_", "-")}`, curve(name))
     }

@@ -20,6 +20,7 @@ enum ImportError: Error {
 final class ImportImages {
     static let shared = ImportImages()
     static let didRender = Notification.Name("ImportImagesDidRender")
+    private(set) static var revision = 0
 
     private struct Entry {
         var image: CGImage?
@@ -218,6 +219,7 @@ final class ImportImages {
     private static func announce(_ key: String) {
         let asset = String(key.prefix { $0 != "|" })
         DispatchQueue.main.async {
+            revision += 1
             NotificationCenter.default.post(name: didRender, object: asset as NSString)
         }
     }
@@ -239,6 +241,7 @@ final class ImportImages {
             self.entries = self.entries.filter { key, _ in !assets.contains { key.hasPrefix("\($0)|") } }
             self.lock.unlock()
             DispatchQueue.main.async {
+                Self.revision += 1
                 NotificationCenter.default.post(name: Self.didRender, object: nil)
             }
         }

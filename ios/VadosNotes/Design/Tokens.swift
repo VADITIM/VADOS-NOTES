@@ -244,6 +244,8 @@ struct Tokens: Decodable {
         let backdropPaddingVertical: Double
         let lines: Int
         let minimumScale: Double
+        let tileNameLines: Int
+        let tileNameMinimumScale: Double
     }
 
     struct MenuSlotToken: Decodable {

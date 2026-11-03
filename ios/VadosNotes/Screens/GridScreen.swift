@@ -250,8 +250,6 @@ struct GridScreen: View {
             }
             ForEach(Array(notes.enumerated()), id: \.element.id) { index, page in
                 noteTile(page, rank: index + 1, isDraggable: true)
-                    .layoutValue(key: MasonrySpan.self, value: page.extent.columns)
-                    .layoutValue(key: MasonryRows.self, value: page.extent.rows)
             }
         }
         .animation(Motion.placement, value: notes.map(\.id))
@@ -261,7 +259,7 @@ struct GridScreen: View {
     }
 
     static func noteUnitHeight(_ width: CGFloat) -> CGFloat {
-        (width - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + TileIcons.note
+        (width - 24) * CGFloat(PaperGeometry.cellHeight / PaperGeometry.cellWidth) + 24 + 10 + NoteTile.headerHeight
     }
 
     static func folderUnitHeight(_ width: CGFloat) -> CGFloat {
@@ -496,13 +494,10 @@ struct GridScreen: View {
         let order = shownOrder(of: drag.kind)
         let others = order.filter { $0 != drag.id }
         let leading = isFolder ? (notebookId == nil ? 1 : 0) : 1
-        let extent: (String) -> Extent = { id in isFolder ? .single : library.page(id)?.extent ?? .single }
         let layout = isFolder ? folderLayout : noteLayout
-        let candidates = (0...others.count).map { index -> CGRect in
-            var cells = others.map(extent)
-            cells.insert(extent(drag.id), at: index)
-            let placed = layout.frames(width: area.width, extents: Array(repeating: Extent.single, count: leading) + cells)
-            return placed[leading + index].offsetBy(dx: area.minX, dy: area.minY)
+        let placed = layout.frames(width: area.width, extents: Array(repeating: Extent.single, count: leading + others.count + 1))
+        let candidates = (0...others.count).map { index in
+            placed[leading + index].offsetBy(dx: area.minX, dy: area.minY)
         }
         let isNear = area.insetBy(dx: -Self.slotReach, dy: -Self.slotReach).contains(location) || candidates.contains { $0.contains(location) }
         guard isNear else { return nil }
@@ -794,23 +789,32 @@ struct NoteTile: View {
     let rank: Int
     var isEntering = true
 
+    static let nameSize: CGFloat = 12
+
+    static var headerHeight: CGFloat {
+        max(TileIcons.note, CGFloat(Tokens.shared.title.tileNameLines) * Typography.monoFont(nameSize).lineHeight)
+    }
+
     var body: some View {
         let look = Looks.note(page)
+        let names = Tokens.shared.title
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GlyphView(name: look.icon, color: Color(hex: look.color), size: TileIcons.note)
                 Text(title)
-                    .font(Typography.mono(12))
+                    .font(Typography.mono(Self.nameSize))
                     .foregroundColor(Palette.textBright)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
+                    .lineLimit(names.tileNameLines)
+                    .minimumScaleFactor(CGFloat(names.tileNameMinimumScale))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if !caption.isEmpty {
                     MicroLabel(text: caption)
+                        .fixedSize()
                 }
             }
-            .frame(minHeight: TileIcons.note)
+            .frame(height: Self.headerHeight)
             PageThumbnail(page: page)
-                .aspectRatio(CGFloat(PaperGeometry.width(of: page.extent) / PaperGeometry.height(of: page.extent)), contentMode: .fit)
+                .aspectRatio(CGFloat(PaperGeometry.cellWidth / PaperGeometry.cellHeight), contentMode: .fit)
                 .clipShape(Squircle(radius: 6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -828,8 +832,13 @@ struct PageThumbnail: View {
     @State private var renderedKey: String?
     @State private var importRevision = 0
 
+    private var cacheKey: String {
+        let imports = page.elements.contains { $0.type == .importPage } ? ImportImages.revision : 0
+        return "cell-\(page.id)-\(page.updated.timeIntervalSince1970)-\(page.extent.columns)x\(page.extent.rows)-\(preferences.showsGuides)-\(preferences.showsDividers)-\(preferences.paperStyle.rawValue)-\(imports)"
+    }
+
     private var key: String {
-        "\(page.id)-\(page.updated.timeIntervalSince1970)-\(page.extent.columns)x\(page.extent.rows)-\(preferences.showsGuides)-\(preferences.showsDividers)-\(preferences.paperStyle.rawValue)-\(importRevision)"
+        "\(cacheKey)-\(importRevision)"
     }
 
     var body: some View {
@@ -860,14 +869,14 @@ struct PageThumbnail: View {
         guard renderedKey != key, size.width > 0, size.height > 0 else { return }
         let shownKey = key
         renderedKey = shownKey
-        let sizedKey = "\(shownKey)-\(Int(size.width))x\(Int(size.height))"
+        let sizedKey = "\(cacheKey)-\(Int(size.width))x\(Int(size.height))"
         if let cached = Thumbnails.shared.image(for: sizedKey) {
             image = cached
             return
         }
         let options = RenderOptions(showsGuides: preferences.showsGuides, showsDividers: preferences.showsDividers, paperStyle: preferences.paperStyle, pixelScale: UIScreen.main.scale)
         let shown = page
-        Thumbnails.shared.render(key: sizedKey, draw: { PageRenderer.thumbnail(of: shown, size: size, options: options) }) { rendered in
+        Thumbnails.shared.render(key: sizedKey, draw: { PageRenderer.cellThumbnail(of: shown, cell: CellPosition(column: 0, row: 0), size: size, options: options) }) { rendered in
             guard renderedKey == shownKey else { return }
             image = rendered
         }

@@ -14,6 +14,7 @@ import {
     wheelButton,
 } from "./controls.js"
 import { slotsFromTokens, swatchSlots } from "./menu.js"
+import { purgeThumbnails } from "./grid.js"
 import { isImportInverted, purgeImports } from "./imports.js"
 import { cellContaining, liveElements } from "./model.js"
 import { duration, tween } from "./motion.js"
@@ -70,6 +71,7 @@ export class PageScreen {
         this.app = app
         this.notebookId = notebookId
         this.pageId = pageId
+        purgeThumbnails()
         this.element = create("div", "screen page-screen")
         this.flightLayer = create("div", "page-flight")
         this.flightInner = create("div", "page-flight-inner")

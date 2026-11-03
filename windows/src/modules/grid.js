@@ -1,11 +1,11 @@
 import { create, microLabel, pressable } from "./components.js"
 import { slotsFromTokens } from "./menu.js"
-import { cellHeight, cellWidth, paperHeight, paperWidth } from "./model.js"
+import { cellHeight, cellWidth } from "./model.js"
 import { animate, duration } from "./motion.js"
 import { springAnimate } from "./pill.js"
 import * as preferences from "./preferences.js"
-import { renderThumbnail } from "./renderer.js"
-import { subscribeImports } from "./imports.js"
+import { renderCell } from "./renderer.js"
+import { importsRevision, subscribeImports } from "./imports.js"
 import { glyph, squircle, squircleRadius } from "./shapes.js"
 import { StackGroup } from "./stackGroup.js"
 import { tokens, withAlpha } from "./tokens.js"
@@ -17,6 +17,13 @@ const noteColumnWidth = 170
 const dragTolerance = 8
 const slotReach = 48
 const tileIcons = { folder: 64, add: 40, note: 22 }
+const noteNameSize = 12
+const noteNameLineHeight = 1.3
+const thumbnails = new Map()
+const thumbnailJobs = []
+let thumbnailBytes = 0
+let isThumbnailDrainScheduled = false
+const whenIdle = window.requestIdleCallback ?? ((callback) => setTimeout(() => callback({ timeRemaining: () => 0, didTimeout: true }), 16))
 
 export function folderLook(notebook) {
     return { color: notebook?.color ?? tokens.folders.default_color, icon: notebook?.icon ?? tokens.folders.default_icon }
@@ -26,8 +33,68 @@ export function noteLook(page) {
     return { color: page?.color ?? tokens.palette.text_muted, icon: page?.icon ?? tokens.folders.note_icon }
 }
 
+function noteHeaderHeight() {
+    return Math.max(tileIcons.note, tokens.title.tile_name_lines * noteNameSize * noteNameLineHeight)
+}
+
 export function noteUnitHeight(width) {
-    return (width - 24) * (cellHeight / cellWidth) + 24 + 10 + tileIcons.note
+    return (width - 24) * (cellHeight / cellWidth) + 24 + 10 + noteHeaderHeight()
+}
+
+export function purgeThumbnails() {
+    thumbnails.clear()
+    thumbnailBytes = 0
+}
+
+function thumbnailCost(canvas) {
+    return canvas.width * canvas.height * 4
+}
+
+function storeThumbnail(key, source) {
+    const copy = document.createElement("canvas")
+    copy.width = source.width
+    copy.height = source.height
+    copy.getContext("2d").drawImage(source, 0, 0)
+    thumbnails.delete(key)
+    thumbnails.set(key, copy)
+    thumbnailBytes += thumbnailCost(copy)
+    const limit = tokens.memory.thumbnail_cache_megabytes * 1024 * 1024
+    for (const [oldKey, old] of thumbnails) {
+        if (thumbnailBytes <= limit) {
+            break
+        }
+        thumbnails.delete(oldKey)
+        thumbnailBytes -= thumbnailCost(old)
+    }
+}
+
+function cachedThumbnail(key) {
+    const cached = thumbnails.get(key)
+    if (cached) {
+        thumbnails.delete(key)
+        thumbnails.set(key, cached)
+    }
+    return cached
+}
+
+function scheduleThumbnail(job) {
+    thumbnailJobs.push(job)
+    if (isThumbnailDrainScheduled) {
+        return
+    }
+    isThumbnailDrainScheduled = true
+    whenIdle(drainThumbnails, { timeout: 120 })
+}
+
+function drainThumbnails(deadline) {
+    isThumbnailDrainScheduled = false
+    do {
+        thumbnailJobs.shift()?.()
+    } while (thumbnailJobs.length && deadline.timeRemaining() > 4)
+    if (thumbnailJobs.length) {
+        isThumbnailDrainScheduled = true
+        whenIdle(drainThumbnails, { timeout: 120 })
+    }
 }
 
 function adaptiveColumns(width, minimum, maximum) {
@@ -154,29 +221,64 @@ function noteTile(page, title, caption) {
     const name = create("span", "note-tile-name")
     const label = microLabel("")
     const header = create("div", "note-tile-header", icon, name, label)
+    header.style.height = `${noteHeaderHeight()}px`
     const thumbnailHost = create("div", "note-tile-thumbnail")
     const thumbnail = create("canvas", "note-tile-canvas")
     thumbnailHost.append(thumbnail)
     tile.append(header, thumbnailHost)
     let current = page
     let renderedKey = null
+    const fitName = () => {
+        const minimum = tokens.title.tile_name_minimum_scale
+        if (name.style.fontSize) {
+            name.style.fontSize = ""
+        }
+        if (name.scrollHeight <= name.clientHeight + 1) {
+            return
+        }
+        let scale = Math.max(minimum, Math.min(1, Math.sqrt(name.clientHeight / name.scrollHeight)))
+        name.style.fontSize = `${noteNameSize * scale}px`
+        while (scale > minimum && name.scrollHeight > name.clientHeight + 1) {
+            scale = Math.max(minimum, scale - 0.05)
+            name.style.fontSize = `${noteNameSize * scale}px`
+        }
+    }
+    const draw = (key) => {
+        if (renderedKey !== key || !thumbnail.isConnected) {
+            return
+        }
+        const cached = cachedThumbnail(key)
+        if (cached) {
+            thumbnail.width = cached.width
+            thumbnail.height = cached.height
+            thumbnail.getContext("2d").drawImage(cached, 0, 0)
+            return
+        }
+        renderCell(thumbnail, current, 0, 0, { showsGuides: preferences.showsGuides(), showsDividers: preferences.showsDividers(), paperStyle: preferences.paperStyle() })
+        storeThumbnail(key, thumbnail)
+    }
     const render = () => {
         const width = thumbnailHost.clientWidth
         const height = thumbnailHost.clientHeight
         if (!width || !height) {
             return
         }
-        const ratio = paperWidth(current.extent) / paperHeight(current.extent)
+        const ratio = cellWidth / cellHeight
         const fittedWidth = Math.min(width, height * ratio)
         const fittedHeight = fittedWidth / ratio
-        const key = `${current.id}|${current.updated}|${current.extent.cols}x${current.extent.rows}|${preferences.showsGuides()}|${preferences.showsDividers()}|${preferences.paperStyle()}|${preferences.writingFont()}|${fittedWidth}|${fittedHeight}|${tile.importRevision ?? 0}`
+        const imports = current.elements.some((element) => element.type === "import") ? importsRevision() : 0
+        const key = `${current.id}|${current.updated}|${current.extent.cols}x${current.extent.rows}|${preferences.showsGuides()}|${preferences.showsDividers()}|${preferences.paperStyle()}|${preferences.writingFont()}|${fittedWidth}|${fittedHeight}|${window.devicePixelRatio || 1}|${imports}`
         if (key === renderedKey) {
             return
         }
         renderedKey = key
         thumbnail.style.width = `${fittedWidth}px`
         thumbnail.style.height = `${fittedHeight}px`
-        renderThumbnail(thumbnail, current, { showsGuides: preferences.showsGuides(), showsDividers: preferences.showsDividers(), paperStyle: preferences.paperStyle() })
+        if (thumbnails.has(key)) {
+            draw(key)
+        } else {
+            scheduleThumbnail(() => draw(key))
+        }
     }
     tile.update = (next, nextTitle, nextCaption) => {
         current = next
@@ -185,10 +287,14 @@ function noteTile(page, title, caption) {
         name.textContent = nextTitle
         label.textContent = nextCaption.toUpperCase()
         label.hidden = !nextCaption
+        fitName()
         render()
     }
     tile.render = render
-    const observer = new ResizeObserver(render)
+    const observer = new ResizeObserver(() => {
+        fitName()
+        render()
+    })
     observer.observe(thumbnailHost)
     squircle(tile, { radius: squircleRadius.tile, fill: tokens.palette.panel_solid, border: tokens.palette.border })
     tile.update(page, title, caption)
@@ -238,9 +344,8 @@ export class GridScreen {
         this.resizeObserver.observe(this.scroller)
         this.bindGroupClosing()
         this.unsubscribeImports = subscribeImports(() => {
-            for (const tile of this.tiles.values()) {
-                tile.importRevision = (tile.importRevision ?? 0) + 1
-                tile.render?.()
+            for (const holder of this.tiles.values()) {
+                holder.tile?.render?.()
             }
         })
     }
@@ -432,10 +537,7 @@ export class GridScreen {
         adds.dataset.rows = "1"
         masonry.append(adds)
         this.notes().forEach((page, index) => {
-            const tile = this.noteTileFor(page, index + 1, true)
-            tile.dataset.span = String(page.extent.cols)
-            tile.dataset.rows = String(page.extent.rows)
-            masonry.append(tile)
+            masonry.append(this.noteTileFor(page, index + 1, true))
         })
         return [heading, ...this.groupRows(false), masonry].filter(() => notebookId)
     }
@@ -757,11 +859,6 @@ export class GridScreen {
                 : this.makeNoteTile(this.library.page(drag.id), 0, false, false)
             placeholder.getAnimations().forEach((running) => running.cancel())
             placeholder.classList.add("is-source")
-            if (drag.kind === "note") {
-                const page = this.library.page(drag.id)
-                placeholder.dataset.span = String(page?.extent.cols ?? 1)
-                placeholder.dataset.rows = String(page?.extent.rows ?? 1)
-            }
             container.append(placeholder)
             drag.placeholder = placeholder
         } else if (!isLoose && drag.placeholder) {
@@ -832,14 +929,9 @@ export class GridScreen {
             candidates = others.concat([null]).map((unused, index) => frames[leading + index])
         } else {
             const origin = area.getBoundingClientRect()
-            const cellOf = (id) => {
-                const page = this.library.page(id)
-                return { span: page?.extent.cols ?? 1, rows: page?.extent.rows ?? 1 }
-            }
+            const { frames } = this.masonryFrames(Array.from({ length: leading + others.length + 1 }, () => ({ span: 1, rows: 1 })), area.clientWidth)
             candidates = others.concat([null]).map((unused, index) => {
-                const cells = others.map(cellOf)
-                cells.splice(index, 0, cellOf(drag.id))
-                const frame = this.masonryFrames([{ span: 1, rows: 1 }, ...cells], area.clientWidth).frames[leading + index]
+                const frame = frames[leading + index]
                 return { left: origin.left + frame.left, top: origin.top + frame.top, right: origin.left + frame.left + frame.width, bottom: origin.top + frame.top + frame.height }
             })
         }

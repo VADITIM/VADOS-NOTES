@@ -73,7 +73,14 @@ export function subscribeImports(listener) {
     return () => listeners.delete(listener)
 }
 
+let revision = 0
+
+export function importsRevision() {
+    return revision
+}
+
 function announce() {
+    revision += 1
     for (const listener of listeners) {
         listener()
     }
