@@ -52,10 +52,21 @@ private enum TransferPart: Int, CaseIterable {
     case grid
 }
 
-private enum PillButton: Hashable {
+private enum TopAction: Hashable {
     case mode(TransferMode)
     case back
     case current(TransferMode)
+    case invert
+}
+
+private struct TopFace: Equatable {
+    let action: TopAction
+    let glyph: String
+    let color: Color
+    var label: String?
+    var isTinted = false
+    var isEnabled = true
+    let accessibility: String
 }
 
 struct TransferSheet: View {
@@ -65,8 +76,6 @@ struct TransferSheet: View {
     @EnvironmentObject private var navigator: Navigator
     @EnvironmentObject private var preferences: Preferences
     @State private var mode: TransferMode
-    @State private var pillMode: TransferMode
-    @StateObject private var pillMotion = PillMotion()
     @State private var document: ImportedDocument?
     @State private var documentName: String?
     @State private var importFailure: String?
@@ -84,19 +93,20 @@ struct TransferSheet: View {
     @State private var isExporting = false
     @State private var shownParts: Set<TransferPart> = []
     @State private var chosenPdfPage: PdfPageReference?
+    @State private var chosenImportPage: Int?
     @State private var isSelecting = false
     @State private var selectedCells: Set<CellPosition> = []
 
     private static let space = "transfer"
     private static let originId = "transfer-origin"
     private static let cellWidth: CGFloat = 150
-    private static let stripWidth: CGFloat = 150
-    private static let pdfColumnWidth: CGFloat = 120
+    private static let stripWidth: CGFloat = 174
+    private static let pdfColumnWidth: CGFloat = 140
     private static let sideInset: CGFloat = 16
     private static let axisLabelSize: CGFloat = 28
     private static let controlsReserve: CGFloat = 76
     private static let canvasGutter: CGFloat = 24
-    private static let canvasMargin: CGFloat = 900
+    private static let canvasMargin: CGFloat = 450
     private static let markWidth: CGFloat = 14
     private static let spacing: CGFloat = 10
     private static let cellShape = Squircle(radius: 8)
@@ -109,7 +119,6 @@ struct TransferSheet: View {
     init(pageId: String, initialMode: TransferMode) {
         self.pageId = pageId
         _mode = State(initialValue: initialMode)
-        _pillMode = State(initialValue: initialMode)
     }
 
     private var page: Page? {
@@ -205,6 +214,8 @@ struct TransferSheet: View {
         let groups = mode == .view ? pdfGroups : []
         let isSideShown = mode != .view || !groups.isEmpty
         GeometryReader { proxy in
+            let sideWidth = isSideShown ? sideColumnWidth + 1 : 0
+            let canvasSize = CGSize(width: max(0, proxy.size.width - sideWidth), height: proxy.size.height)
             HStack(spacing: 0) {
                 if isSideShown {
                     sideColumn(groups)
@@ -216,21 +227,21 @@ struct TransferSheet: View {
                         .frame(width: 1, height: proxy.size.height)
                         .modifier(rising(.strip))
                 }
-                canvas
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                canvas(size: canvasSize)
+                    .frame(width: canvasSize.width, height: canvasSize.height)
                     .modifier(rising(.grid))
-                    .overlay(alignment: .topLeading) {
-                        leadingControls
-                            .padding(.leading, Self.canvasGutter)
-                            .padding(.top, 12)
-                            .modifier(rising(.header))
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        modePill
-                            .padding(.trailing, Self.canvasGutter)
-                            .padding(.top, 12)
-                            .modifier(rising(.header))
-                    }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .overlay(alignment: .top) {
+                HStack(alignment: .top, spacing: 12) {
+                    leadingControls
+                        .modifier(rising(.header))
+                    Spacer(minLength: 0)
+                    topButtons
+                }
+                .padding(.leading, sideWidth + Self.canvasGutter)
+                .padding(.trailing, Self.canvasGutter)
+                .padding(.top, 12)
             }
             .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSideShown)
             .coordinateSpace(name: Self.space)
@@ -244,6 +255,7 @@ struct TransferSheet: View {
                 documentName = url.lastPathComponent
                 importFailure = nil
                 sourceImages = [:]
+                chosenImportPage = nil
                 placeAfterNote()
             } catch {
                 document = nil
@@ -257,7 +269,6 @@ struct TransferSheet: View {
         .onAppear {
             selectAll()
             showParts(true)
-            pillMotion.enter()
             if mode == .import {
                 isPicking = true
             }
@@ -265,7 +276,6 @@ struct TransferSheet: View {
         .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
             if isLeaving {
                 showParts(false)
-                pillMotion.leave()
             }
         }
     }
@@ -294,13 +304,9 @@ struct TransferSheet: View {
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             mode = picked
             chosenPdfPage = nil
+            chosenImportPage = nil
             isSelecting = false
             selectedCells = []
-        }
-        pillMotion.mutate {
-            withAnimation(Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)) {
-                pillMode = picked
-            }
         }
         if picked == .import && document == nil {
             isPicking = true
@@ -326,35 +332,82 @@ struct TransferSheet: View {
                         .transition(.popTogether)
                 }
             }
-            if mode == .import && document != nil {
-                Segmented(options: [SegmentOption(value: false, title: "Normal"), SegmentOption(value: true, title: "Inverted")], selected: isShowingInverted) { isInverted in
-                    setInverted(isInverted)
-                }
-                .transition(.popTogether)
-            }
         }
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSelecting)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: mode)
     }
 
-    private func pillButtons(for shown: TransferMode) -> [PillButton] {
-        switch shown {
-        case .view: return [.mode(.import), .mode(.export), .back, .current(.view)]
-        case .export: return [.mode(.import), .mode(.view), .back, .current(.export)]
-        case .import: return [.mode(.view), .mode(.export), .back, .current(.import)]
+    private var otherModes: [TransferMode] {
+        switch mode {
+        case .view: return [.import, .export]
+        case .export: return [.import, .view]
+        case .import: return [.view, .export]
         }
     }
 
-    private var modePill: some View {
-        HStack(spacing: 4) {
-            ForEach(pillButtons(for: pillMode), id: \.self) { button in
-                pillButton(button)
-            }
+    private var topButtons: some View {
+        HStack(spacing: 10) {
+            TopButton(face: invertFace, isPresent: mode != .view, perform: perform)
+            TopButton(face: modeFace(otherModes[0]), perform: perform)
+            TopButton(face: modeFace(otherModes[1]), perform: perform)
+            TopButton(face: TopFace(action: .back, glyph: "back", color: Palette.navigation, accessibility: "Back to the note"), perform: perform)
+            TopButton(face: currentFace, perform: perform)
         }
-        .environment(\.isElementRevealed, pillMotion.areElementsShown)
-        .padding(5)
-        .background(PillShell(scale: pillMotion.shellScale, spread: pillMotion.shellSpread, isWide: true))
-        .allowsHitTesting(pillMotion.areElementsShown)
+    }
+
+    private func modeFace(_ target: TransferMode) -> TopFace {
+        TopFace(action: .mode(target), glyph: glyph(for: target), color: tint(for: target), isEnabled: target != .import || isEditable, accessibility: title(for: target))
+    }
+
+    private var currentFace: TopFace {
+        guard mode != .view else {
+            return TopFace(action: .current(.view), glyph: glyph(for: .view), color: tint(for: .view), isTinted: true, accessibility: title(for: .view))
+        }
+        let chosen = placements.count
+        let label = mode == .import ? "\(chosen)/\(document?.pages.count ?? 0)" : "\(chosen)"
+        return TopFace(action: .current(mode), glyph: glyph(for: mode), color: tint(for: mode), label: label, isTinted: true, isEnabled: chosen > 0 && !isExporting, accessibility: mode == .import ? "Import \(chosen) pages" : "Export \(chosen) pages")
+    }
+
+    private var isInvertOn: Bool {
+        guard mode == .export else { return isShowingInverted }
+        let groups = pdfGroups
+        return !groups.isEmpty && groups.allSatisfy(isInverted)
+    }
+
+    private var isInvertible: Bool {
+        mode == .export ? isEditable && !pdfGroups.isEmpty : document != nil
+    }
+
+    private var invertFace: TopFace {
+        let isOn = isInvertOn
+        return TopFace(action: .invert, glyph: "invert", color: Palette.importAsset, isTinted: isOn, isEnabled: isInvertible, accessibility: isOn ? "Show PDF pages as they are" : "Invert PDF pages")
+    }
+
+    private func perform(_ action: TopAction) {
+        switch action {
+        case .mode(let target):
+            pick(target)
+        case .back:
+            navigator.show(nil)
+        case .current(let shown):
+            if shown != .view {
+                submit()
+            }
+        case .invert:
+            toggleInverted()
+        }
+    }
+
+    private func toggleInverted() {
+        guard isInvertible else { return }
+        let isOn = !isInvertOn
+        Haptics.tick()
+        if mode == .export {
+            let ids = pdfGroups.flatMap { group in group.elements.filter { !$0.deleted }.map(\.id) }
+            library.setInverted(ids, on: pageId, to: isOn)
+        } else {
+            setInverted(isOn)
+        }
     }
 
     private func glyph(for shown: TransferMode) -> String {
@@ -382,54 +435,6 @@ struct TransferSheet: View {
     }
 
     @ViewBuilder
-    private func pillButton(_ button: PillButton) -> some View {
-        switch button {
-        case .mode(let target):
-            pillLabel(glyph: glyph(for: target), color: tint(for: target), isEnabled: target != .import || isEditable) {
-                pick(target)
-            }
-            .accessibilityLabel(title(for: target))
-        case .back:
-            pillLabel(glyph: "back", color: Palette.navigation) {
-                navigator.show(nil)
-            }
-            .accessibilityLabel("Back to the note")
-        case .current(let shown):
-            if shown == .view {
-                pillLabel(glyph: glyph(for: shown), color: tint(for: shown), isCurrent: true) {}
-                    .accessibilityLabel(title(for: shown))
-            } else {
-                let chosen = placements.count
-                let label = shown == .import ? "\(chosen)/\(document?.pages.count ?? 0)" : "\(chosen)"
-                pillLabel(glyph: glyph(for: shown), color: tint(for: shown), label: label, isCurrent: true, isEnabled: chosen > 0 && !isExporting, action: submit)
-                    .accessibilityLabel(shown == .import ? "Import \(chosen) pages" : "Export \(chosen) pages")
-            }
-        }
-    }
-
-    private func pillLabel(glyph: String, color: Color, label: String? = nil, isCurrent: Bool = false, isEnabled: Bool = true, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                GlyphView(name: glyph, color: color, size: 20)
-                if let label {
-                    Text(label)
-                        .font(Typography.monoBold(13))
-                        .foregroundColor(color)
-                        .monospacedDigit()
-                }
-            }
-            .padding(.horizontal, label == nil ? 0 : 14)
-            .frame(minWidth: TopBar.controlHeight - 4, minHeight: TopBar.controlHeight - 4)
-            .background(Capsule().fill(isCurrent ? Palette.pressedWash : Color.clear))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(PressableStyle())
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.38)
-        .revealedElement()
-    }
-
-    @ViewBuilder
     private var ghost: some View {
         if let drag, drag.isLifted, let frame = frames[drag.source], let image = image(for: drag.source) {
             Image(uiImage: image)
@@ -443,6 +448,10 @@ struct TransferSheet: View {
                 .allowsHitTesting(false)
                 .transition(.scale(scale: 0.9).combined(with: .opacity))
         }
+    }
+
+    private var sideColumnWidth: CGFloat {
+        (mode == .view ? Self.pdfColumnWidth : Self.stripWidth) + Self.sideInset * 2
     }
 
     @ViewBuilder
@@ -498,12 +507,15 @@ struct TransferSheet: View {
                     .padding(.vertical, 12)
             }
             ForEach(0..<count, id: \.self) { index in
-                stripPage(index, isPlaced: cellHolding(index, in: placements) != nil)
+                stripPage(index, isPlaced: cellHolding(index, in: placements) != nil, isQueued: mode == .import && index == queuedImportPage)
                     .frame(width: Self.stripWidth, height: pageHeight)
                     .background(GeometryReader { proxy in
                         Color.clear.preference(key: TransferFrames.self, value: [.page(index): proxy.frame(in: .named(Self.space))])
                     })
-                    .gesture(holdGesture(.page(index)))
+                    .contentShape(Self.cellShape)
+                    .simultaneousGesture(holdGesture(.page(index)))
+                    .simultaneousGesture(TapGesture().onEnded { chooseImportPage(index) })
+                    .transition(stripArrival)
             }
         }
         .onAppear { renderSources(size: CGSize(width: Self.stripWidth, height: pageHeight)) }
@@ -512,12 +524,31 @@ struct TransferSheet: View {
         }
     }
 
-    private func stripPage(_ index: Int, isPlaced: Bool) -> some View {
-        let target = TransferTarget.page(index)
-        return pageTile(image: image(for: target), label: "\(index + 1)/\(total)", isSelected: isPlaced, isNew: false, target: target)
+    private var stripArrival: AnyTransition {
+        .asymmetric(
+            insertion: AnyTransition.offset(x: -(Self.stripWidth + Self.sideInset * 2)).animation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)),
+            removal: AnyTransition.opacity.animation(Motion.powerTwoIn(Motion.stateMilliseconds))
+        )
     }
 
-    private func pageTile(image: UIImage?, label: String?, isSelected: Bool, isNew: Bool, isEmpty: Bool = false, isMarked: Bool = false, target: TransferTarget) -> some View {
+    private var queuedImportPage: Int? {
+        chosenImportPage ?? nextIndex(in: importPlacements)
+    }
+
+    private func chooseImportPage(_ index: Int) {
+        guard mode == .import, drag == nil else { return }
+        Haptics.tick()
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            chosenImportPage = chosenImportPage == index ? nil : index
+        }
+    }
+
+    private func stripPage(_ index: Int, isPlaced: Bool, isQueued: Bool) -> some View {
+        let target = TransferTarget.page(index)
+        return pageTile(image: image(for: target), label: "\(index + 1)/\(total)", isSelected: isPlaced, isNew: false, isOutlined: isQueued, target: target)
+    }
+
+    private func pageTile(image: UIImage?, label: String?, isSelected: Bool, isNew: Bool, isEmpty: Bool = false, isMarked: Bool = false, isOutlined: Bool = false, target: TransferTarget) -> some View {
         let isLifted = drag?.isLifted == true && drag?.source == target
         let isHovered = hovered == target
         let isDashed = isEmpty || (isNew && !isSelected)
@@ -556,15 +587,22 @@ struct TransferSheet: View {
         }
         .clipShape(Self.cellShape)
         .overlay(Self.cellShape.stroke(isHovered ? Palette.importAsset : isSelected ? Palette.accent : isEmpty ? Palette.borderControl : Palette.border, style: StrokeStyle(lineWidth: isSelected || isHovered ? 2.5 : 1.5, dash: isDashed ? [5, 4] : [])))
+        .overlay(
+            Self.cellShape
+                .stroke(Palette.textBright, lineWidth: 1.5)
+                .padding(-4)
+                .opacity(isOutlined ? 0.7 : 0)
+        )
         .scaleEffect(isHovered ? 1.04 : isSelected ? (mode == .view ? CGFloat(0.9) : CGFloat(0.96)) : 1)
         .opacity(isLifted ? 0.3 : 1)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isSelected)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isHovered)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isLifted)
         .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isMarked)
+        .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isOutlined)
     }
 
-    private var canvas: some View {
+    private func canvas(size: CGSize) -> some View {
         ScrollViewReader { reader in
             ScrollView([.horizontal, .vertical]) {
                 grid
@@ -576,6 +614,11 @@ struct TransferSheet: View {
             .scrollIndicators(.hidden)
             .scrollDisabled(drag?.isLifted == true)
             .onAppear {
+                DispatchQueue.main.async {
+                    reader.scrollTo(Self.originId, anchor: .topLeading)
+                }
+            }
+            .onChange(of: size) { _, _ in
                 DispatchQueue.main.async {
                     reader.scrollTo(Self.originId, anchor: .topLeading)
                 }
@@ -709,6 +752,10 @@ struct TransferSheet: View {
         case .view:
             if chosenPdfPage != nil {
                 placeChosenPdfPage(on: cell)
+            } else if !isSelecting, !filledCells.contains(cell) {
+                Haptics.tick()
+                navigator.focus(cell)
+                navigator.show(nil)
             } else if isSelecting, filledCells.contains(cell) {
                 Haptics.tick()
                 withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
@@ -718,6 +765,13 @@ struct TransferSheet: View {
                         selectedCells.insert(cell)
                     }
                 }
+            }
+        case .import where chosenImportPage != nil:
+            guard let chosen = chosenImportPage else { return }
+            Haptics.tick()
+            assign(chosen, to: cell)
+            withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                chosenImportPage = nil
             }
         case .export, .import:
             paint(cell, isSelecting: placements[cell] == nil)
@@ -1165,5 +1219,88 @@ private struct RisingPart: ViewModifier {
         content
             .opacity(isShown ? 1 : 0)
             .offset(y: isShown ? 0 : 16)
+    }
+}
+
+private struct TopButton: View {
+    let face: TopFace
+    var isPresent = true
+    let perform: (TopAction) -> Void
+
+    @EnvironmentObject private var navigator: Navigator
+    @StateObject private var motion = PillMotion()
+    @State private var shown: TopFace?
+    @State private var wanted: TopFace?
+
+    private static var morph: Animation {
+        Motion.powerThreeInOut(Motion.navigationSwitchMilliseconds * 2)
+    }
+
+    var body: some View {
+        let current = shown ?? face
+        Button {
+            perform(current.action)
+        } label: {
+            HStack(spacing: 8) {
+                GlyphView(name: current.glyph, color: current.color, size: 20)
+                if let label = current.label {
+                    Text(label)
+                        .font(Typography.monoBold(13))
+                        .foregroundColor(current.color)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+            }
+            .padding(.horizontal, current.label == nil ? 0 : 16)
+            .frame(minWidth: TopBar.controlHeight, minHeight: TopBar.controlHeight)
+            .background(Capsule().fill(current.isTinted ? current.color.opacity(0.14) : Color.clear))
+            .revealedElement()
+            .environment(\.isElementRevealed, motion.areElementsShown)
+            .environment(\.isElementMutating, motion.isMutating)
+            .background(PillShell(scale: motion.shellScale, spread: motion.shellSpread, isWide: true, stroke: current.isTinted ? current.color.opacity(0.55) : Palette.border))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(!current.isEnabled)
+        .opacity(current.isEnabled ? 1 : 0.38)
+        .allowsHitTesting(motion.areElementsShown)
+        .frame(width: motion.isPresent ? nil : 0)
+        .animation(Self.morph, value: motion.isPresent)
+        .accessibilityLabel(current.accessibility)
+        .accessibilityHidden(!isPresent)
+        .onAppear {
+            shown = face
+            wanted = face
+            if isPresent {
+                motion.enter()
+            }
+        }
+        .onChange(of: face) { _, next in
+            let isSameAction = next.action == (wanted ?? shown)?.action
+            wanted = next
+            guard !isSameAction else {
+                if !motion.isMutating {
+                    shown = next
+                }
+                return
+            }
+            motion.mutate {
+                withAnimation(Self.morph) {
+                    shown = wanted
+                }
+            }
+        }
+        .onChange(of: isPresent) { _, present in
+            if present {
+                motion.enter()
+            } else {
+                motion.leave()
+            }
+        }
+        .onChange(of: navigator.isSheetLeaving) { _, isLeaving in
+            if isLeaving {
+                motion.leave()
+            }
+        }
     }
 }

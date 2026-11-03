@@ -189,6 +189,7 @@ struct PageScreen: View {
             isReadOnly: library.isReadOnly(pageId),
             topInset: topInset,
             selectionCommand: selectionCommand,
+            cellFocus: navigator.cellFocus,
             callbacks: callbacks()
         )
         .overlay(alignment: .topLeading) {

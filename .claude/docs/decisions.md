@@ -485,3 +485,14 @@ The desktop app was behind since `f4c478b`. Each iPad pass is now ported; only t
 - **The note-wide Normal / Inverted switch is only in Import now**, for the file being imported. In View all each PDF's header inverts its own pages.
 - **PDF pages are marked with a tick or a cross** at the bottom left (green used, red unused) in place of the dot, and the file name sits under a line in the file's accent.
 - **The app icon** is `design/app-icon`, made full bleed for iOS (the squircle and rim taken off, the grid run to the edges) and put in `Assets.xcassets/AppIcon.appiconset`.
+
+### View All: portrait, separate top buttons, sliding backdrop (2026-11-03, iPad)
+
+- **Portrait.** The canvas sat in a flexible frame and its controls hung off it as overlays, so the layout did not have a fixed width to work from, and the page-1,1 origin was only set once when the view appeared. Now the sheet takes the width and height of its GeometryReader, the canvas gets that width minus the left column, the controls sit in one row across the top of the whole view, and the canvas goes back to page 1, 1 whenever its size changes (on rotation). Worked out from the screenshots and the code, not checked on a device.
+- **Separate top buttons.** The single mode pill is now a row of separate buttons. Each has its own `PillShell` and `PillMotion`, so it enters, leaves and mutates on its own (§6.12). The slots are fixed: invert (Export and Import only), the other two modes, back, and the current mode. A slot whose job changes pops its old content out and the new one in, and its width follows. A slot that keeps its job does not move. If only the count changes, the number rolls and nothing pops.
+- **Invert is one toggle in that row.** In Import it inverts the file being imported. In Export it inverts every PDF page of the note, the same as the Normal / Inverted setting did before.
+- **Plus on an empty page** closes View All and opens the note at that page. `Navigator.focus` sends a `CellFocus` to the canvas, which zooms to fit that one page.
+- **Strip and PDF column scroll easily.** The hold-to-carry gesture on strip pages is simultaneous with the scroll, so a vertical drag scrolls unless the page has been held for `tileDragHold`.
+- **Import queue outline.** Tap a strip page to choose it, and the next tapped page of the note gets it. The chosen page, or if none is chosen the next unplaced page, has a faint white outline.
+- **Sizes.** The PDF column is 140 pt wide (was 120) and the strip 174 pt (was 150). The canvas pans 450 pt past the note (was 900).
+- **Backdrop.** The see-through backdrop is `ground` at 0.62 with the app's `AsciiBackground` drawn on it. It slides in from the left on `sheetDrop` and out to the right as the view leaves. Every other element keeps its own animation. Each page added to the Export strip slides in from off screen.

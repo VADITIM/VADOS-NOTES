@@ -191,6 +191,12 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             setNeedsDisplay()
         }
     }
+    var cellFocus: CellFocus? {
+        didSet {
+            guard let cellFocus, cellFocus != oldValue else { return }
+            focus(on: cellFocus.cell)
+        }
+    }
     var onHold: ((CGPoint, Point) -> Void)?
     var onHoldMove: ((CGPoint) -> Void)?
     var onHoldEnd: ((CGPoint) -> Void)?
@@ -434,6 +440,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     func fit() {
         guard let page, bounds.width > 0 else { return }
         camera = CanvasCamera.fitting(page.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
+        hasFitted = true
+        fittedSize = bounds.size
+        cameraChanged()
+    }
+
+    private func focus(on cell: CellPosition) {
+        guard bounds.width > 0 else { return }
+        let single = CanvasCamera.fitting(.single, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
+        let shift = CGPoint(x: CGFloat(Double(cell.column) * PaperGeometry.cellWidth) * single.scale, y: CGFloat(Double(cell.row) * PaperGeometry.cellHeight) * single.scale)
+        camera = CanvasCamera(scale: single.scale, offset: CGPoint(x: single.offset.x - shift.x, y: single.offset.y - shift.y))
         hasFitted = true
         fittedSize = bounds.size
         cameraChanged()

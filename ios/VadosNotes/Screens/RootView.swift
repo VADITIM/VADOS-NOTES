@@ -86,6 +86,7 @@ final class Navigator: ObservableObject {
     @Published private(set) var isChromeLeaving = false
     @Published private(set) var isPageChromeShown = false
     @Published var query = ""
+    @Published private(set) var cellFocus: CellFocus?
     private(set) var isReturningFromPage = false
     private(set) var lastPage: (notebookId: String, pageId: String)?
     var openingTile: CGRect?
@@ -133,6 +134,10 @@ final class Navigator: ObservableObject {
             self?.switchRoute(route, from: tile)
             self?.isChromeLeaving = false
         }
+    }
+
+    func focus(_ cell: CellPosition) {
+        cellFocus = CellFocus(cell: cell, serial: (cellFocus?.serial ?? 0) + 1)
     }
 
     func showPageChrome(_ shown: Bool) {

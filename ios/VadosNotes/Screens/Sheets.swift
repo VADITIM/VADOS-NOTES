@@ -8,11 +8,30 @@ struct SheetHost: View {
 
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var navigator: Navigator
+    @EnvironmentObject private var preferences: Preferences
     @Environment(\.screenInsets) private var insets
     @State private var isShown = false
     @State private var isRaised = false
     @State private var keyboardHeight: CGFloat = 0
     @State private var panelHeight: CGFloat = 0
+    @State private var backdropSlide: CGFloat = -1
+
+    private static let seeThroughShare = 0.62
+
+    private var seeThroughBackdrop: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Palette.ground.opacity(Self.seeThroughShare)
+                if preferences.showsAsciiBackground {
+                    AsciiBackground(color: preferences.asciiBackgroundColor, opacity: preferences.asciiBackgroundOpacity, isMoving: preferences.isAsciiBackgroundMoving && preferences.doesAsciiBackgroundMoveInCanvas)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .offset(x: backdropSlide * proxy.size.width)
+        }
+        .ignoresSafeArea()
+    }
 
     private var isBackdropShown: Bool {
         request.isNaming ? isRaised : isShown
@@ -24,10 +43,14 @@ struct SheetHost: View {
 
     var body: some View {
         ZStack(alignment: request.isNaming ? .bottom : .top) {
-            (request.isSeeThrough ? Color.black.opacity(0.62) : request.isFullScreen ? Palette.ground : Color.black.opacity(0.45))
-                .opacity(isBackdropShown ? 1 : 0)
-                .ignoresSafeArea()
-                .onTapGesture { navigator.show(nil) }
+            if request.isSeeThrough {
+                seeThroughBackdrop
+            } else {
+                (request.isFullScreen ? Palette.ground : Color.black.opacity(0.45))
+                    .opacity(isBackdropShown ? 1 : 0)
+                    .ignoresSafeArea()
+                    .onTapGesture { navigator.show(nil) }
+            }
             if request.isFullScreen {
                 content
                     .padding(.top, insets.top)
@@ -67,10 +90,14 @@ struct SheetHost: View {
             }
             guard !(request.isFullScreen && navigator.isHandedOff) else {
                 isShown = true
+                backdropSlide = 0
                 return
             }
             withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
                 isShown = true
+            }
+            withAnimation(Motion.powerTwoOut(Motion.sheetDropMilliseconds)) {
+                backdropSlide = 0
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
@@ -95,6 +122,7 @@ struct SheetHost: View {
             guard !request.isFullScreen else {
                 withAnimation(Motion.powerTwoIn(Motion.sheetDropMilliseconds)) {
                     isShown = false
+                    backdropSlide = 1
                 }
                 return
             }
