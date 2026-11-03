@@ -131,6 +131,40 @@ public enum Ink {
         return end
     }
 
+    public static func fittedLine(_ points: [Point], minimumLength: Double, deviationShare: Double, detourShare: Double) -> (start: Point, end: Point)? {
+        guard let first = points.first, let last = points.last, points.count > 1 else { return nil }
+        let count = Double(points.count)
+        let centre = Point(x: points.reduce(0) { $0 + $1.x } / count, y: points.reduce(0) { $0 + $1.y } / count)
+        var spreadX = 0.0
+        var spreadY = 0.0
+        var spreadXY = 0.0
+        for point in points {
+            let deltaX = point.x - centre.x
+            let deltaY = point.y - centre.y
+            spreadX += deltaX * deltaX
+            spreadY += deltaY * deltaY
+            spreadXY += deltaX * deltaY
+        }
+        let angle = atan2(2 * spreadXY, spreadX - spreadY) / 2
+        let direction = Point(x: cos(angle), y: sin(angle))
+        func along(_ point: Point) -> Double {
+            (point.x - centre.x) * direction.x + (point.y - centre.y) * direction.y
+        }
+        func across(_ point: Point) -> Double {
+            abs((point.y - centre.y) * direction.x - (point.x - centre.x) * direction.y)
+        }
+        let startShare = along(first)
+        let endShare = along(last)
+        let span = abs(endShare - startShare)
+        guard span >= minimumLength,
+              length(of: points) <= span * detourShare,
+              points.allSatisfy({ across($0) <= span * deviationShare }) else { return nil }
+        return (
+            Point(x: centre.x + direction.x * startShare, y: centre.y + direction.y * startShare),
+            Point(x: centre.x + direction.x * endShare, y: centre.y + direction.y * endShare)
+        )
+    }
+
     public static func straightened(_ points: [Point], start: Point, end: Point, share: Double) -> [Point] {
         let total = length(of: points)
         guard total > 0, share < 1 else { return [start, end] }

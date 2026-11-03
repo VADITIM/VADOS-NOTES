@@ -193,7 +193,7 @@ public final class NotesStore {
                 pages[header.id] = Page(header: header)
             }
         case .element(let pageId, let element):
-            guard var page = pages[pageId] else { return }
+            guard var page = pages.removeValue(forKey: pageId) else { return }
             if let index = page.elements.firstIndex(where: { $0.id == element.id }) {
                 page.elements[index] = Merge.element(page.elements[index], element)
             } else {

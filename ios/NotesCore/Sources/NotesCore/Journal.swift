@@ -30,6 +30,8 @@ public final class Journal {
     public private(set) var entries: [JournalEntry] = []
     public private(set) var skippedLineCount = 0
     private var nextSequence = 1
+    private var groupDepth = 0
+    private var pendingLines = Data()
     private let encoder = PageCodec.makeEncoder()
     private let decoder = PageCodec.makeDecoder()
 
@@ -65,14 +67,32 @@ public final class Journal {
         let entry = JournalEntry(sequence: nextSequence, device: device, timestamp: timestamp, change: change)
         var line = try encoder.encode(entry)
         line.append(UInt8(ascii: "\n"))
-        let handle = try FileHandle(forWritingTo: fileURL)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: line)
-        try handle.synchronize()
+        if groupDepth > 0 {
+            pendingLines.append(line)
+        } else {
+            try write(line)
+        }
         entries.append(entry)
         nextSequence += 1
         return entry
+    }
+
+    public func grouped(_ work: () -> Void) throws {
+        groupDepth += 1
+        work()
+        groupDepth -= 1
+        guard groupDepth == 0, !pendingLines.isEmpty else { return }
+        let lines = pendingLines
+        pendingLines = Data()
+        try write(lines)
+    }
+
+    private func write(_ lines: Data) throws {
+        let handle = try FileHandle(forWritingTo: fileURL)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: lines)
+        try handle.synchronize()
     }
 
     public func remove(sequences: Set<Int>) throws {

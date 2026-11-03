@@ -473,7 +473,17 @@ export function clipToPaper(context, extent) {
     context.clip()
 }
 
-export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), elementOffsets = new Map(), elementScale = null, fillsOutside = true, cache }) {
+const textOverhang = 16
+
+function isTextVisible(element, visible) {
+    const rect = textRect(element)
+    if (!rect) {
+        return true
+    }
+    return !(rect.x - textOverhang > visible.maximumX || rect.x + rect.width + textOverhang < visible.minimumX || rect.y - textOverhang > visible.maximumY || rect.y + rect.height + textOverhang < visible.minimumY)
+}
+
+export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), elementOffsets = new Map(), elementScale = null, fillsOutside = true, cache, extraElements = [] }) {
     const colors = paperColors(paperStyle)
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
     if (fillsOutside) {
@@ -503,7 +513,7 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     clipToPaper(context, page.extent)
     context.fillStyle = colors.paper
     context.fillRect(0, 0, paper.maximumX, paper.maximumY)
-    const elements = liveElements(page)
+    const elements = extraElements.length ? [...liveElements(page), ...extraElements] : liveElements(page)
     for (const element of elements) {
         if (element.type === "import" && !hiddenElementIds.has(element.id)) {
             drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible)
@@ -545,6 +555,9 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
         if (element.type === "text") {
             const offset = elementOffsets.get(element.id)
             const scale = elementScale?.ids.has(element.id) ? elementScale : null
+            if (!offset && !scale && !isTextVisible(element, visible)) {
+                continue
+            }
             let shown = scale ? scaledElement(element, scale.anchor, scale.factor) : element
             shown = offset ? translatedElement(shown, offset) : shown
             drawText(context, shown, camera, pixelRatio, paperStyle)

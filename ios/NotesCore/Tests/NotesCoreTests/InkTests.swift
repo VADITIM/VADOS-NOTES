@@ -21,6 +21,45 @@ final class InkTests: XCTestCase {
         XCTAssertEqual(Ink.axisSnapped(start: Point(x: 0, y: 0), end: Point(x: 50, y: 50), degrees: 7), Point(x: 50, y: 50))
     }
 
+    func testFittedLineFollowsTheDrawnAngle() throws {
+        let raw = (0...60).map { index -> Point in
+            let wobble: Double = index % 3 == 0 ? 0.8 : -0.4
+            return Point(x: 10 + Double(index), y: 20 + Double(index) * 0.5 + wobble)
+        }
+        let line = try XCTUnwrap(Ink.fittedLine(raw, minimumLength: 25, deviationShare: 0.12, detourShare: 1.3))
+
+        XCTAssertEqual(line.start.x, 10, accuracy: 0.6)
+        XCTAssertEqual(line.end.x, 70, accuracy: 0.6)
+        let rise = line.end.y - line.start.y
+        let run = line.end.x - line.start.x
+        XCTAssertEqual(rise / run, 0.5, accuracy: 0.02)
+    }
+
+    func testFittedLineKeepsTheDrawingDirection() {
+        let raw = (0...40).map { index in Point(x: 100 - Double(index), y: 50) }
+        let line = Ink.fittedLine(raw, minimumLength: 25, deviationShare: 0.12, detourShare: 1.3)
+
+        XCTAssertEqual(line?.start.x ?? 0, 100, accuracy: 0.01)
+        XCTAssertEqual(line?.end.x ?? 0, 60, accuracy: 0.01)
+    }
+
+    func testFittedLineRejectsShortCurvedAndScribbledStrokes() {
+        let short = (0...10).map { Point(x: Double($0), y: 0) }
+        let arc = (0...60).map { index -> Point in
+            let angle = Double(index) * Double.pi / 60
+            return Point(x: 40 * cos(angle), y: 40 * sin(angle))
+        }
+        let scribble = (0...80).map { index -> Point in
+            let phase = index % 20
+            let reach = Double(phase < 10 ? phase : 20 - phase)
+            return Point(x: reach * 4, y: Double(index) * 0.05)
+        }
+
+        XCTAssertNil(Ink.fittedLine(short, minimumLength: 25, deviationShare: 0.12, detourShare: 1.3))
+        XCTAssertNil(Ink.fittedLine(arc, minimumLength: 25, deviationShare: 0.12, detourShare: 1.3))
+        XCTAssertNil(Ink.fittedLine(scribble, minimumLength: 25, deviationShare: 0.12, detourShare: 1.3))
+    }
+
     func testCutLeavesAGapExactlyWhereSwept() {
         let points = [Point(x: 0, y: 0), Point(x: 100, y: 0)]
         let pieces = Ink.cutStroke(points, from: Point(x: 50, y: -10), to: Point(x: 50, y: 10), reach: 2)

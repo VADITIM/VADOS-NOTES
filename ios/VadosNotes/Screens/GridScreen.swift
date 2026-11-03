@@ -849,8 +849,10 @@ struct PageThumbnail: View {
                 render(size: size)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: ImportImages.didRender)) { _ in
-            importRevision += 1
+        .onReceive(NotificationCenter.default.publisher(for: ImportImages.didRender)) { notification in
+            if ImportImages.isAnnounced(notification, for: page) {
+                importRevision += 1
+            }
         }
     }
 

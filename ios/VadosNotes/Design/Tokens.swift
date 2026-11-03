@@ -95,6 +95,9 @@ struct Tokens: Decodable {
         let simplifyPoints: Double
         let straightenTolerancePoints: Double
         let straightenAxisSnapDegrees: Double
+        let markerStraightenLength: Double
+        let markerStraightenDeviation: Double
+        let markerStraightenDetour: Double
     }
 
     struct TextTokens: Decodable {

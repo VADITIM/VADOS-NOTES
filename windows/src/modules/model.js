@@ -75,8 +75,16 @@ export function compareElements(first, second) {
     return isOrderedBefore(first, second) ? -1 : 1
 }
 
+const liveCache = new WeakMap()
+
 export function liveElements(page) {
-    return page.elements.filter((element) => !element.deleted).sort(compareElements)
+    const cached = liveCache.get(page.elements)
+    if (cached) {
+        return [...cached]
+    }
+    const live = page.elements.filter((element) => !element.deleted).sort(compareElements)
+    liveCache.set(page.elements, live)
+    return [...live]
 }
 
 export function nextOrder(page, layer) {
@@ -330,6 +338,38 @@ export function sortedByOrder(items) {
     const byIdentifier = [...items].sort((first, second) => (first.id < second.id ? -1 : 1))
     const rank = new Map(byIdentifier.map((item, index) => [item.id, Number.isFinite(item.order) ? item.order : index]))
     return byIdentifier.sort((first, second) => rank.get(first.id) - rank.get(second.id) || (first.id < second.id ? -1 : 1))
+}
+
+export function fittedLine(points) {
+    if (points.length < 2) {
+        return null
+    }
+    const centre = [points.reduce((sum, point) => sum + point[0], 0) / points.length, points.reduce((sum, point) => sum + point[1], 0) / points.length]
+    let spreadX = 0
+    let spreadY = 0
+    let spreadXY = 0
+    for (const point of points) {
+        const deltaX = point[0] - centre[0]
+        const deltaY = point[1] - centre[1]
+        spreadX += deltaX * deltaX
+        spreadY += deltaY * deltaY
+        spreadXY += deltaX * deltaY
+    }
+    const angle = Math.atan2(2 * spreadXY, spreadX - spreadY) / 2
+    const direction = [Math.cos(angle), Math.sin(angle)]
+    const along = (point) => (point[0] - centre[0]) * direction[0] + (point[1] - centre[1]) * direction[1]
+    const across = (point) => Math.abs((point[1] - centre[1]) * direction[0] - (point[0] - centre[0]) * direction[1])
+    const startShare = along(points[0])
+    const endShare = along(points[points.length - 1])
+    const span = Math.abs(endShare - startShare)
+    const ink = tokens.ink
+    if (span < ink.marker_straighten_length || strokeLength(points) > span * ink.marker_straighten_detour || points.some((point) => across(point) > span * ink.marker_straighten_deviation)) {
+        return null
+    }
+    return [
+        [centre[0] + direction[0] * startShare, centre[1] + direction[1] * startShare],
+        [centre[0] + direction[0] * endShare, centre[1] + direction[1] * endShare],
+    ]
 }
 
 export function straightened(points, start, end, share) {

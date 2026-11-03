@@ -99,7 +99,7 @@ private final class ElementCanvasView: UIView {
 
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext() else { return }
-        render?(context, bounds)
+        render?(context, rect)
     }
 }
 
@@ -112,8 +112,18 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
                 selectedIds = []
                 setNeedsLayout()
             }
+            let previous = renderIndex
+            renderIndex = nil
+            let erasedBounds = previous?.bounds(of: Set(pendingErased).union(areaErase.keys)) ?? .null
             clearPendingFeedback()
             refreshSelection()
+            if let previous, oldValue?.id == page?.id, oldValue?.extent == page?.extent {
+                let next = currentIndex()
+                if previous.imports.isEmpty == next.imports.isEmpty {
+                    redraw(pageRect: next.changedBounds(since: previous).union(erasedBounds))
+                    return
+                }
+            }
             setNeedsDisplay()
         }
     }
@@ -126,7 +136,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         didSet { if paperStyle != oldValue { setNeedsDisplay() } }
     }
     var writingFont = "" {
-        didSet { if writingFont != oldValue { setNeedsDisplay() } }
+        didSet {
+            guard writingFont != oldValue else { return }
+            renderIndex = nil
+            setNeedsDisplay()
+        }
     }
     var showsGuides = true {
         didSet { if showsGuides != oldValue { setNeedsDisplay() } }
@@ -144,7 +158,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
     var inkSmoothing = Tokens.shared.ink.smoothingPoints
     var hiddenElementIds: Set<String> = [] {
-        didSet { if hiddenElementIds != oldValue { setNeedsDisplay() } }
+        didSet {
+            guard hiddenElementIds != oldValue else { return }
+            redraw(pageRect: currentIndex().bounds(of: hiddenElementIds.symmetricDifference(oldValue)))
+        }
     }
     var topInset: CGFloat = 0 {
         didSet {
@@ -231,6 +248,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private var fittedSize: CGSize = .zero
     private var importObserver: NSObjectProtocol?
     private let palmGuard = PalmGuard()
+    private var renderIndex: RenderIndex?
+    private var cameraSettleTimer: Timer?
     private var gestureCamera: CanvasCamera?
     private var touchCamera: CanvasCamera?
 
@@ -245,9 +264,32 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private static let glideStopSpeed: CGFloat = 12
     private static let glideSampleWindow: TimeInterval = 0.08
     private static let undoTapTravel: CGFloat = 10
+    private static let cameraSettleSeconds: TimeInterval = 0.12
+    private static let redrawMargin: CGFloat = 2
 
     private var hasImports: Bool {
-        page?.liveElements.contains { $0.type == .importPage } ?? false
+        !currentIndex().imports.isEmpty
+    }
+
+    private func currentIndex() -> RenderIndex {
+        if let renderIndex {
+            return renderIndex
+        }
+        guard let page else { return RenderIndex(imports: [], markers: [], others: []) }
+        let index = RenderIndex(page, cache: cache)
+        cache.prune(keeping: index.markers.count + index.others.count) { index.byId[$0] != nil }
+        renderIndex = index
+        return index
+    }
+
+    private func redraw(pageRect: CGRect) {
+        layoutImports()
+        guard !pageRect.isNull else { return }
+        let screen = CGRect(x: pageRect.minX * camera.scale + camera.offset.x, y: pageRect.minY * camera.scale + camera.offset.y, width: pageRect.width * camera.scale, height: pageRect.height * camera.scale)
+        let dirty = screen.insetBy(dx: -Self.redrawMargin, dy: -Self.redrawMargin).integral.intersection(bounds)
+        guard !dirty.isNull, !dirty.isEmpty else { return }
+        elementCanvas.setNeedsDisplay(dirty)
+        markerCanvas.setNeedsDisplay(dirty)
     }
 
     private var pixelScale: CGFloat {
@@ -346,7 +388,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
 
         importObserver = NotificationCenter.default.addObserver(forName: ImportImages.didRender, object: nil, queue: .main) { [weak self] _ in
-            self?.setNeedsDisplay()
+            self?.layoutImports()
         }
     }
 
@@ -406,7 +448,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         options.fillsOutside = !showsBackdrop
         options.drawsElements = false
         options.drawsLines = !hasImports
-        render(in: context, options: options)
+        render(in: context, rect: rect, options: options)
     }
 
     private func drawElements(in context: CGContext, rect: CGRect) {
@@ -415,7 +457,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         options.drawsImports = false
         options.drawsLines = false
         options.markerPass = .none
-        render(in: context, options: options)
+        render(in: context, rect: rect, options: options)
     }
 
     private func drawLines(in context: CGContext, rect: CGRect) {
@@ -423,7 +465,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         var options = renderOptions()
         options.drawsPaper = false
         options.drawsElements = false
-        render(in: context, options: options)
+        render(in: context, rect: rect, options: options)
     }
 
     private func drawMarkers(in context: CGContext, rect: CGRect) {
@@ -432,7 +474,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         options.drawsImports = false
         options.drawsLines = false
         options.markerPass = .only
-        render(in: context, options: options)
+        render(in: context, rect: rect, options: options)
     }
 
     private func renderOptions() -> RenderOptions {
@@ -440,7 +482,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func layoutImports() {
-        let imports = page?.liveElements.filter { $0.type == .importPage } ?? []
+        let imports = currentIndex().imports
+        let rendersNewLevel = cameraSettleTimer == nil
         lineCanvas.isHidden = imports.isEmpty
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -456,7 +499,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             sublayer.transform = CATransform3DMakeScale(camera.scale, camera.scale, 1)
             sublayer.isHidden = hidden.contains(element.id) || !rect.intersects(screenPage)
             guard !sublayer.isHidden else { continue }
-            if let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark) {
+            if let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark, rendersNewLevel: rendersNewLevel) {
                 if (sublayer.contents as AnyObject?) !== image {
                     sublayer.contents = image
                 }
@@ -484,8 +527,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         return sublayer
     }
 
-    private func render(in context: CGContext, options baseOptions: RenderOptions) {
+    private func render(in context: CGContext, rect: CGRect, options baseOptions: RenderOptions) {
         guard var page else { return }
+        var index = currentIndex()
         var options = baseOptions
         if let pressedText, isTextLifted {
             options.elementOffsets[pressedText.id] = textOffset
@@ -501,18 +545,23 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             }
         }
         if !areaErase.isEmpty {
-            var elements = page.elements.filter { areaErase[$0.id] == nil }
+            var pieces: [RenderIndex.Item] = []
             for (elementId, entry) in areaErase {
-                for (index, points) in entry.pieces.enumerated() {
+                for (position, points) in entry.pieces.enumerated() {
                     var piece = entry.element
-                    piece.id = "\(elementId)-piece-\(index)-\(entry.revision)"
+                    piece.id = "\(elementId)-piece-\(position)-\(entry.revision)"
                     piece.points = points
-                    elements.append(piece)
+                    pieces.append(RenderIndex.Item(element: piece, bounds: cache.path(for: piece).bounds))
                 }
             }
-            page.elements = elements
+            let erasing = areaErase
+            let isKept = { (item: RenderIndex.Item) in erasing[item.element.id] == nil }
+            let pieceMarkers = pieces.filter { InkStyle.isMarker($0.element) }
+            let pieceOthers = pieces.filter { !InkStyle.isMarker($0.element) }
+            index = RenderIndex(imports: index.imports, markers: index.markers.filter(isKept) + pieceMarkers, others: index.others.filter(isKept) + pieceOthers)
+            page.elements = []
         }
-        PageRenderer.draw(page, in: context, camera: camera, visibleRect: bounds, options: options, cache: cache)
+        PageRenderer.draw(page, in: context, camera: camera, visibleRect: rect, options: options, cache: cache, index: index)
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -929,6 +978,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func cameraChanged() {
+        cameraSettleTimer?.invalidate()
+        cameraSettleTimer = Timer.scheduledTimer(withTimeInterval: Self.cameraSettleSeconds, repeats: false) { [weak self] _ in
+            self?.cameraSettleTimer = nil
+            self?.layoutImports()
+        }
         if let page {
             camera = camera.constrained(to: page.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
             let radius = CGFloat(Tokens.shared.page.cornerRadius) * camera.scale
@@ -1030,6 +1084,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         if stroke.straightEnd != nil {
             return Ink.smoothStroke([stroke.raw[0], snappedEnd(stroke)], scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))
         }
+        let ink = Tokens.shared.ink
+        if tool == .ink(.marker), let line = Ink.fittedLine(stroke.raw, minimumLength: ink.markerStraightenLength, deviationShare: ink.markerStraightenDeviation, detourShare: ink.markerStraightenDetour) {
+            return Ink.smoothStroke([line.start, line.end], scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))
+        }
         return Ink.smoothStroke(stroke.raw, scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))
     }
 
@@ -1077,8 +1135,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private func erase(from sweepStart: Point, to sweepEnd: Point) {
         guard let page, case .eraser(let mode) = tool else { return }
         let reach = eraserReach()
-        var didErase = false
-        for element in page.liveElements where element.type == .stroke {
+        var erased = CGRect.null
+        let index = currentIndex()
+        let sweep = CGRect(x: min(sweepStart.x, sweepEnd.x), y: min(sweepStart.y, sweepEnd.y), width: abs(sweepEnd.x - sweepStart.x), height: abs(sweepEnd.y - sweepStart.y)).insetBy(dx: -reach, dy: -reach)
+        for item in index.markers + index.others where item.element.type == .stroke && item.bounds.intersects(sweep) {
+            let element = item.element
             guard let points = element.points, !points.isEmpty else { continue }
             let strokeReach = reach + (element.width ?? 0) / 2
             if mode == .area {
@@ -1096,16 +1157,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
                 }
                 if isTouched {
                     areaErase[element.id] = AreaEntry(element: element, pieces: nextPieces, revision: (entry?.revision ?? 0) + 1)
-                    didErase = true
+                    erased = erased.union(item.bounds)
                 }
             } else if !pendingErased.contains(element.id), Ink.isStrokeSwept(element, from: sweepStart, to: sweepEnd, radius: reach) {
                 pendingErased.append(element.id)
-                didErase = true
+                erased = erased.union(item.bounds)
             }
         }
-        if didErase {
+        if !erased.isNull {
             Haptics.segment()
-            setNeedsDisplay()
+            redraw(pageRect: erased)
         }
     }
 

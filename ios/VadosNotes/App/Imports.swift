@@ -109,14 +109,14 @@ final class ImportImages {
         return min(level, Self.maximumImagePixels / max(size[0], size[1]))
     }
 
-    func image(for element: Element, pixelsPerMillimetre: Double, isDark: Bool) -> CGImage? {
+    func image(for element: Element, pixelsPerMillimetre: Double, isDark: Bool, rendersNewLevel: Bool = true) -> CGImage? {
         guard let asset = element.asset, element.sourceSizeMillimetres != nil else { return nil }
         let level = level(for: element, pixelsPerMillimetre: pixelsPerMillimetre)
         let prefix = "\(asset)|\(element.sourcePage ?? 0)|"
         let key = "\(prefix)\(level)"
         lock.lock()
         defer { lock.unlock() }
-        if entries[key] == nil {
+        if entries[key] == nil, rendersNewLevel || !entries.contains(where: { $0.key.hasPrefix(prefix) && $0.value.image != nil }) {
             entries[key] = Entry(level: level, lastUsed: Date())
             render(key: key, element: element, level: level)
         }
@@ -149,9 +149,7 @@ final class ImportImages {
                 entry.darkened = darkened
                 entry.isDarkening = false
             }
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: Self.didRender, object: nil)
-            }
+            Self.announce(key)
         }
     }
 
@@ -180,10 +178,20 @@ final class ImportImages {
                 entry.isWhite = isWhite
             }
             self.evict()
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: Self.didRender, object: nil)
-            }
+            Self.announce(asset)
         }
+    }
+
+    private static func announce(_ key: String) {
+        let asset = String(key.prefix { $0 != "|" })
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: didRender, object: asset as NSString)
+        }
+    }
+
+    static func isAnnounced(_ notification: Notification, for page: Page) -> Bool {
+        guard let asset = notification.object as? String else { return true }
+        return page.elements.contains { $0.type == .importPage && $0.asset == asset }
     }
 
     func reload(assets: [String]) {

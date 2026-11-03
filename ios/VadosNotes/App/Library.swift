@@ -223,8 +223,10 @@ final class Library: ObservableObject {
         )
         apply(.page(header), page: header.id)
         if let document {
-            for (index, size) in document.pages.enumerated() {
-                apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now, isInverted: document.isInverted(index))), page: header.id)
+            grouped {
+                for (index, size) in document.pages.enumerated() {
+                    apply(.element(pageId: header.id, element: importElement(asset: document.asset, index: index, size: size, now: now, isInverted: document.isInverted(index))), page: header.id)
+                }
             }
         }
         return page(header.id) ?? Page(header: header)
@@ -238,10 +240,12 @@ final class Library: ObservableObject {
         updatePage(pageId) { header in
             header.extent = Extent(columns: header.extent.columns, rows: firstRow + document.pages.count)
         }
-        for (index, size) in document.pages.enumerated() {
-            var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index, isInverted: document.isInverted(index))
-            element.order = firstOrder + index
-            apply(.element(pageId: pageId, element: element), page: pageId)
+        grouped {
+            for (index, size) in document.pages.enumerated() {
+                var element = importElement(asset: document.asset, index: index, size: size, now: now, row: firstRow + index, isInverted: document.isInverted(index))
+                element.order = firstOrder + index
+                apply(.element(pageId: pageId, element: element), page: pageId)
+            }
         }
     }
 
@@ -258,10 +262,12 @@ final class Library: ObservableObject {
                 header.extent = Extent(columns: columns, rows: rows)
             }
         }
-        for (position, placement) in placements.enumerated() {
-            var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column, isInverted: document.isInverted(placement.index))
-            element.order = firstOrder + position
-            apply(.element(pageId: pageId, element: element), page: pageId)
+        grouped {
+            for (position, placement) in placements.enumerated() {
+                var element = importElement(asset: document.asset, index: placement.index, size: document.pages[placement.index], now: now, row: placement.cell.row, column: placement.cell.column, isInverted: document.isInverted(placement.index))
+                element.order = firstOrder + position
+                apply(.element(pageId: pageId, element: element), page: pageId)
+            }
         }
     }
 
@@ -315,8 +321,10 @@ final class Library: ObservableObject {
         header.updated = now
         header.device = device
         apply(.page(header), page: header.id)
-        for element in source.elements {
-            apply(.element(pageId: header.id, element: element), page: header.id)
+        grouped {
+            for element in source.elements {
+                apply(.element(pageId: header.id, element: element), page: header.id)
+            }
         }
         deletePage(pageId)
         return header.id
@@ -347,14 +355,16 @@ final class Library: ObservableObject {
         }
         guard !moved.isEmpty else { return }
         var step = UndoStep(before: [], after: [])
-        for element in moved {
-            guard let original = page.element(withId: element.id) else { continue }
-            var shifted = element
-            shifted.updated = now
-            shifted.device = device
-            apply(.element(pageId: pageId, element: shifted), page: pageId)
-            step.before.append(original)
-            step.after.append(shifted)
+        grouped {
+            for element in moved {
+                guard let original = page.element(withId: element.id) else { continue }
+                var shifted = element
+                shifted.updated = now
+                shifted.device = device
+                apply(.element(pageId: pageId, element: shifted), page: pageId)
+                step.before.append(original)
+                step.after.append(shifted)
+            }
         }
         record(step, on: pageId)
     }
@@ -367,20 +377,24 @@ final class Library: ObservableObject {
             Self.elementBounds(element).map { Point(x: Double($0.midX), y: Double($0.midY)) }
         }
         var step = UndoStep(before: [], after: [], extent: ExtentChange(before: page.extent, after: page.extent.removing(axis)))
-        for element in outcome.removed {
-            let tombstone = element.tombstone(at: now, device: device)
-            apply(.element(pageId: pageId, element: tombstone), page: pageId)
-            step.before.append(element)
-            step.after.append(tombstone)
+        grouped {
+            for element in outcome.removed {
+                let tombstone = element.tombstone(at: now, device: device)
+                apply(.element(pageId: pageId, element: tombstone), page: pageId)
+                step.before.append(element)
+                step.after.append(tombstone)
+            }
         }
-        for moved in outcome.moved {
-            guard let original = page.element(withId: moved.id) else { continue }
-            var shifted = moved
-            shifted.updated = now
-            shifted.device = device
-            apply(.element(pageId: pageId, element: shifted), page: pageId)
-            step.before.append(original)
-            step.after.append(shifted)
+        grouped {
+            for moved in outcome.moved {
+                guard let original = page.element(withId: moved.id) else { continue }
+                var shifted = moved
+                shifted.updated = now
+                shifted.device = device
+                apply(.element(pageId: pageId, element: shifted), page: pageId)
+                step.before.append(original)
+                step.after.append(shifted)
+            }
         }
         setExtent(page.extent.removing(axis), of: pageId)
         record(step, on: pageId)
@@ -413,15 +427,17 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for id in elementIds {
-            guard let element = page.element(withId: id), !element.deleted, element.type != .importPage, element.color != color else { continue }
-            var recolored = element
-            recolored.color = color
-            recolored.updated = now
-            recolored.device = device
-            apply(.element(pageId: pageId, element: recolored), page: pageId)
-            step.before.append(element)
-            step.after.append(recolored)
+        grouped {
+            for id in elementIds {
+                guard let element = page.element(withId: id), !element.deleted, element.type != .importPage, element.color != color else { continue }
+                var recolored = element
+                recolored.color = color
+                recolored.updated = now
+                recolored.device = device
+                apply(.element(pageId: pageId, element: recolored), page: pageId)
+                step.before.append(element)
+                step.after.append(recolored)
+            }
         }
         if !step.after.isEmpty {
             record(step, on: pageId)
@@ -432,15 +448,17 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for id in elementIds {
-            guard let element = page.element(withId: id), !element.deleted, element.type == .importPage, element.inverted != isInverted else { continue }
-            var changed = element
-            changed.inverted = isInverted
-            changed.updated = now
-            changed.device = device
-            apply(.element(pageId: pageId, element: changed), page: pageId)
-            step.before.append(element)
-            step.after.append(changed)
+        grouped {
+            for id in elementIds {
+                guard let element = page.element(withId: id), !element.deleted, element.type == .importPage, element.inverted != isInverted else { continue }
+                var changed = element
+                changed.inverted = isInverted
+                changed.updated = now
+                changed.device = device
+                apply(.element(pageId: pageId, element: changed), page: pageId)
+                step.before.append(element)
+                step.after.append(changed)
+            }
         }
         if !step.after.isEmpty {
             record(step, on: pageId)
@@ -452,16 +470,18 @@ final class Library: ObservableObject {
         finishText()
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for element in elements.sorted(by: Element.isOrderedBefore) {
-            guard let current = page(pageId) else { break }
-            var copy = Lasso.translated(element, by: offset)
-            copy.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
-            copy.order = current.nextOrder(in: element.layer)
-            copy.updated = now
-            copy.device = device
-            copy.deleted = false
-            apply(.element(pageId: pageId, element: copy), page: pageId)
-            step.after.append(copy)
+        grouped {
+            for element in elements.sorted(by: Element.isOrderedBefore) {
+                guard let current = page(pageId) else { break }
+                var copy = Lasso.translated(element, by: offset)
+                copy.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
+                copy.order = current.nextOrder(in: element.layer)
+                copy.updated = now
+                copy.device = device
+                copy.deleted = false
+                apply(.element(pageId: pageId, element: copy), page: pageId)
+                step.after.append(copy)
+            }
         }
         record(step, on: pageId)
         return step.after.map(\.id)
@@ -486,20 +506,22 @@ final class Library: ObservableObject {
         guard page(pageId) != nil, !isReadOnly(pageId), !shown.isEmpty else { return }
         let now = store.timestamp()
         var added: [Element] = []
-        for points in shown {
-            guard let current = page(pageId) else { return }
-            let element = Element.stroke(
-                id: Identifier.make(prefix: Identifier.elementPrefix, date: now),
-                tool: tool,
-                color: color,
-                width: width,
-                points: points,
-                order: current.nextOrder(in: tool.layer),
-                updated: now,
-                device: device
-            )
-            apply(.element(pageId: pageId, element: element), page: pageId)
-            added.append(element)
+        grouped {
+            for points in shown {
+                guard let current = page(pageId) else { return }
+                let element = Element.stroke(
+                    id: Identifier.make(prefix: Identifier.elementPrefix, date: now),
+                    tool: tool,
+                    color: color,
+                    width: width,
+                    points: points,
+                    order: current.nextOrder(in: tool.layer),
+                    updated: now,
+                    device: device
+                )
+                apply(.element(pageId: pageId, element: element), page: pageId)
+                added.append(element)
+            }
         }
         record(UndoStep(before: [], after: added), on: pageId)
     }
@@ -508,12 +530,14 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for id in elementIds {
-            guard let element = page.element(withId: id), !element.deleted else { continue }
-            let tombstone = element.tombstone(at: now, device: device)
-            apply(.element(pageId: pageId, element: tombstone), page: pageId)
-            step.before.append(element)
-            step.after.append(tombstone)
+        grouped {
+            for id in elementIds {
+                guard let element = page.element(withId: id), !element.deleted else { continue }
+                let tombstone = element.tombstone(at: now, device: device)
+                apply(.element(pageId: pageId, element: tombstone), page: pageId)
+                step.before.append(element)
+                step.after.append(tombstone)
+            }
         }
         if !step.after.isEmpty {
             record(step, on: pageId)
@@ -524,21 +548,23 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for replacement in replacements {
-            guard let element = page.element(withId: replacement.elementId), !element.deleted else { continue }
-            let tombstone = element.tombstone(at: now, device: device)
-            apply(.element(pageId: pageId, element: tombstone), page: pageId)
-            step.before.append(element)
-            step.after.append(tombstone)
-            for points in replacement.pieces {
-                var piece = element
-                piece.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
-                piece.points = points
-                piece.updated = now
-                piece.device = device
-                piece.deleted = false
-                apply(.element(pageId: pageId, element: piece), page: pageId)
-                step.after.append(piece)
+        grouped {
+            for replacement in replacements {
+                guard let element = page.element(withId: replacement.elementId), !element.deleted else { continue }
+                let tombstone = element.tombstone(at: now, device: device)
+                apply(.element(pageId: pageId, element: tombstone), page: pageId)
+                step.before.append(element)
+                step.after.append(tombstone)
+                for points in replacement.pieces {
+                    var piece = element
+                    piece.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
+                    piece.points = points
+                    piece.updated = now
+                    piece.device = device
+                    piece.deleted = false
+                    apply(.element(pageId: pageId, element: piece), page: pageId)
+                    step.after.append(piece)
+                }
             }
         }
         if !step.after.isEmpty {
@@ -561,14 +587,16 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for id in elementIds {
-            guard let element = page.element(withId: id), !element.deleted else { continue }
-            var moved = TextRhythm.fitted(Lasso.translated(element, by: offset), extent: page.extent)
-            moved.updated = now
-            moved.device = device
-            apply(.element(pageId: pageId, element: moved), page: pageId)
-            step.before.append(element)
-            step.after.append(moved)
+        grouped {
+            for id in elementIds {
+                guard let element = page.element(withId: id), !element.deleted else { continue }
+                var moved = TextRhythm.fitted(Lasso.translated(element, by: offset), extent: page.extent)
+                moved.updated = now
+                moved.device = device
+                apply(.element(pageId: pageId, element: moved), page: pageId)
+                step.before.append(element)
+                step.after.append(moved)
+            }
         }
         if !step.after.isEmpty {
             record(step, on: pageId)
@@ -579,14 +607,16 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for id in elementIds {
-            guard let element = page.element(withId: id), !element.deleted else { continue }
-            var scaled = TextRhythm.fitted(Lasso.scaled(element, about: anchor, by: factor), extent: page.extent)
-            scaled.updated = now
-            scaled.device = device
-            apply(.element(pageId: pageId, element: scaled), page: pageId)
-            step.before.append(element)
-            step.after.append(scaled)
+        grouped {
+            for id in elementIds {
+                guard let element = page.element(withId: id), !element.deleted else { continue }
+                var scaled = TextRhythm.fitted(Lasso.scaled(element, about: anchor, by: factor), extent: page.extent)
+                scaled.updated = now
+                scaled.device = device
+                apply(.element(pageId: pageId, element: scaled), page: pageId)
+                step.before.append(element)
+                step.after.append(scaled)
+            }
         }
         if !step.after.isEmpty {
             record(step, on: pageId)
@@ -597,15 +627,17 @@ final class Library: ObservableObject {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
         var step = UndoStep(before: [], after: [])
-        for id in elementIds {
-            guard let element = page.element(withId: id), !element.deleted, element.type == .stroke, element.width != width else { continue }
-            var resized = element
-            resized.width = width
-            resized.updated = now
-            resized.device = device
-            apply(.element(pageId: pageId, element: resized), page: pageId)
-            step.before.append(element)
-            step.after.append(resized)
+        grouped {
+            for id in elementIds {
+                guard let element = page.element(withId: id), !element.deleted, element.type == .stroke, element.width != width else { continue }
+                var resized = element
+                resized.width = width
+                resized.updated = now
+                resized.device = device
+                apply(.element(pageId: pageId, element: resized), page: pageId)
+                step.before.append(element)
+                step.after.append(resized)
+            }
         }
         if !step.after.isEmpty {
             record(step, on: pageId)
@@ -734,30 +766,32 @@ final class Library: ObservableObject {
         let now = store.timestamp()
         let beforeById = Dictionary(step.before.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var reverse = UndoStep(before: [], after: [])
-        for after in step.after {
-            let current = page(pageId)?.element(withId: after.id) ?? after
-            if let before = beforeById[after.id] {
-                if after.deleted && !before.deleted {
-                    var revived = before
-                    revived.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
-                    revived.updated = now
-                    revived.device = device
-                    revived.deleted = false
-                    apply(.element(pageId: pageId, element: revived), page: pageId)
-                    reverse.after.append(revived)
-                } else if !after.deleted {
-                    var restored = before
-                    restored.updated = now
-                    restored.device = device
-                    apply(.element(pageId: pageId, element: restored), page: pageId)
+        grouped {
+            for after in step.after {
+                let current = page(pageId)?.element(withId: after.id) ?? after
+                if let before = beforeById[after.id] {
+                    if after.deleted && !before.deleted {
+                        var revived = before
+                        revived.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
+                        revived.updated = now
+                        revived.device = device
+                        revived.deleted = false
+                        apply(.element(pageId: pageId, element: revived), page: pageId)
+                        reverse.after.append(revived)
+                    } else if !after.deleted {
+                        var restored = before
+                        restored.updated = now
+                        restored.device = device
+                        apply(.element(pageId: pageId, element: restored), page: pageId)
+                        reverse.before.append(current)
+                        reverse.after.append(restored)
+                    }
+                } else if !current.deleted {
+                    let tombstone = current.tombstone(at: now, device: device)
+                    apply(.element(pageId: pageId, element: tombstone), page: pageId)
                     reverse.before.append(current)
-                    reverse.after.append(restored)
+                    reverse.after.append(tombstone)
                 }
-            } else if !current.deleted {
-                let tombstone = current.tombstone(at: now, device: device)
-                apply(.element(pageId: pageId, element: tombstone), page: pageId)
-                reverse.before.append(current)
-                reverse.after.append(tombstone)
             }
         }
         if let change = step.extent {
@@ -775,6 +809,14 @@ final class Library: ObservableObject {
         }
         undoSteps[pageId] = steps
         redoSteps[pageId] = []
+    }
+
+    private func grouped(_ work: () -> Void) {
+        do {
+            try store.journal.grouped(work)
+        } catch {
+            lastError = String(describing: error)
+        }
     }
 
     private func apply(_ change: Change, page pageId: String?) {

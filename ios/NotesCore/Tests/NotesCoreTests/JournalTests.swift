@@ -14,6 +14,21 @@ final class JournalTests: XCTestCase {
         XCTAssertEqual(reopened.entries.map(\.sequence), [1, 2])
     }
 
+    func testGroupedEntriesAreWrittenTogether() throws {
+        let url = Fixtures.temporaryDirectory().appendingPathComponent("journal.jsonl")
+        let journal = try Journal(fileURL: url)
+        try journal.grouped {
+            for index in 0..<3 {
+                _ = try? journal.append(.element(pageId: "p_01TEST", element: Fixtures.stroke("e_\(index)")), device: "ipad-01", timestamp: Fixtures.time(Double(index)))
+            }
+            XCTAssertEqual((try? Journal(fileURL: url))?.entries.count, 0)
+        }
+
+        let reopened = try Journal(fileURL: url)
+
+        XCTAssertEqual(reopened.entries.map(\.sequence), [1, 2, 3])
+    }
+
     func testRemovingSyncedEntriesKeepsTheRest() throws {
         let url = Fixtures.temporaryDirectory().appendingPathComponent("journal.jsonl")
         let journal = try Journal(fileURL: url)

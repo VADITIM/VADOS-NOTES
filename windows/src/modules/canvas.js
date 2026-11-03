@@ -1,5 +1,6 @@
 import {
     axisSnapped,
+    fittedLine,
     clampBox,
     clipToPaper,
     cutStroke,
@@ -220,11 +221,8 @@ export class InkCanvas {
         })
     }
 
-    displayPage() {
-        if (!this.page || (this.areaErase.size === 0 && !this.isDrawingMarker())) {
-            return this.page
-        }
-        const elements = this.page.elements.filter((element) => !this.areaErase.has(element.id))
+    extraElements() {
+        const elements = []
         if (this.isDrawingMarker()) {
             const points = this.liveStrokePoints()
             elements.push({ id: "live-marker", type: "stroke", layer: "marker", tool: "marker", color: this.inkColor, width: this.inkWidth, points, updated: `live-${points.length}-${points.at(-1)?.join(",")}`, deleted: false })
@@ -234,7 +232,7 @@ export class InkCanvas {
                 elements.push({ ...entry.element, id: `${elementId}-piece-${index}-${entry.revision}`, points, updated: `${entry.element.updated}#${entry.revision}` })
             })
         }
-        return { ...this.page, elements }
+        return elements
     }
 
     draw() {
@@ -251,14 +249,15 @@ export class InkCanvas {
             }
         }
         const elementScale = this.selectionScaleAnchor ? { ids: new Set(this.selectedIds), anchor: this.selectionScaleAnchor, factor: this.selectionScale } : null
-        drawPage(this.paperContext, this.displayPage(), this.camera, {
+        drawPage(this.paperContext, this.page, this.camera, {
             width: this.width,
             height: this.height,
             pixelRatio: window.devicePixelRatio || 1,
             showsGuides: this.showsGuides,
             showsDividers: this.showsDividers,
             paperStyle: this.paperStyle,
-            hiddenElementIds: new Set([...this.hiddenElementIds, ...this.pendingErased]),
+            hiddenElementIds: new Set([...this.hiddenElementIds, ...this.pendingErased, ...this.areaErase.keys()]),
+            extraElements: this.extraElements(),
             elementOffsets,
             elementScale,
             fillsOutside: !this.showsBackdrop,
@@ -931,6 +930,10 @@ export class InkCanvas {
         if (stroke.straightEnd !== null) {
             return smoothStroke([stroke.raw[0], this.snappedEnd(stroke)], this.camera.scale, this.inkSmoothing)
         }
+        const line = this.tool.kind === "ink" && this.tool.tool === "marker" ? fittedLine(stroke.raw) : null
+        if (line) {
+            return smoothStroke(line, this.camera.scale, this.inkSmoothing)
+        }
         return smoothStroke(stroke.raw, this.camera.scale, this.inkSmoothing)
     }
 
@@ -957,8 +960,18 @@ export class InkCanvas {
         }
         const reach = this.eraserReach()
         let didErase = false
+        const sweep = {
+            minimumX: Math.min(sweepStart[0], sweepEnd[0]) - reach,
+            minimumY: Math.min(sweepStart[1], sweepEnd[1]) - reach,
+            maximumX: Math.max(sweepStart[0], sweepEnd[0]) + reach,
+            maximumY: Math.max(sweepStart[1], sweepEnd[1]) + reach,
+        }
         for (const element of liveElements(this.page)) {
             if (element.type !== "stroke" || !element.points?.length) {
+                continue
+            }
+            const bounds = this.cache.path(element).bounds
+            if (bounds.maximumX < sweep.minimumX || bounds.minimumX > sweep.maximumX || bounds.maximumY < sweep.minimumY || bounds.minimumY > sweep.maximumY) {
                 continue
             }
             const strokeReach = reach + (element.width ?? 0) / 2

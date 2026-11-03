@@ -71,14 +71,22 @@ enum InkStyle {
         element.type == .stroke && element.tool == .marker
     }
 
+    private static var colors: [String: CGColor] = [:]
+
     static func opaqueColor(for element: Element, style: PaperStyle) -> UIColor {
         UIColor(hex: Palette.inkOnPaper(element.color ?? "#1A1A1A", style: style))
     }
 
-    static func color(for element: Element, style: PaperStyle) -> UIColor {
-        let base = UIColor(hex: Palette.inkOnPaper(element.color ?? "#1A1A1A", style: style))
-        guard let tool = element.tool else { return base }
-        return base.withAlphaComponent(CGFloat(tokens(for: tool).opacity))
+    static func strokeColor(for element: Element, style: PaperStyle, isOpaque: Bool) -> CGColor {
+        let opacity = isOpaque ? nil : element.tool.map { tokens(for: $0).opacity }
+        let key = "\(element.color ?? "")|\(style.rawValue)|\(opacity ?? -1)"
+        if let color = colors[key] {
+            return color
+        }
+        let base = opaqueColor(for: element, style: style)
+        let color = (opacity.map { base.withAlphaComponent(CGFloat($0)) } ?? base).cgColor
+        colors[key] = color
+        return color
     }
 
     static func settings(smoothing: Double) -> InkSettings {
@@ -88,6 +96,8 @@ enum InkStyle {
 }
 
 final class StrokePathCache {
+    private static let pruneSlack = 256
+
     private struct Entry {
         let updated: Date
         let path: CGPath
@@ -105,6 +115,11 @@ final class StrokePathCache {
         let bounds = path.boundingBoxOfPath.insetBy(dx: inset, dy: inset)
         entries[element.id] = Entry(updated: element.updated, path: path, bounds: bounds)
         return (path, bounds)
+    }
+
+    func prune(keeping liveCount: Int, isLive: (String) -> Bool) {
+        guard entries.count > liveCount * 2 + Self.pruneSlack else { return }
+        entries = entries.filter { isLive($0.key) }
     }
 
     private static let minimumSpan: CGFloat = 1e-4
@@ -155,6 +170,67 @@ final class StrokePathCache {
             path.addCurve(to: end, control1: control1, control2: control2)
         }
         return path
+    }
+}
+
+final class RenderIndex {
+    struct Item {
+        let element: Element
+        let bounds: CGRect
+    }
+
+    let imports: [Element]
+    let markers: [Item]
+    let others: [Item]
+    private(set) lazy var byId: [String: Item] = Dictionary((markers + others).map { ($0.element.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+    private static let textOverhang: CGFloat = 16
+
+    init(imports: [Element], markers: [Item], others: [Item]) {
+        self.imports = imports
+        self.markers = markers
+        self.others = others
+    }
+
+    convenience init(_ page: Page, cache: StrokePathCache) {
+        var imports: [Element] = []
+        var markers: [Item] = []
+        var others: [Item] = []
+        for element in page.liveElements {
+            switch element.type {
+            case .importPage:
+                imports.append(element)
+            case .stroke:
+                let item = Item(element: element, bounds: cache.path(for: element).bounds)
+                if InkStyle.isMarker(element) {
+                    markers.append(item)
+                } else {
+                    others.append(item)
+                }
+            case .text:
+                let bounds = PageRenderer.textRect(for: element)?.insetBy(dx: -Self.textOverhang, dy: -Self.textOverhang) ?? .infinite
+                others.append(Item(element: element, bounds: bounds))
+            }
+        }
+        self.init(imports: imports, markers: markers, others: others)
+    }
+
+    func bounds(of ids: some Sequence<String>) -> CGRect {
+        ids.reduce(CGRect.null) { union, id in byId[id].map { union.union($0.bounds) } ?? union }
+    }
+
+    func changedBounds(since previous: RenderIndex) -> CGRect {
+        var changed = CGRect.null
+        for (id, item) in byId where previous.byId[id]?.element.updated != item.element.updated {
+            changed = changed.union(item.bounds)
+            if let old = previous.byId[id] {
+                changed = changed.union(old.bounds)
+            }
+        }
+        for (id, item) in previous.byId where byId[id] == nil {
+            changed = changed.union(item.bounds)
+        }
+        return changed
     }
 }
 
@@ -346,7 +422,7 @@ enum MarkdownText {
 }
 
 enum PageRenderer {
-    static func draw(_ page: Page, in context: CGContext, camera: CanvasCamera, visibleRect: CGRect, options: RenderOptions, cache: StrokePathCache) {
+    static func draw(_ page: Page, in context: CGContext, camera: CanvasCamera, visibleRect: CGRect, options: RenderOptions, cache: StrokePathCache, index givenIndex: RenderIndex? = nil) {
         if options.fillsOutside && options.drawsPaper {
             context.setFillColor(Palette.outside.cgColor)
             context.fill(visibleRect)
@@ -369,9 +445,14 @@ enum PageRenderer {
             context.setFillColor(UIColor(hex: colors.paper).cgColor)
             context.fill(paperRect)
         }
-        let elements = options.drawsElements ? page.liveElements : []
+        let index = options.drawsElements ? givenIndex ?? RenderIndex(page, cache: cache) : RenderIndex(imports: [], markers: [], others: [])
+        func isShown(_ item: RenderIndex.Item) -> Bool {
+            let id = item.element.id
+            guard !options.hiddenElementIds.contains(id) else { return false }
+            return options.elementOffsets[id] != nil || options.elementTransforms[id] != nil || item.bounds.intersects(visiblePage)
+        }
         if options.drawsImports {
-            for element in elements where element.type == .importPage && !options.hiddenElementIds.contains(element.id) {
+            for element in index.imports where !options.hiddenElementIds.contains(element.id) {
                 drawImport(element, in: context, camera: camera, visiblePage: visiblePage, options: options, guide: UIColor(hex: colors.guide))
             }
         }
@@ -383,8 +464,7 @@ enum PageRenderer {
                 drawCellBoundaries(in: context, extent: page.extent, camera: camera, color: UIColor(hex: colors.cellBoundary))
             }
         }
-        let shown = elements.filter { !options.hiddenElementIds.contains($0.id) && $0.type != .importPage }
-        let markers = shown.filter(InkStyle.isMarker)
+        let markers = options.markerPass == .none ? [] : index.markers.filter(isShown).map(\.element)
         switch options.markerPass {
         case .merged where !markers.isEmpty:
             context.saveGState()
@@ -403,8 +483,8 @@ enum PageRenderer {
             break
         }
         if options.markerPass != .only {
-            for element in shown where !InkStyle.isMarker(element) {
-                drawPlaced(element, in: context, visiblePage: visiblePage, options: options, cache: cache, isOpaque: false)
+            for item in index.others where isShown(item) {
+                drawPlaced(item.element, in: context, visiblePage: visiblePage, options: options, cache: cache, isOpaque: false)
             }
         }
         context.restoreGState()
@@ -467,7 +547,7 @@ enum PageRenderer {
         context.setLineWidth(CGFloat(element.width ?? 0.5))
         context.setLineCap(.round)
         context.setLineJoin(.round)
-        context.setStrokeColor((isOpaque ? InkStyle.opaqueColor(for: element, style: style) : InkStyle.color(for: element, style: style)).cgColor)
+        context.setStrokeColor(InkStyle.strokeColor(for: element, style: style, isOpaque: isOpaque))
         context.strokePath()
         context.restoreGState()
     }
