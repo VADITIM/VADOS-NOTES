@@ -110,10 +110,9 @@ struct PageScreen: View {
                     }
                 }
                 .modifier(TileFlight(progress: flightProgress, tile: flightTile))
-                EraserEdges()
+                EraserEdges(share: activeTool == .eraser ? 1 : 0)
                     .fill(Palette.destructive.opacity(Tokens.shared.tools.eraser.edgeOpacity))
-                    .opacity(activeTool == .eraser ? 1 : 0)
-                    .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: activeTool)
+                    .animation(activeTool == .eraser ? Motion.powerTwoOut(Motion.stateMilliseconds) : Motion.powerTwoIn(Motion.stateMilliseconds), value: activeTool == .eraser)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
                 ZStack {
@@ -1002,8 +1001,15 @@ private struct KeyboardCommands: View {
 }
 
 struct EraserEdges: Shape {
+    var share: CGFloat
+
+    var animatableData: CGFloat {
+        get { share }
+        set { share = newValue }
+    }
+
     func path(in rect: CGRect) -> Path {
-        let reach = CGFloat(Tokens.shared.tools.eraser.edgeReach)
+        let reach = CGFloat(Tokens.shared.tools.eraser.edgeReach) * share
         var path = Path()
         path.addLines([CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX + reach, y: rect.minY), CGPoint(x: rect.minX, y: rect.minY + reach)])
         path.closeSubpath()

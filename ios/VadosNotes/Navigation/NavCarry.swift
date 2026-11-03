@@ -45,6 +45,7 @@ final class NavCarry: ObservableObject {
     @Published private(set) var morph: CGFloat = 0
     @Published private(set) var stretchAmount: CGFloat = 0
     @Published private(set) var stretchAngle: CGFloat = 0
+    @Published private(set) var placement: NavPlacement?
     private(set) var corner: String?
 
     var host: NavCarryHost?
@@ -71,6 +72,10 @@ final class NavCarry: ObservableObject {
     private static let substep: Double = 1.0 / 240
 
     private var settings: Tokens.CarryTokens { Motion.carry }
+
+    init(placement: NavPlacement?) {
+        self.placement = placement
+    }
 
     var isActive: Bool {
         state != .idle && state != .parked
@@ -100,6 +105,10 @@ final class NavCarry: ObservableObject {
         self.corner = corner
         morph = 1
         morphTarget = 1
+    }
+
+    func place(_ next: NavPlacement) {
+        placement = next
     }
 
     func grab(finger point: CGPoint, center current: CGPoint) {

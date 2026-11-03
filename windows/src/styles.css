@@ -260,12 +260,6 @@ svg.squircle ~ * {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    opacity: 0;
-    transition: opacity var(--duration-state) var(--curve-power-two-out);
-}
-
-.eraser-edges.is-shown {
-    opacity: 1;
 }
 
 .eraser-edge {
@@ -274,29 +268,40 @@ svg.squircle ~ * {
     height: var(--eraser-edge-reach);
     background: var(--semantic-destructive);
     opacity: var(--eraser-edge-opacity);
+    scale: 0;
+    transition: scale var(--duration-state) var(--curve-power-two-in);
+}
+
+.eraser-edges.is-shown .eraser-edge {
+    scale: 1;
+    transition: scale var(--duration-state) var(--curve-power-two-out);
 }
 
 .eraser-edge.is-top-left {
     left: 0;
     top: 0;
+    transform-origin: 0 0;
     clip-path: polygon(0 0, 100% 0, 0 100%);
 }
 
 .eraser-edge.is-top-right {
     right: 0;
     top: 0;
+    transform-origin: 100% 0;
     clip-path: polygon(0 0, 100% 0, 100% 100%);
 }
 
 .eraser-edge.is-bottom-right {
     right: 0;
     bottom: 0;
+    transform-origin: 100% 100%;
     clip-path: polygon(100% 0, 100% 100%, 0 100%);
 }
 
 .eraser-edge.is-bottom-left {
     left: 0;
     bottom: 0;
+    transform-origin: 0 100%;
     clip-path: polygon(0 0, 100% 100%, 0 100%);
 }
 

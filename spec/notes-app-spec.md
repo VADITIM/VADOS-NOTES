@@ -461,7 +461,7 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - The folder name at the top left shows only inside a folder. It enters and leaves like the search field and the nav: its elements pop in and out and the pill spreads and narrows.
 - Each tool in the nav has its own colour: pen white, eraser red (with a ring-and-stroke icon), marker light purple, lasso yellow, text blue. In the text nav, `.md` is red-pink, code is indigo, and the T shows the selected text colour with its dot. There is no keyboard button.
 - While the size slider is held for the pen, marker or eraser, a dot in the centre of the screen shows the true size at the current zoom.
-- While the eraser is selected, a faint red triangle sits in each corner of the screen.
+- While the eraser is selected, a faint red triangle sits in each corner of the screen. The triangles slice in out of their corners when the eraser is selected and back into them when it is deselected.
 - The nav can lie over the note's name; the name never pushes it aside.
 - The nav turns only when it is carried against an edge: vertical at the left and right edges, horizontal at the top and bottom.
 - Zooming while text is being edited moves smoothly through the whole range.

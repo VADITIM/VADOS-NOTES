@@ -195,12 +195,11 @@ struct ToolNav<PanelContent: View>: View {
     @State private var edgeDragStart: CGFloat?
     @State private var isEdgeHidden = false
     @State private var orientation: NavOrientation = Preferences.shared.navPlacement?.orientation == NavOrientation.vertical.rawValue ? .vertical : .horizontal
-    @State private var placement: NavPlacement? = Preferences.shared.navPlacement
     @State private var navSize: CGSize = .zero
     @State private var subNavSize: CGSize = .zero
     @State private var panelSize: CGSize = .zero
     @State private var groupSizes: [String: CGSize] = [:]
-    @StateObject private var carry = NavCarry()
+    @StateObject private var carry = NavCarry(placement: Preferences.shared.navPlacement)
     @State private var turningOrientation: NavOrientation?
     @State private var turnEndsAt: Double = 0
     @State private var carryOrigin: CGPoint = .zero
@@ -367,7 +366,7 @@ struct ToolNav<PanelContent: View>: View {
                 carryLayer = layer
                 carryOrigin = layerOrigin
                 connectCarry()
-                carry.restore(corner: placement?.corner)
+                carry.restore(corner: carry.placement?.corner)
             }
             .onChange(of: layer) { _, size in carryLayer = size }
             .onChange(of: layerOrigin) { _, origin in carryOrigin = origin }
@@ -1011,11 +1010,11 @@ struct ToolNav<PanelContent: View>: View {
         if carry.isActive, let point = carry.center {
             return point
         }
-        if carry.state == .parked, let corner = placement?.corner {
+        if carry.state == .parked, let corner = carry.placement?.corner {
             return cornerSpot(corner, layer: layer, blocked: blocked)
         }
         let wanted: CGPoint
-        if let placement {
+        if let placement = carry.placement {
             wanted = CGPoint(x: placement.x * layer.width, y: placement.y * layer.height)
         } else {
             wanted = CGPoint(x: layer.width / 2, y: layer.height - NavMetrics.bottomGap - navSize.height / 2)
@@ -1122,11 +1121,7 @@ struct ToolNav<PanelContent: View>: View {
         let layer = carryLayer
         let next = NavPlacement(x: Double(point.x / max(1, layer.width)), y: Double(point.y / max(1, layer.height)), orientation: orientation.rawValue, corner: corner)
         Preferences.shared.setNavPlacement(next)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            placement = next
-        }
+        carry.place(next)
         swallowUntil = Date().addingTimeInterval(0.6)
         Haptics.landed()
     }
