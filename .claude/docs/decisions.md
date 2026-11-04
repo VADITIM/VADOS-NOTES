@@ -527,7 +527,7 @@ The first iPad build was tried by hand. This pass replaces the bullets above whe
 - **Assumption:** the new values were tuned on Windows with synthetic input (a dock lands about 0.4 s after a fling, with a 9% length overshoot) and still need a feel on the iPad.
 - **The jump after landing (iPad bug).** The engine switched to idle, then called `onLand`, which saved the placement in a transaction without animation. SwiftUI applied the two in separate updates. In the first one the bar was placed from the old placement (where the drag began) with the placement spring on, so it jumped back that way and sprang home. `NavCarry` now calls `onLand` before it changes the state. Windows keeps its order: its landing is one synchronous step, and `syncStage` needs the final state.
 - **The jump after landing, root cause (iPad bug).** Reordering did not fix it. The placement was a `@State` in `ToolNav` and the carry state lives in `NavCarry`. A `@State` write is queued with its transaction, while the view reads the object's state live, so SwiftUI could still draw a frame with the carry idle and the old placement, whatever order the writes ran in. The bar then sprang towards where the drag began, by a distance that grew with the drag, and snapped back when the queued placement arrived. The placement now lives in `NavCarry` (`placement`, set by `place`), so the state and the place the bar rests at are one source and every frame reads both as they are.
-- The engine is written up for reuse as V/AS `components/29-physics-motion.md`.
+- The engine is written up for reuse as V/AS `components/19-pop-bar.md §10` (the pop bar's tool purpose).
 
 
 ### View All: opaque, pans from pages, a continuous grid, the top bar's buttons (2026-11-03, iPad)
