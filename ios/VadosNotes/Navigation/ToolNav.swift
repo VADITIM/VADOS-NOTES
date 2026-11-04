@@ -808,7 +808,7 @@ struct ToolNav<PanelContent: View>: View {
         DragGesture(minimumDistance: NavMetrics.navSizingSlop, coordinateSpace: .named(NavMetrics.layerSpace))
             .updating($isCollapseGestureActive) { _, isActive, _ in isActive = true }
             .onChanged { value in
-                guard !isCollapseSwiped, !isCollapseSwipeRejected, groupReordering == nil, !carry.isStageCleared else { return }
+                guard !isCollapseSwiped, !isCollapseSwipeRejected, groupReordering == nil, !isPresetLifted, !carry.isStageCleared else { return }
                 let along = orientation == .horizontal ? value.translation.width : value.translation.height
                 let across = orientation == .horizontal ? value.translation.height : value.translation.width
                 guard abs(along) > abs(across) * NavMetrics.navSizingDominance else {

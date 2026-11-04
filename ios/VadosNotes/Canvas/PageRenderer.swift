@@ -110,23 +110,33 @@ final class StrokePathCache {
     }
 
     private var entries: [String: Entry] = [:]
+    private let lock = NSLock()
 
     func path(for element: Element) -> (path: CGPath, bounds: CGRect) {
-        if let entry = entries[element.id], entry.updated == element.updated {
-            return (entry.path, entry.bounds)
+        lock.lock()
+        let cached = entries[element.id]
+        lock.unlock()
+        if let cached, cached.updated == element.updated {
+            return (cached.path, cached.bounds)
         }
         let path = Self.makePath(element.points ?? [])
         let inset = -CGFloat(element.width ?? 1)
         let bounds = path.boundingBoxOfPath.insetBy(dx: inset, dy: inset)
+        lock.lock()
         entries[element.id] = Entry(updated: element.updated, path: path, bounds: bounds)
+        lock.unlock()
         return (path, bounds)
     }
 
     func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
         entries = [:]
     }
 
     func prune(keeping liveCount: Int, isLive: (String) -> Bool) {
+        lock.lock()
+        defer { lock.unlock() }
         guard entries.count > liveCount * 2 + Self.pruneSlack else { return }
         entries = entries.filter { isLive($0.key) }
     }

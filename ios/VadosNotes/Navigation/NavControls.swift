@@ -68,6 +68,12 @@ struct PresetStrip<Item: Hashable, Content: View>: View {
             }
         }
         .coordinateSpace(name: Self.space)
+        .onChange(of: items.count) { _, _ in
+            guard lift != nil else { return }
+            lift = nil
+            settling = nil
+            callbacks.lifted(false)
+        }
         .onChange(of: isPressing) { _, pressing in
             callbacks.pressed(pressing)
             if !pressing {
@@ -140,6 +146,11 @@ struct PresetStrip<Item: Hashable, Content: View>: View {
 
     private func finish() {
         guard let current = lift else { return }
+        guard current.order.count == items.count, current.order.allSatisfy(items.indices.contains) else {
+            lift = nil
+            callbacks.lifted(false)
+            return
+        }
         let target = current.order.firstIndex(of: current.index) ?? current.index
         let residual = current.drag - CGFloat(target - current.index) * pitch
         var transaction = Transaction()

@@ -264,6 +264,7 @@ struct Tokens: Decodable {
         let thumbnailCacheMegabytes: Int
         let strokePathSlack: Int
         let textLayoutEntries: Int
+        let tileCacheMegabytes: Int
         let undoSteps: Int
         let journalCompactEntries: Int
     }
