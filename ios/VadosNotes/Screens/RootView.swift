@@ -285,6 +285,7 @@ struct RootView: View {
         .onAppear {
             ImportImages.shared.assetURL = { [library] asset in library.assetURL(asset) }
             library.adoptDeviceGroups(preferences.takeDeviceGroups())
+            restoreLastRoute()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -292,15 +293,34 @@ struct RootView: View {
                 library.sync.appBecameActive()
             case .background:
                 library.finishText()
+                SessionMemory.flush()
                 library.sync.appEnteredBackground()
             default:
                 break
             }
         }
-        .onChange(of: navigator.route) { _, _ in
+        .onChange(of: navigator.route) { _, route in
+            SessionMemory.rememberRoute(route)
+            SessionMemory.flush()
             menu.dismiss()
             library.finishText()
             library.sync.flush()
+        }
+    }
+
+    private func restoreLastRoute() {
+        guard navigator.route == .library, let route = SessionMemory.lastRoute() else { return }
+        switch route {
+        case .library:
+            break
+        case .notebook(let notebookId):
+            if library.notebook(notebookId) != nil {
+                navigator.go(.notebook(notebookId))
+            }
+        case .page(_, let pageId):
+            if let page = library.page(pageId), library.notebook(page.notebook) != nil {
+                navigator.go(.page(notebookId: page.notebook, pageId: page.id))
+            }
         }
     }
 

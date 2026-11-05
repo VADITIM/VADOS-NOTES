@@ -9,6 +9,7 @@ import { ToolNav } from "./navigation.js"
 import { PageScreen } from "./page.js"
 import * as preferences from "./preferences.js"
 import { isFullScreen, SheetHost } from "./sheets.js"
+import { flushSession, lastRoute, rememberRoute } from "./session.js"
 import { SyncCoordinator } from "./sync.js"
 import { loadTokens } from "./tokens.js"
 import { TopBar } from "./topBar.js"
@@ -79,6 +80,7 @@ class Navigator {
     }
 
     switchRoute(route, tile) {
+        rememberRoute(route)
         this.openingTile = tile ? { x: tile.left ?? tile.x, y: tile.top ?? tile.y, width: tile.width, height: tile.height } : null
         this.isReturningFromPage = this.route.kind === "page" && route.kind !== "page"
         if (route.kind === "page") {
@@ -120,9 +122,23 @@ class App {
         window.addEventListener("beforeunload", () => {
             this.library.finishText()
             this.library.flush()
+            flushSession()
         })
         this.watchKeyboard()
         this.routeChanged()
+        this.restoreLastRoute()
+    }
+
+    restoreLastRoute() {
+        const route = lastRoute()
+        if (route?.kind === "notebook" && this.library.notebook(route.notebookId)) {
+            this.navigator.go({ kind: "notebook", notebookId: route.notebookId })
+        } else if (route?.kind === "page") {
+            const page = this.library.page(route.pageId)
+            if (page && this.library.notebook(page.notebook)) {
+                this.navigator.go({ kind: "page", notebookId: page.notebook, pageId: page.id })
+            }
+        }
     }
 
     watchKeyboard() {

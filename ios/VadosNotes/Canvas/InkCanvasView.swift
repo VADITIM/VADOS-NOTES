@@ -544,7 +544,12 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
 
     func fit() {
         guard let page, bounds.width > 0 else { return }
-        camera = CanvasCamera.fitting(page.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
+        if let saved = SessionMemory.view(for: page.id) {
+            let scale = CGFloat(saved.scale)
+            camera = CanvasCamera(scale: scale, offset: CGPoint(x: bounds.width / 2 - CGFloat(saved.centerX) * scale, y: bounds.height / 2 - CGFloat(saved.centerY) * scale))
+        } else {
+            camera = CanvasCamera.fitting(page.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
+        }
         hasFitted = true
         fittedSize = bounds.size
         cameraChanged(synchronous: true)
@@ -1066,6 +1071,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
         if let page {
             camera = camera.constrained(to: page.extent, in: bounds.size, margin: Self.fitMargin, topInset: topInset)
+            if hasFitted, bounds.width > 0 {
+                let center = camera.toPage(CGPoint(x: bounds.width / 2, y: bounds.height / 2))
+                SessionMemory.remember(NoteView(scale: Double(camera.scale), centerX: center.x, centerY: center.y), for: page.id)
+            }
         }
         layoutPaper()
         if stroke != nil {

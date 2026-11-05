@@ -18,6 +18,7 @@ import {
 import { duration } from "./motion.js"
 import { Camera, StrokePathCache, drawPage, importRect, snappedBox, strokePath, textRect } from "./renderer.js"
 import { importHolder, releaseImportHolder, subscribeImports } from "./imports.js"
+import { noteView, rememberNoteView } from "./session.js"
 import { componentsToHex, hexComponents, inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
 const fitMargin = 24
@@ -200,7 +201,10 @@ export class InkCanvas {
         if (!this.page || this.width === 0) {
             return
         }
-        this.camera = Camera.fitting(this.page.extent, this.width, this.height, fitMargin, this.topInset)
+        const saved = noteView(this.page.id)
+        this.camera = saved
+            ? new Camera(saved.scale, this.width / 2 - saved.centerX * saved.scale, this.height / 2 - saved.centerY * saved.scale)
+            : Camera.fitting(this.page.extent, this.width, this.height, fitMargin, this.topInset)
         this.hasFitted = true
         this.fittedSize = [this.width, this.height]
         this.cameraChanged()
@@ -217,6 +221,10 @@ export class InkCanvas {
     cameraChanged() {
         if (this.page) {
             this.camera = this.camera.constrained(this.page.extent, this.width, this.height, fitMargin, this.topInset)
+            if (this.hasFitted && this.width > 0) {
+                const [centerX, centerY] = this.camera.toPage(this.width / 2, this.height / 2)
+                rememberNoteView(this.page.id, { scale: this.camera.scale, centerX, centerY })
+            }
         }
         this.requestDraw()
         this.callbacks.onCameraChange?.(this.camera)
