@@ -241,6 +241,7 @@ struct PageScreen: View {
             showsDividers: preferences.showsDividers,
             showsBackdrop: preferences.showsAsciiBackground,
             inkSmoothing: preferences.inkSmoothing,
+            textSnap: preferences.activeTextSnap,
             hiddenElementIds: session.map { Set([$0.element.id]) } ?? [],
             isReadOnly: library.isReadOnly(pageId),
             topInset: topInset,
@@ -270,7 +271,7 @@ struct PageScreen: View {
         .padding(Self.editorInset)
         .overlay(Rectangle().stroke(Palette.borderHover, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
         .simultaneousGesture(textDrag(box: box, camera: camera, extent: extent) { origin, translation in
-            TextBox(x: origin.x + translation.x, y: origin.y + translation.y, width: origin.width)
+            TextRhythm.snapped(TextBox(x: origin.x + translation.x, y: origin.y + translation.y, width: origin.width), from: origin, mode: preferences.activeTextSnap)
         })
         .overlay(alignment: .leading) {
             textHandle
@@ -474,6 +475,21 @@ struct PageScreen: View {
         .position(x: x, y: y)
     }
 
+    private func toggleTextSnap() {
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            panelKey = nil
+            if !preferences.isTextSnapping {
+                preferences.setTextSnapping(true)
+                subNavKey = "text-snap"
+            } else if subNavKey == "text-snap" {
+                preferences.setTextSnapping(false)
+                subNavKey = nil
+            } else {
+                subNavKey = "text-snap"
+            }
+        }
+    }
+
     private func toggleSubNav(_ key: String) {
         withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
             panelKey = nil
@@ -571,6 +587,7 @@ struct PageScreen: View {
                 NavItem(id: "text-style", caption: ".md", label: "Text styles", tint: Palette.markdownTint, isTinted: true, action: { _ in toggleSubNav("text-style") }),
                 NavItem(id: "text-code", glyph: "code", label: "Code", tint: Palette.codeTint, isTinted: true, action: { _ in toggleSubNav("text-code") }),
                 NavItem(id: "text-color", glyph: "text", label: "Text colour", tint: Palette.isLight(color) ? Color(hex: color) : Palette.textBright, isTinted: true, swatch: Color(hex: color), action: { _ in toggleSubNav("text-color") }),
+                NavItem(id: "text-snap", glyph: "snap", label: preferences.isTextSnapping ? "Snap on" : "Snap off", tint: Palette.accent, isTinted: preferences.isTextSnapping, action: { _ in toggleTextSnap() }),
             ], [
                 NavItem(id: "finish-text", glyph: "check", label: "Done", tint: Palette.create, isTinted: true, action: { _ in library.finishText() }),
             ]]
@@ -733,6 +750,8 @@ struct PageScreen: View {
             return textStyleGroups()
         case "text-code":
             return textCodeGroups()
+        case "text-snap":
+            return textSnapGroups()
         default:
             return []
         }
@@ -874,6 +893,25 @@ struct PageScreen: View {
                     requestTextStyle(.code(nil))
                 }
                 .accessibilityLabel("Normal text")
+            },
+        ]
+    }
+
+    private func textSnapGroups() -> [SubNavigationGroup] {
+        let mode = preferences.textSnapMode
+        return [
+            group("text-snap-modes") { orientation in
+                let layout = stack(orientation)
+                layout {
+                    NavIconButton(glyph: "snap_absolute", tint: Palette.accent, isSelected: mode == .absolute, orientation: orientation, ring: ("text-snap-ring", ringSpace)) {
+                        preferences.setTextSnapMode(.absolute)
+                    }
+                    .accessibilityLabel("Absolute: snap to the page grid")
+                    NavIconButton(glyph: "snap_relative", tint: Palette.accent, isSelected: mode == .relative, orientation: orientation, ring: ("text-snap-ring", ringSpace)) {
+                        preferences.setTextSnapMode(.relative)
+                    }
+                    .accessibilityLabel("Relative: move in grid steps from where the block was")
+                }
             },
         ]
     }

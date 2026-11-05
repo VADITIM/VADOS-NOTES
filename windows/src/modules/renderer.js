@@ -212,6 +212,18 @@ export function snappedTop(top) {
     return Math.round((top + lift) / rowGap()) * rowGap() - lift
 }
 
+export function snappedBox(box, origin, mode) {
+    if (!mode) {
+        return box
+    }
+    const step = tokens.page.grid_spacing
+    const row = rowGap()
+    if (mode === "relative") {
+        return { ...box, x: origin.x + Math.round((box.x - origin.x) / step) * step, y: origin.y + Math.round((box.y - origin.y) / row) * row }
+    }
+    return { ...box, x: Math.round(box.x / step) * step, y: Math.round(box.y / row) * row }
+}
+
 export function placedBox(box, extent, height) {
     const width = Math.min(box.width, paperWidth(extent))
     const clamped = { ...box, width, x: Math.min(paperWidth(extent) - width, Math.max(0, box.x)), y: Math.min(paperHeight(extent) - height, Math.max(0, box.y)) }

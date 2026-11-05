@@ -24,6 +24,11 @@ enum EraserMode: String {
     case area
 }
 
+enum TextSnapMode: String {
+    case absolute
+    case relative
+}
+
 enum NavOrientation: String {
     case horizontal
     case vertical
@@ -276,6 +281,26 @@ final class Preferences: ObservableObject {
 
     func setEraserMode(_ mode: EraserMode) {
         write("eraserMode", mode.rawValue)
+    }
+
+    var isTextSnapping: Bool {
+        read("textSnapping", false)
+    }
+
+    func setTextSnapping(_ isSnapping: Bool) {
+        write("textSnapping", isSnapping)
+    }
+
+    var textSnapMode: TextSnapMode {
+        TextSnapMode(rawValue: read("textSnapMode", TextSnapMode.absolute.rawValue)) ?? .absolute
+    }
+
+    func setTextSnapMode(_ mode: TextSnapMode) {
+        write("textSnapMode", mode.rawValue)
+    }
+
+    var activeTextSnap: TextSnapMode? {
+        isTextSnapping ? textSnapMode : nil
     }
 
     var toolOrder: [String] {

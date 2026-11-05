@@ -76,6 +76,18 @@ enum TextRhythm {
         return ((top + lift) / gap).rounded() * gap - lift
     }
 
+    static func snapped(_ box: TextBox, from origin: TextBox, mode: TextSnapMode?) -> TextBox {
+        guard let mode else { return box }
+        let step = PaperGeometry.gridSpacing
+        let row = PaperGeometry.rowSpacing
+        switch mode {
+        case .absolute:
+            return TextBox(x: (box.x / step).rounded() * step, y: (box.y / row).rounded() * row, width: box.width)
+        case .relative:
+            return TextBox(x: origin.x + ((box.x - origin.x) / step).rounded() * step, y: origin.y + ((box.y - origin.y) / row).rounded() * row, width: box.width)
+        }
+    }
+
     static func placed(_ box: TextBox, extent: Extent, height: Double) -> TextBox {
         let gap = Double(rowGap)
         let clamped = Ink.clampBox(box, extent: extent, height: height)

@@ -16,7 +16,7 @@ import {
     straightened,
 } from "./model.js"
 import { duration } from "./motion.js"
-import { Camera, StrokePathCache, drawPage, importRect, strokePath, textRect } from "./renderer.js"
+import { Camera, StrokePathCache, drawPage, importRect, snappedBox, strokePath, textRect } from "./renderer.js"
 import { importHolder, releaseImportHolder, subscribeImports } from "./imports.js"
 import { componentsToHex, hexComponents, inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
@@ -54,6 +54,7 @@ export class InkCanvas {
         this.showsDividers = true
         this.showsBackdrop = false
         this.inkSmoothing = tokens.ink.smoothing_points
+        this.textSnap = null
         this.hiddenElementIds = new Set()
         this.isReadOnly = false
         this.topInset = 0
@@ -567,7 +568,7 @@ export class InkCanvas {
             }
             const point = this.camera.toPage(...location)
             const origin = this.pressedText.origin
-            const moved = { ...origin, x: origin.x + point[0] - this.pressedText.start[0], y: origin.y + point[1] - this.pressedText.start[1] }
+            const moved = snappedBox({ ...origin, x: origin.x + point[0] - this.pressedText.start[0], y: origin.y + point[1] - this.pressedText.start[1] }, origin, this.textSnap)
             const box = clampBox(moved, this.page.extent, this.pressedText.height)
             this.textOffset = [box.x - origin.x, box.y - origin.y]
             this.requestDraw()

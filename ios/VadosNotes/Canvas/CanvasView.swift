@@ -44,6 +44,7 @@ struct CanvasView: UIViewRepresentable {
     let showsDividers: Bool
     let showsBackdrop: Bool
     let inkSmoothing: Double
+    let textSnap: TextSnapMode?
     let hiddenElementIds: Set<String>
     let isReadOnly: Bool
     let topInset: CGFloat
@@ -74,6 +75,7 @@ struct CanvasView: UIViewRepresentable {
         view.showsDividers = showsDividers
         view.showsBackdrop = showsBackdrop
         view.inkSmoothing = inkSmoothing
+        view.textSnap = textSnap
         view.hiddenElementIds = hiddenElementIds
         view.isReadOnly = isReadOnly
         view.topInset = topInset

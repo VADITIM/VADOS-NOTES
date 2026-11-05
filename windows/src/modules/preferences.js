@@ -221,6 +221,26 @@ export function setEraserMode(mode) {
     write("eraserMode", mode)
 }
 
+export function isTextSnapping() {
+    return readSetting("textSnapping", false) === true
+}
+
+export function setTextSnapping(isSnapping) {
+    write("textSnapping", isSnapping)
+}
+
+export function textSnapMode() {
+    return readSetting("textSnapMode", "absolute") === "relative" ? "relative" : "absolute"
+}
+
+export function setTextSnapMode(mode) {
+    write("textSnapMode", mode)
+}
+
+export function activeTextSnap() {
+    return isTextSnapping() ? textSnapMode() : null
+}
+
 const earlierWritingFonts = { Mono: "Space Mono", Sans: "General Sans" }
 
 export function writingFont() {

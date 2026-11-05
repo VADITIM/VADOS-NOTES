@@ -21,7 +21,7 @@ import { cellContaining, liveElements } from "./model.js"
 import { duration, tween } from "./motion.js"
 import { popTogether } from "./pill.js"
 import * as preferences from "./preferences.js"
-import { importRect, placedBox, rowGap, snappedTop, textRect } from "./renderer.js"
+import { importRect, placedBox, rowGap, snappedBox, snappedTop, textRect } from "./renderer.js"
 import { codeLanguages, languageCaptions, languageTitles } from "./syntaxHighlighter.js"
 import { RichTextEditor } from "./textEditor.js"
 import { inkOnPaper, isLight, tokens, withAlpha } from "./tokens.js"
@@ -292,6 +292,7 @@ export class PageScreen {
                 showsDividers: preferences.showsDividers(),
                 showsBackdrop: preferences.showsAsciiBackground(),
                 inkSmoothing: preferences.inkSmoothing(),
+                textSnap: preferences.activeTextSnap(),
                 hiddenElementIds: session ? new Set([session.element.id]) : new Set(),
                 isReadOnly: this.library.isReadOnly(this.pageId),
                 topInset: Math.max(0, this.app.chromeLayout.bottom),
@@ -341,6 +342,7 @@ export class PageScreen {
                 { id: "text-style", caption: ".md", label: "Text styles", tint: tokens.tool_tints.markdown, isTinted: true, action: () => this.toggleSubNav("text-style") },
                 { id: "text-code", glyph: "code", label: "Code", tint: tokens.tool_tints.code, isTinted: true, action: () => this.toggleSubNav("text-code") },
                 { id: "text-color", glyph: "text", label: "Text colour", tint: isLight(color) ? color : tokens.palette.text_bright, isTinted: true, swatch: color, action: () => this.toggleSubNav("text-color") },
+                { id: "text-snap", glyph: "snap", label: preferences.isTextSnapping() ? "Snap on" : "Snap off", tint: tokens.palette.accent, isTinted: preferences.isTextSnapping(), action: () => this.toggleTextSnap() },
             ], [
                 { id: "finish-text", glyph: "check", label: "Done", tint: tokens.semantic.create, isTinted: true, action: () => this.library.finishText() },
             ]]
@@ -434,6 +436,20 @@ export class PageScreen {
         const tool = this.eraserReturn
         this.eraserReturn = null
         this.switchTool(tool)
+    }
+
+    toggleTextSnap() {
+        this.panelKey = null
+        if (!preferences.isTextSnapping()) {
+            preferences.setTextSnapping(true)
+            this.subNavKey = "text-snap"
+        } else if (this.subNavKey === "text-snap") {
+            preferences.setTextSnapping(false)
+            this.subNavKey = null
+        } else {
+            this.subNavKey = "text-snap"
+        }
+        this.refresh()
     }
 
     toggleSubNav(key) {
@@ -616,6 +632,8 @@ export class PageScreen {
             return this.textStyleGroups()
         case "text-code":
             return this.textCodeGroups()
+        case "text-snap":
+            return [this.textSnapGroup()]
         case "text-color":
         case "selection-color":
             return this.colourGroups(key)
@@ -800,14 +818,29 @@ export class PageScreen {
         return [colours, wheel]
     }
 
+    textSnapGroup() {
+        return this.modeGroup("text-snap-modes", [
+            { mode: "absolute", glyphName: "snap_absolute", label: "Absolute: snap to the page grid" },
+            { mode: "relative", glyphName: "snap_relative", label: "Relative: move in grid steps from where the block was" },
+        ], tokens.palette.accent, () => preferences.textSnapMode(), (mode) => preferences.setTextSnapMode(mode))
+    }
+
     eraserGroup() {
-        return this.group("eraser-modes", (orientation) => {
+        return this.modeGroup("eraser-modes", [
+            { mode: "stroke", glyphName: "erase_stroke", label: "Erase strokes" },
+            { mode: "area", glyphName: "erase_area", label: "Erase area" },
+        ], tokens.semantic.destructive, () => preferences.eraserMode(), (mode) => preferences.setEraserMode(mode))
+    }
+
+    modeGroup(id, modes, tint, current, choose) {
+        return this.group(id, (orientation) => {
             const row = this.row(orientation)
             const wash = create("span", "mode-wash")
             row.append(wash)
             row.wash = wash
-            row.buttons = ["stroke", "area"].map((mode) => {
-                const button = navIconButton({ glyphName: mode === "stroke" ? "erase_stroke" : "erase_area", tint: tokens.semantic.destructive, orientation, action: () => preferences.setEraserMode(mode) })
+            row.buttons = modes.map(({ mode, glyphName, label }) => {
+                const button = navIconButton({ glyphName, tint, orientation, action: () => choose(mode) })
+                button.setAttribute("aria-label", label)
                 button.dataset.revealedElement = ""
                 button.dataset.mode = mode
                 row.append(button)
@@ -815,7 +848,7 @@ export class PageScreen {
             })
             return row
         }, (row) => {
-            const mode = preferences.eraserMode()
+            const mode = current()
             let selected = null
             for (const button of row.buttons) {
                 const isSelected = button.dataset.mode === mode
@@ -1129,7 +1162,7 @@ export class PageScreen {
         this.textStyleState = { style: {}, lineKind: "paragraph", codeLanguage: null, isPlainText: true }
         this.placeEditor()
         field.load(session.element.content ?? "")
-        this.bindTextDrag(frame, (origin, translation) => ({ ...origin, x: origin.x + translation[0], y: origin.y + translation[1] }), true)
+        this.bindTextDrag(frame, (origin, translation) => snappedBox({ ...origin, x: origin.x + translation[0], y: origin.y + translation[1] }, origin, preferences.activeTextSnap()), true)
         this.bindTextDrag(leftHandle, (origin, translation) => {
             const shift = Math.min(translation[0], origin.width - minimumTextWidth)
             return { ...origin, x: origin.x + shift, width: origin.width - shift }

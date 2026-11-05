@@ -159,6 +159,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
     }
     var inkSmoothing = Tokens.shared.ink.smoothingPoints
+    var textSnap: TextSnapMode?
     var hiddenElementIds: Set<String> = [] {
         didSet {
             guard hiddenElementIds != oldValue else { return }
@@ -759,7 +760,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         if let pressedText {
             guard isTextLifted else { return }
             let point = camera.toPage(location)
-            let moved = TextBox(x: pressedText.origin.x + point.x - pressedText.start.x, y: pressedText.origin.y + point.y - pressedText.start.y, width: pressedText.origin.width)
+            let moved = TextRhythm.snapped(TextBox(x: pressedText.origin.x + point.x - pressedText.start.x, y: pressedText.origin.y + point.y - pressedText.start.y, width: pressedText.origin.width), from: pressedText.origin, mode: textSnap)
             let box = Ink.clampBox(moved, extent: page.extent, height: pressedText.height)
             textOffset = CGVector(dx: box.x - pressedText.origin.x, dy: box.y - pressedText.origin.y)
             refreshContent()
