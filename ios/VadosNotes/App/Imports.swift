@@ -46,6 +46,7 @@ final class ImportImages {
     private var measuredPageSizes: [String: [[Double]]] = [:]
     private var measuring: Set<String> = []
     private var documentOrder: [String] = []
+    private var holds: [ObjectIdentifier: Set<String>] = [:]
     private let imageContext = CIContext()
     var assetURL: (String) -> URL? = { _ in nil }
 
@@ -61,7 +62,8 @@ final class ImportImages {
 
     func purge() {
         lock.lock()
-        entries = [:]
+        let held = heldKeys
+        entries = entries.filter { held.contains($0.key) }
         lock.unlock()
         queue.async { [weak self] in
             self?.documents = [:]
@@ -173,7 +175,21 @@ final class ImportImages {
         return min(level, Self.maximumImagePixels / max(size[0], size[1]))
     }
 
+    func hold(_ keys: Set<String>, for owner: ObjectIdentifier) {
+        lock.lock()
+        holds[owner] = keys.isEmpty ? nil : keys
+        lock.unlock()
+    }
+
+    private var heldKeys: Set<String> {
+        holds.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+    }
+
     func image(for element: Element, pixelsPerMillimetre: Double, isDark: Bool, rendersNewLevel: Bool = true) -> CGImage? {
+        shownImage(for: element, pixelsPerMillimetre: pixelsPerMillimetre, isDark: isDark, rendersNewLevel: rendersNewLevel)?.image
+    }
+
+    func shownImage(for element: Element, pixelsPerMillimetre: Double, isDark: Bool, rendersNewLevel: Bool = true) -> (key: String, image: CGImage)? {
         guard let asset = element.asset, element.sourceSizeMillimetres != nil else { return nil }
         let level = level(for: element, pixelsPerMillimetre: pixelsPerMillimetre)
         let prefix = "\(asset)|\(element.sourcePage ?? 0)|"
@@ -195,12 +211,12 @@ final class ImportImages {
         guard var entry = entries[chosenKey], let image = entry.image else { return nil }
         entry.lastUsed = Date()
         entries[chosenKey] = entry
-        guard element.inverted ?? (isDark && entry.isWhite) else { return image }
+        guard element.inverted ?? (isDark && entry.isWhite) else { return (chosenKey, image) }
         if let darkened = entry.darkened {
-            return darkened
+            return (chosenKey, darkened)
         }
         darken(key: chosenKey, image: image)
-        return image
+        return (chosenKey, image)
     }
 
     private func darken(key: String, image: CGImage) {
@@ -292,7 +308,8 @@ final class ImportImages {
             [entry.image, entry.darkened].compactMap { $0 }.reduce(0) { $0 + $1.bytesPerRow * $1.height }
         }
         var total = entries.values.reduce(0) { $0 + bytes($1) }
-        let ordered = entries.filter { $0.value.image != nil }.sorted { $0.value.lastUsed < $1.value.lastUsed }
+        let held = heldKeys
+        let ordered = entries.filter { $0.value.image != nil && !held.contains($0.key) }.sorted { $0.value.lastUsed < $1.value.lastUsed }
         for (key, entry) in ordered where total > Self.cacheBytes {
             total -= bytes(entry)
             entries[key] = nil

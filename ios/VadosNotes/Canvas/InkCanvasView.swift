@@ -256,7 +256,6 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private let palmGuard = PalmGuard()
     private var renderIndex: RenderIndex?
     private var cameraSettleTimer: Timer?
-    private var gestureCamera: CanvasCamera?
     private var touchCamera: CanvasCamera?
 
     private static let fitMargin: CGFloat = 24
@@ -506,6 +505,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         for observer in [importObserver, memoryObserver].compactMap({ $0 }) {
             NotificationCenter.default.removeObserver(observer)
         }
+        ImportImages.shared.hold([], for: ObjectIdentifier(self))
     }
 
     override func willMove(toWindow newWindow: UIWindow?) {
@@ -616,6 +616,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         var seen = Set<String>()
         let hidden = hiddenElementIds.union(pendingErased)
         let screenPage = camera.toPage(bounds)
+        var shownKeys = Set<String>()
         for element in imports {
             guard let rect = PageRenderer.importRect(for: element) else { continue }
             seen.insert(element.id)
@@ -625,9 +626,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             sublayer.transform = CATransform3DMakeScale(camera.scale, camera.scale, 1)
             sublayer.isHidden = hidden.contains(element.id) || !rect.intersects(screenPage)
             guard !sublayer.isHidden else { continue }
-            if let image = ImportImages.shared.image(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark, rendersNewLevel: rendersNewLevel) {
-                if (sublayer.contents as AnyObject?) !== image {
-                    sublayer.contents = image
+            if let shown = ImportImages.shared.shownImage(for: element, pixelsPerMillimetre: Double(camera.scale * pixelScale), isDark: paperStyle == .dark, rendersNewLevel: rendersNewLevel) {
+                shownKeys.insert(shown.key)
+                if (sublayer.contents as AnyObject?) !== shown.image {
+                    sublayer.contents = shown.image
                 }
                 sublayer.backgroundColor = nil
             } else {
@@ -640,6 +642,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             importLayers[id] = nil
         }
         CATransaction.commit()
+        ImportImages.shared.hold(shownKeys, for: ObjectIdentifier(self))
     }
 
     private func makeImportLayer(_ id: String) -> CALayer {
@@ -910,20 +913,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func trackGestureCamera(_ state: UIGestureRecognizer.State) {
-        switch state {
-        case .began:
-            gestureCamera = gestureCamera ?? camera
-        case .cancelled, .failed:
+        if state == .cancelled || state == .failed {
             stopGlide()
-            if let gestureCamera {
-                camera = gestureCamera
-                cameraChanged()
-            }
-            gestureCamera = nil
-        case .ended:
-            gestureCamera = nil
-        default:
-            break
         }
     }
 

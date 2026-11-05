@@ -126,6 +126,7 @@ struct SettingsSheet: View {
         GeometryReader { proxy in
             ScrollView {
                 panels
+                    .scrollsToTopDisabled()
                     .frame(width: proxy.size.width * Self.contentShare)
                     .padding(.top, 24)
                     .padding(.bottom, 24)
@@ -397,6 +398,7 @@ struct FontDropdown: View {
                                 .padding(14)
                         }
                     }
+                    .scrollsToTopDisabled()
                 }
                 .frame(height: Self.listHeight)
                 .scrollIndicators(.hidden)

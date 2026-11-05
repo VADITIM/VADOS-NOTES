@@ -555,6 +555,7 @@ struct MoveSheet: View {
                         moveRow(row)
                     }
                 }
+                .scrollsToTopDisabled()
             }
             .scrollIndicators(.hidden)
             .frame(maxHeight: 440)

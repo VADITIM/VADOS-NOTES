@@ -15,6 +15,27 @@ const pageSizes = new Map()
 const images = new Map()
 const listeners = new Set()
 let queue = Promise.resolve()
+const holders = new Set()
+
+export function importHolder() {
+    const keys = new Set()
+    holders.add(keys)
+    return keys
+}
+
+export function releaseImportHolder(keys) {
+    holders.delete(keys)
+}
+
+function heldKeys() {
+    const held = new Set()
+    for (const keys of holders) {
+        for (const key of keys) {
+            held.add(key)
+        }
+    }
+    return held
+}
 let pdfLibrary = null
 
 function vendorUrl(path) {
@@ -164,7 +185,12 @@ function closeDocument(pending) {
 }
 
 export function purgeImports() {
-    images.clear()
+    const held = heldKeys()
+    for (const key of [...images.keys()]) {
+        if (!held.has(key)) {
+            images.delete(key)
+        }
+    }
     queue = queue.then(() => {
         for (const pending of documents.values()) {
             closeDocument(pending)
@@ -259,7 +285,8 @@ function entryBytes(entry) {
 
 function evict() {
     let total = [...images.values()].reduce((sum, entry) => sum + entryBytes(entry), 0)
-    const ordered = [...images.entries()].filter(([, entry]) => entry.canvas).sort((first, second) => first[1].lastUsed - second[1].lastUsed)
+    const held = heldKeys()
+    const ordered = [...images.entries()].filter(([key, entry]) => entry.canvas && !held.has(key)).sort((first, second) => first[1].lastUsed - second[1].lastUsed)
     for (const [key, entry] of ordered) {
         if (total <= cacheBytes()) {
             break
@@ -293,24 +320,29 @@ function render(key, element, level, isDark) {
     })
 }
 
-export function importImage(element, pixelsPerMillimetre, isDark, rendersNewLevel = true) {
+export function importImage(element, pixelsPerMillimetre, isDark, rendersNewLevel = true, holder = null) {
     if (!element.asset || !element.source_size_mm) {
         return null
     }
     const level = levelFor(element, pixelsPerMillimetre)
     const prefix = `${element.asset}|${element.source_page}|`
-    const key = `${prefix}${level}`
+    let key = `${prefix}${level}`
     let entry = images.get(key)
     if (!entry && (rendersNewLevel || cachedEntries(element).length === 0)) {
         render(key, element, level, isDark)
         entry = images.get(key)
     }
     if (!entry?.canvas) {
-        entry = cachedEntries(element).sort((first, second) => Math.abs(first.level - level) - Math.abs(second.level - level))[0]
+        const nearest = [...images.entries()]
+            .filter(([candidate, cached]) => candidate.startsWith(prefix) && cached.canvas)
+            .sort((first, second) => Math.abs(first[1].level - level) - Math.abs(second[1].level - level))[0]
+        key = nearest?.[0]
+        entry = nearest?.[1]
     }
     if (!entry?.canvas) {
         return null
     }
+    holder?.add(key)
     entry.lastUsed = performance.now()
     const isInverted = typeof element.inverted === "boolean" ? element.inverted : isDark && entry.isWhite
     return isInverted ? darkened(entry) : entry.canvas

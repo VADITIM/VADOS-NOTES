@@ -17,7 +17,7 @@ import {
 } from "./model.js"
 import { duration } from "./motion.js"
 import { Camera, StrokePathCache, drawPage, importRect, strokePath, textRect } from "./renderer.js"
-import { subscribeImports } from "./imports.js"
+import { importHolder, releaseImportHolder, subscribeImports } from "./imports.js"
 import { componentsToHex, hexComponents, inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
 const fitMargin = 24
@@ -99,6 +99,7 @@ export class InkCanvas {
         this.resizeObserver = new ResizeObserver(() => this.layout())
         this.resizeObserver.observe(this.element)
         this.unsubscribeImports = subscribeImports(() => this.requestDraw())
+        this.heldImports = importHolder()
         this.bindInput()
     }
 
@@ -120,6 +121,7 @@ export class InkCanvas {
     destroy() {
         this.resizeObserver.disconnect()
         this.unsubscribeImports()
+        releaseImportHolder(this.heldImports)
         this.stopGlide()
         clearTimeout(this.holdTimer)
         clearTimeout(this.textHoldTimer)
@@ -276,6 +278,7 @@ export class InkCanvas {
             }
         }
         const elementScale = this.selectionScaleAnchor ? { ids: new Set(this.selectedIds), anchor: this.selectionScaleAnchor, factor: this.selectionScale } : null
+        this.heldImports.clear()
         drawPage(this.paperContext, this.page, this.camera, {
             width: this.width,
             height: this.height,
@@ -289,6 +292,7 @@ export class InkCanvas {
             elementScale,
             fillsOutside: !this.showsBackdrop,
             cache: this.cache,
+            heldImports: this.heldImports,
         })
     }
 
@@ -421,6 +425,10 @@ export class InkCanvas {
         if (event.pointerType === "touch") {
             this.touches.set(event.pointerId, { start: this.localPoint(event), location: this.localPoint(event) })
             this.trackTap(event)
+            if (this.multiTouch) {
+                this.element.setPointerCapture(event.pointerId)
+                return
+            }
             if (this.touches.size >= 2) {
                 this.beginMultiTouch()
                 this.element.setPointerCapture(event.pointerId)
@@ -607,9 +615,11 @@ export class InkCanvas {
             this.touches.delete(event.pointerId)
             this.trackTapEnd(event)
             if (this.multiTouch) {
-                if (this.touches.size < 2) {
-                    this.endMultiTouch()
-                } else {
+                if (!this.multiTouch.owners.includes(event.pointerId)) {
+                    return
+                }
+                this.endMultiTouch()
+                if (this.touches.size >= 2) {
                     this.beginMultiTouch()
                 }
                 return
@@ -743,8 +753,12 @@ export class InkCanvas {
         }
     }
 
-    multiTouchCentre() {
-        const locations = [...this.touches.values()].slice(0, 2).map((entry) => entry.location)
+    multiTouchOwners() {
+        return this.multiTouch?.owners ?? [...this.touches.keys()].slice(0, 2)
+    }
+
+    multiTouchCentre(owners = this.multiTouchOwners()) {
+        const locations = owners.map((pointerId) => this.touches.get(pointerId).location)
         return {
             centre: [(locations[0][0] + locations[1][0]) / 2, (locations[0][1] + locations[1][1]) / 2],
             spread: Math.max(1, Math.hypot(locations[0][0] - locations[1][0], locations[0][1] - locations[1][1])),
@@ -756,10 +770,11 @@ export class InkCanvas {
             this.cancelActiveGesture()
         }
         this.callbacks.onSelectionMenu?.(null)
-        const { centre, spread } = this.multiTouchCentre()
+        const owners = [...this.touches.keys()].slice(0, 2)
+        const { centre, spread } = this.multiTouchCentre(owners)
         const isScalingSelection = !this.multiTouch && !this.isReadOnly && this.selectionBounds && containsPoint(this.selectionScreenRect(), centre)
         if (this.multiTouch?.isScalingSelection) {
-            this.multiTouch = { ...this.multiTouch, centre, spread, startSpread: spread / this.selectionScale }
+            this.multiTouch = { ...this.multiTouch, owners, centre, spread, startSpread: spread / this.selectionScale }
             return
         }
         if (isScalingSelection) {
@@ -767,12 +782,12 @@ export class InkCanvas {
             this.selectionScaleAnchor = [bounds.x + bounds.width / 2, bounds.y + bounds.height / 2]
             this.selectionScale = 1
         }
-        this.multiTouch = { centre, spread, startSpread: spread, isScalingSelection: Boolean(isScalingSelection), samples: [{ location: centre, time: performance.now() }] }
+        this.multiTouch = { owners, centre, spread, startSpread: spread, isScalingSelection: Boolean(isScalingSelection), samples: [{ location: centre, time: performance.now() }] }
     }
 
     moveMultiTouch() {
         const touch = this.multiTouch
-        if (this.touches.size < 2) {
+        if (!touch.owners.every((pointerId) => this.touches.has(pointerId))) {
             return
         }
         const { centre, spread } = this.multiTouchCentre()

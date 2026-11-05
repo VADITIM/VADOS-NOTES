@@ -265,6 +265,7 @@ struct RootView: View {
         }
         .ignoresSafeArea(.keyboard)
         .statusBarHidden(false)
+        .defersSystemGestures(on: navigator.route.isPage ? .all : [])
         .environmentObject(navigator)
         .environmentObject(menu)
         .environmentObject(preferences)

@@ -582,7 +582,7 @@ export function importRect(element) {
     return { x: Math.floor(centreX / cellWidth) * cellWidth, y: Math.floor(centreY / cellHeight) * cellHeight, width: cellWidth, height: cellHeight }
 }
 
-function drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible) {
+function drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible, heldImports) {
     const rect = importRect(element)
     if (!rect) {
         return
@@ -590,7 +590,7 @@ function drawImport(context, element, camera, pixelRatio, paperStyle, colors, vi
     if (visible && (rect.x > visible.maximumX || rect.x + rect.width < visible.minimumX || rect.y > visible.maximumY || rect.y + rect.height < visible.minimumY)) {
         return
     }
-    const image = importImage(element, camera.scale * pixelRatio, paperStyle === "dark")
+    const image = importImage(element, camera.scale * pixelRatio, paperStyle === "dark", true, heldImports)
     if (!image) {
         context.fillStyle = colors.guide
         context.fillRect(rect.x, rect.y, rect.width, rect.height)
@@ -617,7 +617,7 @@ function isTextVisible(element, visible) {
     return !(rect.x - textOverhang > visible.maximumX || rect.x + rect.width + textOverhang < visible.minimumX || rect.y - textOverhang > visible.maximumY || rect.y + rect.height + textOverhang < visible.minimumY)
 }
 
-export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), elementOffsets = new Map(), elementScale = null, fillsOutside = true, cache, extraElements = [] }) {
+export function drawPage(context, page, camera, { width, height, pixelRatio = 1, showsGuides = true, showsDividers = true, paperStyle, hiddenElementIds = new Set(), elementOffsets = new Map(), elementScale = null, fillsOutside = true, cache, extraElements = [], heldImports = null }) {
     const colors = paperColors(paperStyle)
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
     if (fillsOutside) {
@@ -650,7 +650,7 @@ export function drawPage(context, page, camera, { width, height, pixelRatio = 1,
     const elements = extraElements.length ? [...liveElements(page), ...extraElements] : liveElements(page)
     for (const element of elements) {
         if (element.type === "import" && !hiddenElementIds.has(element.id)) {
-            drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible)
+            drawImport(context, element, camera, pixelRatio, paperStyle, colors, visible, heldImports)
         }
     }
     if (showsGuides) {

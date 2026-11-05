@@ -155,23 +155,39 @@ final class PalmWatchGestureRecognizer: UIGestureRecognizer {
 final class GuardedPinchGestureRecognizer: UIPinchGestureRecognizer {
     var palmGuard: PalmGuard?
 
+    private var isOwningTouches: Bool {
+        state == .began || state == .changed
+    }
+
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        if palmGuard?.rejects(event.touches(for: self)) ?? false {
-            state = state == .possible ? .failed : .cancelled
+        if !isOwningTouches, palmGuard?.rejects(event.touches(for: self)) ?? false {
+            state = .failed
             return
         }
         super.touchesMoved(touches, with: event)
+    }
+
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        !isOwningTouches && super.canBePrevented(by: preventingGestureRecognizer)
     }
 }
 
 final class GuardedPanGestureRecognizer: UIPanGestureRecognizer {
     var palmGuard: PalmGuard?
 
+    private var isOwningTouches: Bool {
+        state == .began || state == .changed
+    }
+
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        if palmGuard?.rejects(event.touches(for: self)) ?? false {
-            state = state == .possible ? .failed : .cancelled
+        if !isOwningTouches, palmGuard?.rejects(event.touches(for: self)) ?? false {
+            state = .failed
             return
         }
         super.touchesMoved(touches, with: event)
+    }
+
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        !isOwningTouches && super.canBePrevented(by: preventingGestureRecognizer)
     }
 }

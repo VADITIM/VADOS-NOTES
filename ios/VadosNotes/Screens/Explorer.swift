@@ -142,6 +142,7 @@ struct ExplorerOverlay: View {
                                 .modifier(ExplorerRowArrival(isOpen: isOpen, order: index))
                         }
                     }
+                    .scrollsToTopDisabled()
                     .padding(8)
                 }
                 .onPreferenceChange(ExplorerRowFramesKey.self) { model.rowFrames = $0 }
@@ -204,6 +205,7 @@ struct ExplorerOverlay: View {
                     }
                 }
             }
+            .scrollsToTopDisabled()
             .padding(.horizontal, 22)
         }
         .padding(.top, 4)

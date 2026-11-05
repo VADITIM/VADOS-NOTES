@@ -616,6 +616,7 @@ struct TextBlockEditor: UIViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
         view.isScrollEnabled = false
+        view.scrollsToTop = false
         view.clipsToBounds = false
         view.showsVerticalScrollIndicator = false
         view.showsHorizontalScrollIndicator = false

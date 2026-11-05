@@ -148,6 +148,7 @@ struct GridScreen: View {
                         .id(notebookId ?? "root")
                         .transition(.folder)
                     }
+                    .scrollsToTopDisabled()
                     .padding(.bottom, 48)
                     .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .topLeading)
                     .background(Color.clear.contentShape(Rectangle()).onTapGesture(perform: closeGroups))

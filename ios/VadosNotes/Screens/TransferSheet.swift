@@ -391,6 +391,7 @@ struct TransferSheet: View {
         } else {
             ScrollView {
                 strip
+                    .scrollsToTopDisabled()
                     .padding(.top, sideTop)
                     .padding(.bottom, 40)
                     .padding(.horizontal, Self.sideInset)
@@ -541,6 +542,7 @@ struct TransferSheet: View {
         ScrollViewReader { reader in
             ScrollView([.horizontal, .vertical]) {
                 grid
+                    .scrollsToTopDisabled()
                     .padding(.top, Self.controlsReserve)
                     .padding(.leading, Self.canvasGutter)
                     .id(Self.originId)
@@ -1014,6 +1016,7 @@ struct TransferSheet: View {
                     pdfGroup(group)
                 }
             }
+            .scrollsToTopDisabled()
             .padding(.top, sideTop)
             .padding(.bottom, 40)
             .padding(.horizontal, Self.sideInset)
