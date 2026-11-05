@@ -212,24 +212,12 @@ svg.squircle ~ * {
 .top-bar-titles {
     position: relative;
     min-width: 0;
-    flex: 0 1 auto;
-}
-
-.folder-titles {
-    position: relative;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
+    flex: 1 1 auto;
     height: var(--top-bar-control-height);
-    padding: 0 20px;
-    box-sizing: border-box;
-    line-height: var(--top-bar-control-height);
-    pointer-events: auto;
-    max-width: 100%;
 }
 
-.folder-titles > :not(.pill-shell) {
-    position: relative;
+.top-bar-leading:empty {
+    display: none;
 }
 
 .page-titles {
@@ -305,13 +293,34 @@ svg.squircle ~ * {
     clip-path: polygon(0 0, 100% 100%, 0 100%);
 }
 
-.page-titles-content.is-overflowing {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
-}
-
 .page-titles-content > * {
     flex: none;
+}
+
+.page-titles-content > .page-name,
+.page-titles-content > .folder-depth-reveal {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.page-name .reveal-text,
+.page-name .inline-title,
+.folder-depth-current {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.page-name .sweep-title,
+.folder-depth-current .sweep-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.folder-line[hidden] {
+    display: none;
 }
 
 .sweep-title.wraps {
@@ -2523,46 +2532,34 @@ textarea.inline-title-field {
 
 .folder-depth-reveal {
     position: relative;
-    display: inline-block;
+    display: block;
     max-width: 100%;
-    margin: 0 0 6px 20px;
-    pointer-events: auto;
-}
-
-.folder-depth-reveal[hidden] {
-    display: none;
 }
 
 .folder-depth {
     display: flex;
     align-items: baseline;
-    flex-wrap: wrap;
-    font: 11px "Space Mono", monospace;
-    letter-spacing: 0.5px;
-    color: var(--palette-text-muted);
+    gap: 6px;
+    min-width: 0;
     white-space: nowrap;
 }
 
-.folder-depth-group {
-    color: var(--palette-text-faint);
-}
-
-.folder-depth-divider {
-    padding: 0 5px;
-    color: var(--palette-text-faint);
+.folder-depth > .micro-label,
+.folder-depth-segment {
+    flex: none;
 }
 
 .folder-depth-segment {
-    color: var(--palette-text-muted);
     cursor: pointer;
 }
 
-.folder-depth-segment:hover {
+.folder-depth-segment:hover .micro-label {
     color: var(--palette-text-bright);
 }
 
-.folder-depth-segment.is-current {
-    color: var(--palette-accent);
+.folder-depth-current {
+    flex: 0 1 auto;
+    overflow: hidden;
 }
 
 .explorer {

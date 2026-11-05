@@ -1,4 +1,4 @@
-import { create, holdable, inlineTitle, microLabel, revealLabel, roundIconButton } from "./components.js"
+import { create, holdable, inlineTitle, microLabel, revealLabel, roundIconButton, setEnabled } from "./components.js"
 import { creationDate } from "./model.js"
 import { duration } from "./motion.js"
 import { PillMotion, hideTurned, labelReveal, popTogether, revealElement, shapePillShell } from "./pill.js"
@@ -8,8 +8,6 @@ import { tokens } from "./tokens.js"
 const searchPrompt = "Search"
 const bareTitleSize = 15
 const titleSpacing = 12
-const topBarControlHeight = 48
-const folderTitleSize = topBarControlHeight / 2
 
 function createdText(pageId) {
     const date = creationDate(pageId)
@@ -118,23 +116,7 @@ export class TopBar {
         this.app = app
         this.element = create("div", "top-bar")
         this.left = create("div", "top-bar-titles")
-        this.folderPill = create("div", "folder-titles")
-        this.folderLabel = microLabel("")
-        this.folderTitleHost = create("div", "folder-title-host")
-        this.folderShell = create("span", "pill-shell")
-        this.folderPill.append(this.folderShell, this.folderTitleHost, this.folderLabel)
         this.isFolderShown = false
-        this.folderMotion = new PillMotion(() => this.paintFolderPill())
-        this.folderMotion.onElements = (shown, isInstant) => {
-            for (const element of [this.folderTitleHost, this.folderLabel]) {
-                if (isInstant) {
-                    hideTurned(element)
-                } else {
-                    element.style.opacity = ""
-                    revealElement(element, shown)
-                }
-            }
-        }
         this.pageTitles = create("div", "page-titles")
         this.pageFolder = revealLabel(microLabel(""))
         this.pageName = inlineTitle({ title: "Note", size: bareTitleSize, isSweeping: false, onRename: (title) => this.renameNote(title) })
@@ -144,9 +126,12 @@ export class TopBar {
         this.pageTitles.append(this.pageContent)
         this.depthLine = create("div", "folder-depth")
         this.depthReveal = revealLabel(this.depthLine, "folder-depth-reveal")
-        this.depthReveal.hidden = true
+        this.folderSummary = revealLabel(create("span", "page-date"))
+        this.folderContent = create("div", "page-titles-content", this.depthReveal, this.folderSummary)
+        this.folderLine = create("div", "page-titles folder-line", this.folderContent)
+        this.folderLine.hidden = true
         this.depthText = null
-        this.left.append(this.depthReveal, this.folderPill, this.pageTitles)
+        this.left.append(this.folderLine, this.pageTitles)
         this.search = new SearchField((value) => {
             this.app.navigator.query = value
             this.app.refresh()
@@ -163,9 +148,14 @@ export class TopBar {
         this.viewAll.hidden = true
         this.settings = roundIconButton({ glyphName: "gear", label: "Settings", action: () => this.app.navigator.show({ kind: "settings" }) })
         this.explorerButton = roundIconButton({ glyphName: "explorer", label: "Explorer", action: () => this.app.explorer.toggle() })
-        this.controls = create("div", "top-bar-controls", this.explorerButton, this.settings, this.viewAll, this.back)
+        this.undo = roundIconButton({ glyphName: "undo", label: "Undo", color: tokens.semantic.undo, action: () => this.step(true) })
+        this.redo = roundIconButton({ glyphName: "redo", label: "Redo", color: tokens.semantic.redo, action: () => this.step(false) })
+        this.undo.hidden = true
+        this.redo.hidden = true
+        this.leading = create("div", "top-bar-controls top-bar-leading", this.explorerButton, this.viewAll)
+        this.controls = create("div", "top-bar-controls", this.settings, this.undo, this.redo, this.back)
         this.right = create("div", "top-bar-right", this.searchHost, this.controls)
-        this.element.append(this.left, this.right)
+        this.element.append(this.leading, this.left, this.right)
         this.folderTitle = null
         this.isPage = null
         this.isPageShown = false
@@ -182,47 +172,64 @@ export class TopBar {
             return
         }
         this.isFolderShown = shown
+        this.folderLine.classList.toggle("is-shown", shown)
+        this.folderLine.style.pointerEvents = shown ? "auto" : "none"
         if (shown) {
-            this.folderMotion.enter()
-        } else {
-            this.folderMotion.leave()
+            this.folderLine.hidden = false
         }
+        const stagger = duration("chrome_stagger")
+        labelReveal(this.depthReveal, shown)
+        labelReveal(this.folderSummary, shown, { delay: stagger * 2 })
     }
 
-    paintFolderPill() {
-        shapePillShell(this.folderShell, { width: this.folderPill.offsetWidth, height: this.folderPill.offsetHeight, isWide: true, scale: this.folderMotion.shellScale, spread: this.folderMotion.shellSpread })
-        this.folderPill.style.pointerEvents = this.folderMotion.areElementsShown ? "auto" : "none"
-        this.folderPill.style.visibility = this.folderMotion.isPresent ? "visible" : "hidden"
+    step(isUndo) {
+        const page = this.app.navigator.lastPage
+        if (!page || this.app.navigator.route.kind !== "page") {
+            return
+        }
+        if (isUndo) {
+            this.app.library.undo(page.pageId)
+        } else {
+            this.app.library.redo(page.pageId)
+        }
+        this.app.refresh()
     }
 
     paintDepth(folderId) {
         const library = this.app.library
-        const text = folderId ? library.depthText(folderId) : null
+        const text = folderId ? `${library.depthText(folderId)}|${library.notebook(folderId)?.title ?? ""}` : null
         if (text === this.depthText) {
             return
         }
         this.depthText = text
-        if (!text) {
-            this.depthReveal.hidden = true
-            labelReveal(this.depthReveal, false)
+        if (!folderId) {
             return
         }
         const segments = library.depth(folderId)
         this.depthLine.replaceChildren()
         segments.forEach((segment, index) => {
-            if (index > 0) {
-                this.depthLine.append(create("span", "folder-depth-divider", "/"))
-            }
+            const isCurrent = index === segments.length - 1
             if (segment.group) {
-                this.depthLine.append(create("span", "folder-depth-group", `${segment.group} - `))
+                this.depthLine.append(microLabel(`${segment.group} - `, tokens.palette.text_faint))
             }
-            const button = create("button", "folder-depth-segment", segment.title)
-            button.classList.toggle("is-current", index === segments.length - 1)
+            if (isCurrent) {
+                this.folderTitle = inlineTitle({ title: segment.title, size: bareTitleSize, isSweeping: false, onRename: (next) => {
+                    const id = this.app.navigator.route.notebookId
+                    if (next.trim() && id) {
+                        library.updateNotebook(id, { title: next })
+                    }
+                } })
+                this.folderTitle.classList.add("folder-depth-current")
+                this.depthLine.append(this.folderTitle)
+                return
+            }
+            const button = create("button", "folder-depth-segment", microLabel(segment.title))
             button.addEventListener("click", () => this.app.navigator.go({ kind: "notebook", notebookId: segment.id }))
-            this.depthLine.append(button)
+            this.depthLine.append(button, microLabel("/", tokens.palette.text_faint))
         })
-        this.depthReveal.hidden = false
-        labelReveal(this.depthReveal, true)
+        if (this.isFolderShown) {
+            labelReveal(this.depthReveal, true)
+        }
     }
 
     renameNote(title) {
@@ -261,8 +268,10 @@ export class TopBar {
             this.isPage = isPage
             this.pageTitles.style.pointerEvents = isPage ? "auto" : "none"
         }
+        if (!this.folderTitle?.isEditing()) {
+            this.paintDepth(!isPage ? folderId : null)
+        }
         this.setFolderShown(!isPage && folderId !== null)
-        this.paintDepth(!isPage ? folderId : null)
         this.search.setShown(!isPage)
         if (!isPage) {
             this.search.setValue(navigator.query)
@@ -300,21 +309,9 @@ export class TopBar {
             })
         }
         if (!isPage && folderId) {
-            this.folderLabel.textContent = library.folderSummary(folderId).toUpperCase()
-            const title = library.notebook(folderId)?.title ?? ""
-            if (!this.folderTitle) {
-                this.folderTitle = inlineTitle({ title, size: folderTitleSize, onRename: (next) => {
-                    const id = this.app.navigator.route.notebookId
-                    if (next.trim() && id) {
-                        library.updateNotebook(id, { title: next })
-                    }
-                } })
-                this.folderTitleHost.replaceChildren(this.folderTitle)
-            } else if (!this.folderTitle.isEditing()) {
-                this.folderTitle.setTitle(title)
-            }
-            this.paintFolderPill()
+            this.folderSummary.text.firstChild.textContent = library.folderSummary(folderId)
         }
+        this.paintSteps(isPage)
         const page = navigator.lastPage
         if (page) {
             const note = library.page(page.pageId)
@@ -333,26 +330,42 @@ export class TopBar {
             labelReveal(this.pageDate, isPageShown, { delay: stagger * 2 })
         }
         this.pageTitles.classList.toggle("is-shown", isPageShown)
-        if (isPage) {
-            this.fitPageTitles()
-        }
+        this.fitTitles(isPage ? this.pageTitles : this.folderLine)
         this.report()
     }
 
-    fitPageTitles() {
-        const left = this.pageTitles.getBoundingClientRect().left
-        const right = this.controls.getBoundingClientRect().left
-        this.pageTitles.style.maxWidth = `${Math.max(0, right - left - titleSpacing)}px`
-        this.pageContent.classList.toggle("is-overflowing", this.pageContent.scrollWidth > this.pageContent.clientWidth)
+    paintSteps(isPage) {
+        const page = this.app.navigator.lastPage
+        for (const [button, isUndo] of [[this.undo, true], [this.redo, false]]) {
+            if (isPage && button.hidden) {
+                button.hidden = false
+                popTogether(button, true)
+            } else if (!isPage && !button.hidden && !button.isLeaving) {
+                button.isLeaving = true
+                popTogether(button, false).finished.then(() => {
+                    button.isLeaving = false
+                    if (this.app.navigator.route.kind !== "page") {
+                        button.hidden = true
+                    }
+                })
+            }
+            if (isPage && page) {
+                setEnabled(button, isUndo ? this.app.library.canUndo(page.pageId) : this.app.library.canRedo(page.pageId))
+            }
+        }
+    }
+
+    fitTitles(titles) {
+        const left = this.left.getBoundingClientRect().left
+        const right = this.right.getBoundingClientRect().left
+        titles.style.maxWidth = `${Math.max(0, right - left - titleSpacing)}px`
     }
 
     report() {
         const isPage = this.isPage
         const frames = {}
-        frames.title = layoutRect(isPage ? this.pageTitles : this.folderPill)
-        if (!isPage && !this.depthReveal.hidden) {
-            frames.depth = layoutRect(this.depthReveal)
-        }
+        frames.leading = layoutRect(this.leading)
+        frames.title = layoutRect(isPage ? this.pageTitles : this.folderLine)
         if (!isPage) {
             frames.search = layoutRect(this.search.element)
         }

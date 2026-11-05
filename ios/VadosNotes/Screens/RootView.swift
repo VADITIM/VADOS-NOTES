@@ -435,7 +435,6 @@ struct TopBar: View {
     static let controlHeight: CGFloat = 48
 
     private static var bareTitleSize: CGFloat { 15 }
-    private static var folderTitleSize: CGFloat { controlHeight / 2 }
     private static var topGap: CGFloat { 6 }
     private static let createdFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -461,27 +460,30 @@ struct TopBar: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            ZStack(alignment: .topLeading) {
-                VStack(alignment: .leading, spacing: 6) {
-                    if isHeadShown, let headFolderId {
-                        let segments = library.depth(of: headFolderId)
-                        DepthLine(segments: segments) { notebookId in
-                            navigator.go(.notebook(notebookId))
-                        }
-                        .labelReveal(true)
-                        .padding(.leading, 20)
-                        .id(library.depthText(of: headFolderId))
-                        .reportsChrome("depth")
-                        .transition(.opacity.animation(Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds)))
-                    }
-                    folderTitles
-                        .reportsChrome("title", isActive: isHeadShown)
+            HStack(spacing: 14) {
+                if !isTransferring {
+                    control(ControlFace(glyph: "explorer", color: navigator.isExplorerOpen ? Palette.accent : Palette.textBody, isTinted: navigator.isExplorerOpen, title: "Explorer") { navigator.toggleExplorer() })
+                        .keyboardShortcut("e", modifiers: .command)
+                        .transition(.popTogether)
                 }
+                if isPage && !isTransferring {
+                    control(ControlFace(glyph: "view_all", color: Palette.view, title: "View all", action: openViewAll))
+                        .transition(.popTogether)
+                }
+            }
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isTransferring)
+            .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isPage)
+            .allowsHitTesting(!coveredChrome.contains("leading"))
+            .reportsChrome("leading")
+            ZStack(alignment: .topLeading) {
+                folderLine
+                    .allowsHitTesting(isHeadShown)
+                    .reportsChrome("title", isActive: isHeadShown)
                 pageTitles
                     .allowsHitTesting(isPage && !isTransferring && !isPageTitleCovered)
                     .reportsChrome("title", isActive: isPage)
             }
-            Spacer(minLength: 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 14) {
                 ZStack(alignment: .trailing) {
                     SearchField(text: $navigator.query, isShown: !isPage)
@@ -495,18 +497,17 @@ struct TopBar: View {
                     if isTransferring {
                         transferExtras
                     }
-                    if !isTransferring {
-                        control(ControlFace(glyph: "explorer", color: navigator.isExplorerOpen ? Palette.accent : Palette.textBody, isTinted: navigator.isExplorerOpen, title: "Explorer") { navigator.toggleExplorer() })
-                            .keyboardShortcut("e", modifiers: .command)
+                    control(settingsFace)
+                    if isPage {
+                        control(undoFace)
                             .transition(.popTogether)
                     }
-                    control(firstFace)
-                    if isPage {
-                        control(secondFace)
+                    if isPage && !isTransferring {
+                        control(redoFace)
                             .transition(.popTogether)
                     }
                     if folderId != nil {
-                        control(thirdFace)
+                        control(backFace)
                             .background(GeometryReader { proxy in Color.clear.preference(key: BackButtonFrameKey.self, value: proxy.frame(in: .global)) })
                             .transition(.popTogether)
                     }
@@ -516,6 +517,7 @@ struct TopBar: View {
                 .allowsHitTesting(!coveredChrome.contains("controls"))
                 .reportsChrome("controls")
             }
+            .fixedSize()
         }
         .padding(.horizontal, 24)
         .padding(.top, Self.topGap + insets.top)
@@ -538,21 +540,35 @@ struct TopBar: View {
             .accessibilityLabel(face.title)
     }
 
-    private var firstFace: ControlFace {
+    private var settingsFace: ControlFace {
         guard isTransferring else {
             return ControlFace(glyph: "gear", title: "Settings") { navigator.show(.settings) }
         }
         return transferFace(.import)
     }
 
-    private var secondFace: ControlFace {
+    private var undoFace: ControlFace {
         guard isTransferring else {
-            return ControlFace(glyph: "view_all", color: Palette.view, title: "View all", action: openViewAll)
+            let pageId = navigator.lastPage?.pageId
+            return ControlFace(glyph: "undo", color: Palette.undo, isEnabled: pageId.map { library.canUndo($0) } ?? false, title: "Undo") {
+                if let pageId {
+                    library.undo(pageId)
+                }
+            }
         }
         return transferFace(.export)
     }
 
-    private var thirdFace: ControlFace {
+    private var redoFace: ControlFace {
+        let pageId = navigator.lastPage?.pageId
+        return ControlFace(glyph: "redo", color: Palette.redo, isEnabled: pageId.map { library.canRedo($0) } ?? false, title: "Redo") {
+            if let pageId {
+                library.redo(pageId)
+            }
+        }
+    }
+
+    private var backFace: ControlFace {
         guard isTransferring else {
             return ControlFace(glyph: "back", color: Palette.navigation, title: "Back", action: goBack)
         }
@@ -605,19 +621,39 @@ struct TopBar: View {
         }
     }
 
-    private var folderTitles: some View {
-        HeadName(isShown: isHeadShown) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                InlineTitle(title: headFolderId.flatMap { library.notebook($0)?.title } ?? "", size: Self.folderTitleSize) { title in
+    private var folderLine: some View {
+        let isShown = isHeadShown
+        let stagger = Motion.chromeStaggerMilliseconds
+        let backdrop = Tokens.shared.title
+        let segments = headFolderId.map { library.depth(of: $0) } ?? []
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            FolderPathLine(segments: segments) { notebookId in
+                navigator.go(.notebook(notebookId))
+            } title: { title in
+                InlineTitle(title: title, size: Self.bareTitleSize, isSweeping: false) { title in
                     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty, let headFolderId else { return }
                     library.updateNotebook(headFolderId) { $0.title = title }
                 }
-                .revealedElement()
-                MicroLabel(text: headFolderId.map { library.folderSummary($0) } ?? "")
-                    .revealedElement()
             }
+            .labelReveal(isShown)
+            Text(headFolderId.map { library.folderSummary($0) } ?? "")
+                .font(Typography.mono(10))
+                .foregroundColor(Palette.textMuted)
+                .lineLimit(1)
+                .fixedSize()
+                .labelReveal(isShown, delay: stagger * 2)
         }
+        .id(headFolderId.map { library.depthText(of: $0) } ?? "")
+        .padding(.horizontal, CGFloat(backdrop.backdropPaddingHorizontal))
+        .padding(.vertical, CGFloat(backdrop.backdropPaddingVertical))
+        .background(
+            RoundedRectangle(cornerRadius: CGFloat(backdrop.backdropRadius), style: .continuous)
+                .fill(Color.black.opacity(isShown ? backdrop.backdropOpacity : 0))
+                .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isShown)
+        )
+        .opacity(isShown ? 1 : 0)
+        .animation(Motion.powerTwoIn(Motion.navigationLeaveElementMilliseconds), value: isShown)
     }
 
     private var pageTitles: some View {
@@ -630,7 +666,7 @@ struct TopBar: View {
             MicroLabel(text: page.flatMap { library.notebook($0.notebookId)?.title } ?? "Folder")
                 .fixedSize()
                 .labelReveal(isShown)
-            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false, holdsWidth: true) { title in
+            InlineTitle(title: note.map { library.noteTitle($0) } ?? "Note", size: Self.bareTitleSize, isSweeping: false) { title in
                 guard let page else { return }
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
                 library.updatePage(page.pageId) { $0.title = trimmed.isEmpty ? nil : title }
@@ -644,20 +680,12 @@ struct TopBar: View {
                     .labelReveal(isShown, delay: stagger * 2)
             }
         }
-        .fixedSize(horizontal: true, vertical: false)
         .background(GeometryReader { proxy in
             Color.clear
                 .onAppear { pageTitleWidth = proxy.size.width }
                 .onChange(of: proxy.size.width) { _, width in pageTitleWidth = width }
         })
         .frame(maxWidth: .infinity, alignment: .leading)
-        .mask(
-            HStack(spacing: 0) {
-                Rectangle()
-                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 32)
-            }
-        )
         .padding(.horizontal, CGFloat(backdrop.backdropPaddingHorizontal))
         .padding(.vertical, CGFloat(backdrop.backdropPaddingVertical))
         .background(alignment: .leading) {
@@ -671,35 +699,38 @@ struct TopBar: View {
     }
 }
 
-struct DepthLine: View {
+struct FolderPathLine<Title: View>: View {
     let segments: [DepthSegment]
     let onSelect: (String) -> Void
+    @ViewBuilder let title: (String) -> Title
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
-                if index > 0 {
-                    Text("/")
-                        .foregroundColor(Palette.textFaint)
-                        .padding(.horizontal, 5)
-                }
+            ForEach(Array(segments.dropLast()), id: \.id) { segment in
                 if let group = segment.group {
-                    Text("\(group) - ")
-                        .foregroundColor(Palette.textFaint)
+                    MicroLabel(text: "\(group) - ", color: Palette.textFaint)
+                        .fixedSize()
                 }
                 Button {
                     onSelect(segment.id)
                 } label: {
-                    Text(segment.title)
-                        .foregroundColor(index == segments.count - 1 ? Palette.accent : Palette.textMuted)
+                    MicroLabel(text: segment.title)
+                        .fixedSize()
                 }
                 .buttonStyle(.plain)
+                MicroLabel(text: "/", color: Palette.textFaint)
+                    .padding(.horizontal, 6)
+                    .fixedSize()
+            }
+            if let current = segments.last {
+                if let group = current.group {
+                    MicroLabel(text: "\(group) - ", color: Palette.textFaint)
+                        .fixedSize()
+                        .padding(.trailing, 4)
+                }
+                title(current.title)
             }
         }
-        .font(Typography.mono(11))
-        .tracking(0.5)
-        .lineLimit(1)
-        .fixedSize()
     }
 }
 
@@ -713,34 +744,6 @@ struct CutoutShape: Shape {
             path.addRoundedRect(in: hole, cornerSize: CGSize(width: radius, height: radius), style: .continuous)
         }
         return path
-    }
-}
-
-struct HeadName<Content: View>: View {
-    let isShown: Bool
-    @ViewBuilder let content: () -> Content
-
-    @StateObject private var motion = PillMotion()
-
-    var body: some View {
-        content()
-            .environment(\.isElementRevealed, motion.areElementsShown)
-            .padding(.horizontal, 20)
-            .frame(height: TopBar.controlHeight)
-            .background(PillShell(scale: motion.shellScale, spread: motion.shellSpread, isWide: true))
-            .allowsHitTesting(motion.areElementsShown)
-            .onAppear {
-                if isShown {
-                    motion.enter()
-                }
-            }
-            .onChange(of: isShown) { _, shown in
-                if shown {
-                    motion.enter()
-                } else {
-                    motion.leave()
-                }
-            }
     }
 }
 
