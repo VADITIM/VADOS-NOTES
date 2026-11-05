@@ -326,6 +326,12 @@ struct PageScreen: View {
             onStroke: { tool, color, pieces, width in
                 library.addStrokes(to: pageId, tool: tool, color: color, width: width, pieces: pieces)
             },
+            onShape: { tool, color, shape, width in
+                library.addShape(to: pageId, tool: tool, color: color, width: width, shape: shape)
+            },
+            onShapeEdit: { elementId, shape in
+                library.updateShape(elementId, on: pageId, to: shape)
+            },
             onErase: { ids in library.erase(ids, on: pageId) },
             onEraseArea: { replacements in library.replaceStrokes(on: pageId, replacements) },
             onTextTap: { point, elementId in

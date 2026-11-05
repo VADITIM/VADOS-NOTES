@@ -104,6 +104,8 @@ Every element has the same base fields.
 }
 ```
 
+A recognised shape is still a `stroke`: `points` holds its sampled clean outline, so every reader draws, erases, selects and exports it as ink. It also carries an optional `shape` object that keeps it editable: `outline` (`polygon` or `curve`), `name` (`rectangle`, `triangle`, `trapezoid`, `quadrilateral`, `pentagon` … `octagon`, `circle`, `ellipse`), `anchors` (corner or curve points, millimetres), `handles` (curves only: two Bézier control points per segment, the first leaving anchor *i*, the second entering anchor *i + 1*) and `radii` (polygons only: one corner radius per anchor, millimetres, 0 for a sharp corner). Editing a shape rewrites `shape` and `points` together. Readers that do not know `shape` ignore it and keep the outline.
+
 Text blocks use `type: "text"`, `layer: "text"`, and a `content` field instead of `points`. They also carry `box` (top-left corner and wrapping width, in millimetres) and `font_size` (millimetres):
 
 ```json
@@ -514,3 +516,4 @@ Each phase has a clear acceptance check. Do not start a phase until the previous
 - While editing text, a Snap toggle in the nav makes the block snap as you move it, on both axes. With snapping on, a second row offers Absolute (lands on the page grid) and Relative (keeps its own offset and moves in grid steps).
 - The explorer slides in from the left. New folder and New note are small circles next to its close button. Dragging a note or folder, in the explorer or in a folder, picks it up exactly where it sits under the finger. Move on a tile opens the explorer already scrolled to that item, ready to choose where it goes.
 - Every note remembers its zoom and position and opens there again. Relaunching the app returns to the note (at that position) or the folder that was open when it was left.
+- Holding the pen still at the end of a closed stroke turns it into a clean shape: rectangle, triangle, trapezoid, circle or ellipse, or another polygon up to eight corners (an open stroke still straightens into a line). Tapping a shape with a finger shows its anchor points; dragging one reshapes it. A circle has eight anchors with curve handles, so it can be bent freely. Each corner of a polygon has a small diamond just inside it: drag it along the diagonal to round that corner, or drag with two fingers to round all corners at once.

@@ -19,6 +19,7 @@ import { duration } from "./motion.js"
 import { Camera, StrokePathCache, drawPage, importRect, snappedBox, strokePath, textRect } from "./renderer.js"
 import { importHolder, releaseImportHolder, subscribeImports } from "./imports.js"
 import { noteView, rememberNoteView } from "./session.js"
+import { handleAnchor, movingAnchor, movingHandle, outlinePoints, radiusForHandle, radiusHandle, recognizeShape, sameShape, shapeElementAt, withAllRadii, withRadius } from "./shapeGeometry.js"
 import { componentsToHex, hexComponents, inkOnPaper, tokens, withAlpha } from "./tokens.js"
 
 const fitMargin = 24
@@ -34,6 +35,11 @@ const glideSampleWindow = 80
 const undoTapTravel = 10
 const wheelZoomRate = 0.0025
 const penEraserButtons = 32
+const shapeAnchorRadius = 6
+const shapeHandleRadius = 4.5
+const shapeGrabReach = 24
+const shapeTapReach = 14
+const shapeRadiusInset = 20
 
 export class InkCanvas {
     constructor(callbacks) {
@@ -93,6 +99,9 @@ export class InkCanvas {
         this.selectionScaleAnchor = null
         this.selectionScale = 1
         this.multiTouch = null
+        this.editingShapeId = null
+        this.shapeDraft = null
+        this.shapeGrab = null
         this.tapSequence = null
         this.isSpaceHeld = false
         this.eraserBorrowed = false
@@ -138,6 +147,7 @@ export class InkCanvas {
 
     configure(options) {
         const previous = this.page
+        const previousTool = this.tool ? JSON.stringify(this.tool) : null
         const wasInset = this.topInset
         Object.assign(this, options)
         if (previous?.id !== this.page?.id) {
@@ -151,6 +161,14 @@ export class InkCanvas {
         if (previous !== this.page) {
             this.clearPendingFeedback()
             this.refreshSelection()
+            if (previous?.id !== this.page?.id || !this.editingShape()) {
+                this.endShapeEditing()
+            } else if (this.shapeDraft && !this.shapeGrab && sameShape(this.editingShape().shape, this.shapeDraft)) {
+                this.shapeDraft = null
+            }
+        }
+        if (previousTool && previousTool !== JSON.stringify(this.tool)) {
+            this.endShapeEditing()
         }
         if (previous !== this.page && this.page) {
             let live = null
@@ -265,6 +283,11 @@ export class InkCanvas {
             const points = this.liveStrokePoints()
             elements.push({ id: "live-marker", type: "stroke", layer: "marker", tool: "marker", color: this.inkColor, width: this.inkWidth, points, updated: `live-${points.length}-${points.at(-1)?.join(",")}`, deleted: false })
         }
+        const editing = this.shapeDraft ? this.editingShape() : null
+        if (editing) {
+            const points = outlinePoints(this.shapeDraft)
+            elements.push({ ...editing, id: `${editing.id}-draft`, points, updated: `draft-${JSON.stringify(this.shapeDraft).length}-${points.at(-2)?.join(",")}` })
+        }
         for (const [elementId, entry] of this.areaErase) {
             entry.pieces.forEach((points, index) => {
                 elements.push({ ...entry.element, id: `${elementId}-piece-${index}-${entry.revision}`, points, updated: `${entry.element.updated}#${entry.revision}` })
@@ -295,7 +318,7 @@ export class InkCanvas {
             showsGuides: this.showsGuides,
             showsDividers: this.showsDividers,
             paperStyle: this.paperStyle,
-            hiddenElementIds: new Set([...this.hiddenElementIds, ...this.pendingErased, ...this.areaErase.keys()]),
+            hiddenElementIds: new Set([...this.hiddenElementIds, ...this.pendingErased, ...this.areaErase.keys(), ...(this.shapeDraft && this.editingShapeId ? [this.editingShapeId] : [])]),
             extraElements: this.extraElements(),
             elementOffsets,
             elementScale,
@@ -368,6 +391,7 @@ export class InkCanvas {
             context.stroke()
             context.setLineDash([])
         }
+        this.drawShapeEditing(context)
     }
 
     localPoint(event) {
@@ -465,6 +489,17 @@ export class InkCanvas {
         this.panSamples = [{ location: this.gestureStart, time: event.timeStamp }]
         this.callbacks.onInput?.()
         const point = this.camera.toPage(...this.gestureStart)
+        if (this.shapeGrab?.kind !== "allRadii") {
+            this.dropShapeDraft()
+        }
+        const grab = this.isReadOnly || isPanButton ? null : this.grabbedShapePart(this.gestureStart)
+        if (grab) {
+            this.shapeGrab = grab.kind === "radius" && event.shiftKey ? { kind: "allRadii", index: grab.index, start: radiusHandle(this.editingShape().shape, grab.index, this.shapeInset()), origin: this.gestureStart } : grab
+            return
+        }
+        if (!isFinger && this.editingShapeId) {
+            this.endShapeEditing()
+        }
         this.callbacks.onSelectionMenu?.(null)
         if (isPanButton) {
             this.isPanning = true
@@ -540,6 +575,10 @@ export class InkCanvas {
             return
         }
         const location = this.localPoint(event)
+        if (this.shapeGrab) {
+            this.dragShape(location)
+            return
+        }
         if (!this.hasMoved && Math.hypot(location[0] - this.gestureStart[0], location[1] - this.gestureStart[1]) > holdTolerance) {
             this.hasMoved = true
             clearTimeout(this.holdTimer)
@@ -652,6 +691,10 @@ export class InkCanvas {
         this.resetGesture()
         this.eraserAt = null
         this.requestOverlay()
+        if (this.shapeGrab) {
+            this.finishShapeDrag()
+            return
+        }
         if (wasHolding) {
             this.callbacks.onHoldEnd?.([event.clientX, event.clientY])
             return
@@ -680,6 +723,8 @@ export class InkCanvas {
             if (wasMoved) {
                 this.recordPanSample(location, event.timeStamp)
                 this.startGlide(this.panVelocity())
+            } else if (active.isFinger && !this.isReadOnly && this.tool.kind !== "text") {
+                this.toggleShapeEditing(point)
             }
             if (this.tool.kind === "text" && !wasMoved && !this.isReadOnly && isInsidePaper(point, this.page.extent)) {
                 this.callbacks.onTextTap?.(point, null)
@@ -694,6 +739,12 @@ export class InkCanvas {
         case "ink": {
             if (!this.stroke) {
                 return
+            }
+            if (this.stroke.shape) {
+                const shape = this.stroke.shape
+                this.endStroke()
+                this.callbacks.onShape?.(tool.tool, this.inkColor, shape, this.inkWidth)
+                break
             }
             this.extendStroke(location, point)
             const points = this.finalStrokePoints()
@@ -720,9 +771,16 @@ export class InkCanvas {
                 this.callbacks.onTextTap?.(point, null)
             }
             break
-        case "lasso":
+        case "lasso": {
+            const shapeElement = wasMoved ? null : this.shapeElementAtPoint(point)
+            if (shapeElement) {
+                this.lassoPoints = []
+                this.startShapeEditing(shapeElement.id)
+                break
+            }
             this.finishLasso(wasMoved)
             break
+        }
         }
     }
 
@@ -775,11 +833,21 @@ export class InkCanvas {
     }
 
     beginMultiTouch() {
+        const owners = [...this.touches.keys()].slice(0, 2)
+        const { centre: shapeCentre } = this.multiTouchCentre(owners)
+        const corner = this.shapeGrab?.kind === "radius" || this.shapeGrab?.kind === "allRadii" ? this.shapeGrab.index : this.shapeRadiusCorner(shapeCentre)
+        if (corner !== null && corner !== undefined && !this.multiTouch && !this.isReadOnly && this.editingShape()?.shape.outline === "polygon") {
+            this.shapeGrab = { kind: "allRadii", index: corner, start: radiusHandle(this.editingShape().shape, corner, this.shapeInset()), origin: shapeCentre }
+            if (this.active) {
+                this.resetGesture()
+            }
+            this.multiTouch = { owners, isShapeRadii: true, centre: shapeCentre, spread: 1, startSpread: 1, samples: [] }
+            return
+        }
         if (this.active) {
             this.cancelActiveGesture()
         }
         this.callbacks.onSelectionMenu?.(null)
-        const owners = [...this.touches.keys()].slice(0, 2)
         const { centre, spread } = this.multiTouchCentre(owners)
         const isScalingSelection = !this.multiTouch && !this.isReadOnly && this.selectionBounds && containsPoint(this.selectionScreenRect(), centre)
         if (this.multiTouch?.isScalingSelection) {
@@ -800,6 +868,10 @@ export class InkCanvas {
             return
         }
         const { centre, spread } = this.multiTouchCentre()
+        if (touch.isShapeRadii) {
+            this.dragShape(centre)
+            return
+        }
         if (touch.isScalingSelection) {
             this.selectionScale = Math.min(selectionScaleRange[1], Math.max(selectionScaleRange[0], spread / touch.startSpread))
             this.requestDraw()
@@ -823,6 +895,10 @@ export class InkCanvas {
     endMultiTouch() {
         const touch = this.multiTouch
         this.multiTouch = null
+        if (touch.isShapeRadii) {
+            this.finishShapeDrag()
+            return
+        }
         if (touch.isScalingSelection) {
             this.finishSelectionScale()
             return
@@ -907,7 +983,7 @@ export class InkCanvas {
 
     extendStroke(location, point) {
         const stroke = this.stroke
-        if (!stroke) {
+        if (!stroke || stroke.shape) {
             return
         }
         if (stroke.straightEnd !== null) {
@@ -935,7 +1011,14 @@ export class InkCanvas {
 
     straightenStroke() {
         const stroke = this.stroke
-        if (!stroke || stroke.straightEnd !== null || stroke.screenLength < minimumStraightLength) {
+        if (!stroke || stroke.straightEnd !== null || stroke.shape || stroke.screenLength < minimumStraightLength) {
+            return
+        }
+        const shape = recognizeShape(smoothStroke(stroke.raw, this.camera.scale, this.inkSmoothing))
+        if (shape) {
+            stroke.shape = shape
+            stroke.predicted = []
+            this.requestOverlay()
             return
         }
         stroke.straightEnd = stroke.raw[stroke.raw.length - 1]
@@ -965,6 +1048,9 @@ export class InkCanvas {
         const stroke = this.stroke
         if (!stroke) {
             return []
+        }
+        if (stroke.shape) {
+            return outlinePoints(stroke.shape)
         }
         const smooth = smoothStroke([...stroke.raw, ...stroke.predicted], this.camera.scale, this.inkSmoothing)
         if (stroke.straightEnd === null) {
@@ -1167,6 +1253,9 @@ export class InkCanvas {
     }
 
     cancelActiveGesture() {
+        if (this.shapeGrab && this.shapeGrab.kind !== "allRadii") {
+            this.dropShapeDraft()
+        }
         clearTimeout(this.holdTimer)
         clearTimeout(this.textHoldTimer)
         if (this.isHolding) {
@@ -1181,6 +1270,208 @@ export class InkCanvas {
         this.clearPendingFeedback()
         this.resetGesture()
         this.requestDraw()
+    }
+
+    shapeInset() {
+        return shapeRadiusInset / this.camera.scale
+    }
+
+    editingShape() {
+        if (!this.editingShapeId || !this.page) {
+            return null
+        }
+        const element = this.page.elements.find((candidate) => candidate.id === this.editingShapeId)
+        return element && !element.deleted && element.shape ? element : null
+    }
+
+    shapeElementAtPoint(point) {
+        return this.page ? shapeElementAt(point, shapeTapReach / this.camera.scale, liveElements(this.page)) : null
+    }
+
+    toggleShapeEditing(point) {
+        const element = this.shapeElementAtPoint(point)
+        if (!element || element.id === this.editingShapeId) {
+            this.endShapeEditing()
+        } else {
+            this.startShapeEditing(element.id)
+        }
+    }
+
+    startShapeEditing(elementId) {
+        this.dropShapeDraft()
+        this.editingShapeId = elementId
+        this.requestOverlay()
+    }
+
+    endShapeEditing() {
+        if (!this.editingShapeId && !this.shapeDraft) {
+            return
+        }
+        this.editingShapeId = null
+        this.shapeGrab = null
+        this.shapeDraft = null
+        this.requestDraw()
+    }
+
+    dropShapeDraft() {
+        this.shapeGrab = null
+        if (this.shapeDraft) {
+            this.shapeDraft = null
+            this.requestDraw()
+        }
+    }
+
+    grabbedShapePart(location) {
+        const shape = this.editingShape()?.shape
+        if (!shape) {
+            return null
+        }
+        let best = null
+        const consider = (kind, index, point) => {
+            if (!point) {
+                return
+            }
+            const [x, y] = this.camera.toScreen(point)
+            const reach = Math.hypot(x - location[0], y - location[1])
+            if (reach <= shapeGrabReach && (!best || reach < best.reach)) {
+                best = { kind, index, reach }
+            }
+        }
+        shape.anchors.forEach((anchor, index) => consider("anchor", index, anchor))
+        if (shape.outline === "polygon") {
+            shape.anchors.forEach((unused, index) => consider("radius", index, radiusHandle(shape, index, this.shapeInset())))
+        } else {
+            ;(shape.handles ?? []).forEach((handle, index) => consider("handle", index, handle))
+        }
+        return best ? { kind: best.kind, index: best.index } : null
+    }
+
+    shapeRadiusCorner(location) {
+        const shape = this.editingShape()?.shape
+        if (!shape || shape.outline !== "polygon") {
+            return null
+        }
+        let best = null
+        shape.anchors.forEach((unused, index) => {
+            const handle = radiusHandle(shape, index, this.shapeInset())
+            if (!handle) {
+                return
+            }
+            const [x, y] = this.camera.toScreen(handle)
+            const reach = Math.hypot(x - location[0], y - location[1])
+            if (reach <= shapeGrabReach * 2 && (!best || reach < best.reach)) {
+                best = { index, reach }
+            }
+        })
+        return best ? best.index : null
+    }
+
+    dragShape(location) {
+        const grab = this.shapeGrab
+        const shape = this.editingShape()?.shape
+        if (!grab || !shape) {
+            return
+        }
+        const point = this.camera.toPage(...location)
+        switch (grab.kind) {
+        case "anchor":
+            this.shapeDraft = movingAnchor(shape, grab.index, point)
+            break
+        case "handle":
+            this.shapeDraft = movingHandle(shape, grab.index, point)
+            break
+        case "radius":
+            this.shapeDraft = withRadius(shape, radiusForHandle(shape, grab.index, point, this.shapeInset()), grab.index)
+            break
+        case "allRadii": {
+            if (!grab.start) {
+                return
+            }
+            const target = [grab.start[0] + (location[0] - grab.origin[0]) / this.camera.scale, grab.start[1] + (location[1] - grab.origin[1]) / this.camera.scale]
+            this.shapeDraft = withAllRadii(shape, radiusForHandle(shape, grab.index, target, this.shapeInset()))
+            break
+        }
+        default:
+            return
+        }
+        this.requestDraw()
+    }
+
+    finishShapeDrag() {
+        this.shapeGrab = null
+        const element = this.editingShape()
+        const draft = this.shapeDraft
+        if (!element || !draft || sameShape(element.shape, draft)) {
+            this.dropShapeDraft()
+            return
+        }
+        this.callbacks.onShapeEdit?.(element.id, draft)
+    }
+
+    drawShapeEditing(context) {
+        const element = this.editingShape()
+        const shape = this.shapeDraft ?? element?.shape
+        if (!element || !shape) {
+            return
+        }
+        const screen = (point) => this.camera.toScreen(point)
+        context.save()
+        context.setLineDash(lassoDash)
+        context.lineWidth = 1
+        context.strokeStyle = withAlpha(tokens.palette.accent, 0.7)
+        context.beginPath()
+        const handles = []
+        if (shape.outline === "curve") {
+            ;(shape.handles ?? []).forEach((handle, index) => {
+                const [x, y] = screen(handle)
+                const [anchorX, anchorY] = screen(shape.anchors[handleAnchor(shape, index)])
+                context.moveTo(anchorX, anchorY)
+                context.lineTo(x, y)
+                handles.push({ x, y, isDiamond: false })
+            })
+        } else {
+            shape.anchors.forEach((anchor, index) => {
+                const handle = radiusHandle(shape, index, this.shapeInset())
+                if (!handle) {
+                    return
+                }
+                const [x, y] = screen(handle)
+                const [anchorX, anchorY] = screen(anchor)
+                context.moveTo(anchorX, anchorY)
+                context.lineTo(x, y)
+                handles.push({ x, y, isDiamond: true })
+            })
+        }
+        context.stroke()
+        context.setLineDash([])
+        context.lineWidth = 1.5
+        context.fillStyle = tokens.palette.panel_solid
+        context.strokeStyle = tokens.palette.accent
+        for (const { x, y, isDiamond } of handles) {
+            context.beginPath()
+            if (isDiamond) {
+                const reach = shapeHandleRadius + 1
+                context.moveTo(x, y - reach)
+                context.lineTo(x + reach, y)
+                context.lineTo(x, y + reach)
+                context.lineTo(x - reach, y)
+                context.closePath()
+            } else {
+                context.arc(x, y, shapeHandleRadius, 0, Math.PI * 2)
+            }
+            context.fill()
+            context.stroke()
+        }
+        context.fillStyle = tokens.palette.accent
+        context.strokeStyle = tokens.palette.panel_solid
+        for (const anchor of shape.anchors) {
+            const [x, y] = screen(anchor)
+            context.beginPath()
+            context.arc(x, y, shapeAnchorRadius, 0, Math.PI * 2)
+            context.fill()
+            context.stroke()
+        }
+        context.restore()
     }
 
     clearPendingFeedback() {

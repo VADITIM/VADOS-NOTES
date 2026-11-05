@@ -19,12 +19,20 @@ private final class StrokeSession {
     var straightEnd: Point?
     var straightShare: Double = 0
     var predicted: [Point] = []
+    var shape: ShapeGeometry?
 
     init(location: CGPoint, point: Point) {
         raw = [point]
         lastLocation = location
         stillLocation = location
     }
+}
+
+private enum ShapeGrab: Equatable {
+    case anchor(Int)
+    case handle(Int)
+    case radius(Int)
+    case allRadii(Int)
 }
 
 private struct AreaEntry {
@@ -119,6 +127,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             clearPendingFeedback()
             refreshSelection()
             layoutPaper()
+            if oldValue?.id != page?.id || editingShape() == nil {
+                endShapeEditing()
+            } else {
+                if let shapeDraft, shapeGrab == nil, editingShape()?.shape == shapeDraft {
+                    self.shapeDraft = nil
+                    liveLayer.path = nil
+                    liveMarkerLayer.path = nil
+                }
+                showShapeEditing()
+            }
             if let previous, oldValue?.id == page?.id, oldValue?.extent == page?.extent {
                 refreshContent(adding: currentIndex().changedBounds(since: previous).union(erasedBounds))
                 return
@@ -126,7 +144,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             rebuildTiles(clearing: oldValue?.id != page?.id)
         }
     }
-    var tool: CanvasTool = .ink(.pen)
+    var tool: CanvasTool = .ink(.pen) {
+        didSet {
+            if tool != oldValue {
+                endShapeEditing()
+            }
+        }
+    }
     var inkColor = "#1A1A1A"
     var inkWidth = 0.5
     var eraserRadius = 2.0
@@ -178,6 +202,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
 
     var onCameraChange: ((CanvasCamera) -> Void)?
     var onStroke: ((Tool, String, [[Point]], Double) -> Void)?
+    var onShape: ((Tool, String, ShapeGeometry, Double) -> Void)?
+    var onShapeEdit: ((String, ShapeGeometry) -> Void)?
     var onErase: (([String]) -> Void)?
     var onEraseArea: (([StrokeReplacement]) -> Void)?
     var onTextTap: ((Point, String?) -> Void)?
@@ -258,6 +284,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private var renderIndex: RenderIndex?
     private var cameraSettleTimer: Timer?
     private var touchCamera: CanvasCamera?
+    private var editingShapeId: String?
+    private var shapeDraft: ShapeGeometry?
+    private var shapeGrab: ShapeGrab?
+    private let shapeGuideLayer = CAShapeLayer()
+    private let shapeAnchorLayer = CAShapeLayer()
+    private let shapeRadiusLayer = CAShapeLayer()
+    private var radiiPanStart: Point?
 
     private static let fitMargin: CGFloat = 24
     private static let holdTolerance: CGFloat = 8
@@ -271,6 +304,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     private static let glideSampleWindow: TimeInterval = 0.08
     private static let undoTapTravel: CGFloat = 10
     private static let cameraSettleSeconds: TimeInterval = 0.12
+    private static let shapeAnchorRadius: CGFloat = 6
+    private static let shapeHandleRadius: CGFloat = 4.5
+    private static let shapeGrabReach: CGFloat = 24
+    private static let shapeTapReach: CGFloat = 14
+    private static let shapeRadiusInset: CGFloat = 20
 
     private func currentIndex() -> RenderIndex {
         if let renderIndex {
@@ -300,7 +338,11 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func tileHiddenIds() -> Set<String> {
-        hiddenElementIds.union(pendingErased).union(movingIds())
+        var hidden = hiddenElementIds.union(pendingErased).union(movingIds())
+        if shapeDraft != nil, let editingShapeId {
+            hidden.insert(editingShapeId)
+        }
+        return hidden
     }
 
     private func tileSnapshot() -> TileSnapshot? {
@@ -434,6 +476,20 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         selectionLayer.lineWidth = 1.5
         selectionLayer.lineDashPattern = Self.lassoDash
         layer.addSublayer(selectionLayer)
+        shapeGuideLayer.fillColor = nil
+        shapeGuideLayer.strokeColor = UIColor(Palette.accent).withAlphaComponent(0.7).cgColor
+        shapeGuideLayer.lineWidth = 1
+        shapeGuideLayer.lineDashPattern = Self.lassoDash
+        shapeAnchorLayer.fillColor = UIColor(Palette.accent).cgColor
+        shapeAnchorLayer.strokeColor = UIColor(Palette.panelSolid).cgColor
+        shapeAnchorLayer.lineWidth = 1.5
+        shapeRadiusLayer.fillColor = UIColor(Palette.panelSolid).cgColor
+        shapeRadiusLayer.strokeColor = UIColor(Palette.accent).cgColor
+        shapeRadiusLayer.lineWidth = 1.5
+        for shapeLayer in [shapeGuideLayer, shapeRadiusLayer, shapeAnchorLayer] {
+            shapeLayer.actions = ["path": NSNull()]
+            layer.addSublayer(shapeLayer)
+        }
         liveMarkerLayer.fillColor = nil
         liveMarkerLayer.lineCap = .round
         liveMarkerLayer.lineJoin = .round
@@ -567,6 +623,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         eraserLayer.frame = bounds
         lassoLayer.frame = bounds
         selectionLayer.frame = bounds
+        shapeGuideLayer.frame = bounds
+        shapeAnchorLayer.frame = bounds
+        shapeRadiusLayer.frame = bounds
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         paperLayer.frame = bounds
@@ -680,6 +739,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         panSamples = [(gestureStart, touch.timestamp)]
         onInput?()
         let point = camera.toPage(gestureStart)
+        if !isRadiiPanActive, shapeGrab != nil {
+            dropShapeDraft()
+        }
+        if !isReadOnly, let grab = grabbedShapePart(at: gestureStart) {
+            shapeGrab = grab
+            return
+        }
+        if !isFingerTouch, editingShapeId != nil {
+            endShapeEditing()
+        }
         onSelectionMenu?(nil)
         let isInsideSelection = selectionScreenRect()?.contains(gestureStart) ?? false
         if !isReadOnly, !selectedIds.isEmpty, isFingerTouch || (isInsideSelection && tool == .lasso) {
@@ -733,6 +802,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             return
         }
         let location = touch.location(in: self)
+        if shapeGrab != nil {
+            dragShape(to: location)
+            return
+        }
         if !hasMoved, hypot(location.x - gestureStart.x, location.y - gestureStart.y) > Self.holdTolerance {
             hasMoved = true
             cancelHoldTimer()
@@ -811,6 +884,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         let wasMoved = hasMoved
         resetGesture()
         hideEraser()
+        if shapeGrab != nil {
+            finishShapeDrag()
+            return
+        }
         if wasHolding {
             onHoldEnd?(convert(location, to: nil))
             return
@@ -840,6 +917,8 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
             if wasMoved {
                 recordPanSample(location, time: touch.timestamp)
                 startGlide(panVelocity())
+            } else if !isReadOnly, tool != .text {
+                toggleShapeEditing(at: point)
             }
             if tool == .text, !wasMoved, !isReadOnly, Ink.isInsidePaper(point, extent: page.extent) {
                 onTextTap?(point, nil)
@@ -849,7 +928,13 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         guard !isReadOnly else { return }
         switch tool {
         case .ink(let inkTool):
-            guard stroke != nil else { return }
+            guard let stroke else { return }
+            if let shape = stroke.shape {
+                endStroke()
+                showLive(shape.outlinePoints())
+                onShape?(inkTool, inkColor, shape, inkWidth)
+                return
+            }
             extendStroke(at: location, point: point)
             let points = finalStrokePoints()
             endStroke()
@@ -873,6 +958,12 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
                 onTextTap?(point, nil)
             }
         case .lasso:
+            if !wasMoved, let tappedShape = shapeElement(at: point) {
+                lassoPoints = []
+                lassoLayer.path = nil
+                startShapeEditing(tappedShape.id)
+                return
+            }
             finishLasso(isMoved: wasMoved)
         }
     }
@@ -883,6 +974,16 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func cancelActiveGesture() {
+        if let grab = shapeGrab {
+            if case .radius = grab {
+                activeTouch = nil
+                return
+            }
+            if case .allRadii = grab {
+                return
+            }
+            dropShapeDraft()
+        }
         cancelHoldTimer()
         cancelTextHoldTimer()
         if isHolding {
@@ -937,6 +1038,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     @objc private func handlePinch(_ pinch: UIPinchGestureRecognizer) {
+        if shapeGrab != nil {
+            return
+        }
         trackGestureCamera(pinch.state)
         if pinch.state == .began {
             onSelectionMenu?(nil)
@@ -1001,6 +1105,9 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
+        if handleShapeRadiiPan(pan) {
+            return
+        }
         trackGestureCamera(pan.state)
         if pan.state == .began {
             stopGlide()
@@ -1085,6 +1192,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
         }
         showLasso()
         showSelection()
+        showShapeEditing()
         layoutImports()
         updateTiles(synchronous: synchronous)
         if !movingCanvas.isHidden {
@@ -1101,7 +1209,7 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func extendStroke(at location: CGPoint, point: Point) {
-        guard let stroke else { return }
+        guard let stroke, stroke.shape == nil else { return }
         if stroke.straightEnd != nil {
             stroke.straightEnd = point
             return
@@ -1126,7 +1234,14 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func straightenStroke() {
-        guard let stroke, stroke.straightEnd == nil, stroke.screenLength >= Self.minimumStraightLength else { return }
+        guard let stroke, stroke.straightEnd == nil, stroke.shape == nil, stroke.screenLength >= Self.minimumStraightLength else { return }
+        if let shape = ShapeRecognizer.recognize(Ink.smoothStroke(stroke.raw, scale: Double(camera.scale), settings: InkStyle.settings(smoothing: inkSmoothing))) {
+            stroke.shape = shape
+            stroke.predicted = []
+            Haptics.segment()
+            showLive(shape.outlinePoints())
+            return
+        }
         stroke.straightEnd = stroke.raw.last
         stroke.straightShare = 0
         stroke.predicted = []
@@ -1185,6 +1300,10 @@ final class InkCanvasView: UIView, UIGestureRecognizerDelegate, UIPencilInteract
     }
 
     private func updateLiveStroke() {
+        if let shape = stroke?.shape {
+            showLive(shape.outlinePoints())
+            return
+        }
         showLive(liveStrokePoints())
     }
 
@@ -1439,5 +1558,241 @@ final class DisplayLinkTarget: NSObject {
 
     @objc func step() {
         action()
+    }
+}
+
+extension InkCanvasView {
+    private var shapeInset: Double {
+        Double(Self.shapeRadiusInset / camera.scale)
+    }
+
+    private var isRadiiPanActive: Bool {
+        if case .allRadii? = shapeGrab {
+            return true
+        }
+        return false
+    }
+
+    private func editingShape() -> Element? {
+        guard let editingShapeId, let element = page?.element(withId: editingShapeId), !element.deleted, element.shape?.isValid == true else { return nil }
+        return element
+    }
+
+    private func shapeElement(at point: Point) -> Element? {
+        guard let page else { return nil }
+        let reach = Double(Self.shapeTapReach / camera.scale)
+        return page.liveElements.reversed().first { element in
+            guard element.shape != nil, let outline = element.points, outline.count > 1 else { return false }
+            if Lasso.contains(outline, point) {
+                return true
+            }
+            let tolerance = reach + (element.width ?? 0) / 2
+            return zip(outline, outline.dropFirst()).contains { StrokeGeometry.distance(from: point, toSegmentFrom: $0.0, to: $0.1) <= tolerance }
+        }
+    }
+
+    private func toggleShapeEditing(at point: Point) {
+        guard let element = shapeElement(at: point) else {
+            endShapeEditing()
+            return
+        }
+        if element.id == editingShapeId {
+            endShapeEditing()
+        } else {
+            startShapeEditing(element.id)
+        }
+    }
+
+    private func startShapeEditing(_ elementId: String) {
+        dropShapeDraft()
+        editingShapeId = elementId
+        Haptics.tick()
+        showShapeEditing()
+    }
+
+    private func endShapeEditing() {
+        guard editingShapeId != nil || shapeDraft != nil else { return }
+        let hadDraft = shapeDraft != nil
+        editingShapeId = nil
+        shapeDraft = nil
+        shapeGrab = nil
+        radiiPanStart = nil
+        showShapeEditing()
+        if hadDraft {
+            liveLayer.path = nil
+            liveMarkerLayer.path = nil
+            refreshContent()
+        }
+    }
+
+    private func dropShapeDraft() {
+        shapeGrab = nil
+        radiiPanStart = nil
+        guard shapeDraft != nil else { return }
+        shapeDraft = nil
+        liveLayer.path = nil
+        liveMarkerLayer.path = nil
+        showShapeEditing()
+        refreshContent()
+    }
+
+    private func grabbedShapePart(at location: CGPoint) -> ShapeGrab? {
+        guard let shape = editingShape()?.shape else { return nil }
+        var best: (grab: ShapeGrab, distance: CGFloat)?
+        func consider(_ grab: ShapeGrab, _ point: Point) {
+            let screen = camera.toScreen(point)
+            let distance = hypot(screen.x - location.x, screen.y - location.y)
+            if distance <= Self.shapeGrabReach, distance < (best?.distance ?? .infinity) {
+                best = (grab, distance)
+            }
+        }
+        for (index, anchor) in shape.anchors.enumerated() {
+            consider(.anchor(index), anchor)
+        }
+        switch shape.outline {
+        case .polygon:
+            for index in shape.anchors.indices {
+                if let handle = shape.radiusHandle(at: index, inset: shapeInset) {
+                    consider(.radius(index), handle)
+                }
+            }
+        case .curve:
+            for (index, handle) in (shape.handles ?? []).enumerated() {
+                consider(.handle(index), handle)
+            }
+        }
+        return best?.grab
+    }
+
+    private func shapeRadiusCorner(near location: CGPoint) -> Int? {
+        guard let shape = editingShape()?.shape, shape.outline == .polygon else { return nil }
+        let reach = Self.shapeGrabReach * 2
+        let candidates = shape.anchors.indices.compactMap { index -> (corner: Int, distance: CGFloat)? in
+            guard let handle = shape.radiusHandle(at: index, inset: shapeInset) else { return nil }
+            let screen = camera.toScreen(handle)
+            let distance = hypot(screen.x - location.x, screen.y - location.y)
+            return distance <= reach ? (index, distance) : nil
+        }
+        return candidates.min { $0.distance < $1.distance }?.corner
+    }
+
+    private func dragShape(to location: CGPoint) {
+        guard let grab = shapeGrab, let shape = editingShape()?.shape else { return }
+        let point = camera.toPage(location)
+        switch grab {
+        case .anchor(let index):
+            shapeDraft = shape.movingAnchor(index, to: point)
+        case .handle(let index):
+            shapeDraft = shape.movingHandle(index, to: point)
+        case .radius(let index):
+            shapeDraft = shape.withRadius(shape.radius(at: index, forHandle: point, inset: shapeInset), at: index)
+        case .allRadii:
+            return
+        }
+        showShapeDraft()
+    }
+
+    private func handleShapeRadiiPan(_ pan: UIPanGestureRecognizer) -> Bool {
+        switch pan.state {
+        case .began:
+            var corner: Int?
+            switch shapeGrab {
+            case .radius(let index)?, .allRadii(let index)?:
+                corner = index
+            default:
+                corner = editingShapeId == nil ? nil : shapeRadiusCorner(near: pan.location(in: self))
+            }
+            guard let corner, let shape = editingShape()?.shape, shape.outline == .polygon, !isReadOnly else { return false }
+            stopGlide()
+            shapeGrab = .allRadii(corner)
+            radiiPanStart = shape.radiusHandle(at: corner, inset: shapeInset)
+            Haptics.tick()
+            return true
+        case .changed:
+            guard case .allRadii(let corner)? = shapeGrab, let start = radiiPanStart, let shape = editingShape()?.shape else { return false }
+            let translation = pan.translation(in: self)
+            let target = Point(x: start.x + Double(translation.x / camera.scale), y: start.y + Double(translation.y / camera.scale))
+            shapeDraft = shape.withAllRadii(shape.radius(at: corner, forHandle: target, inset: shapeInset))
+            showShapeDraft()
+            return true
+        default:
+            guard isRadiiPanActive else { return false }
+            finishShapeDrag()
+            return true
+        }
+    }
+
+    private func showShapeDraft() {
+        guard let element = editingShape(), let draft = shapeDraft, let tool = element.tool else { return }
+        let isMarker = tool == .marker
+        let shown = isMarker ? liveMarkerLayer : liveLayer
+        let style = InkStyle.tokens(for: tool)
+        let color = UIColor(hex: Palette.inkOnPaper(element.color ?? inkColor, style: paperStyle))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shown.lineWidth = CGFloat(element.width ?? inkWidth) * camera.scale
+        shown.strokeColor = (isMarker ? color : color.withAlphaComponent(CGFloat(style.opacity))).cgColor
+        shown.path = StrokePathCache.makePath(draft.outlinePoints(), transform: camera.toScreen)
+        CATransaction.commit()
+        refreshContent()
+        showShapeEditing()
+    }
+
+    private func finishShapeDrag() {
+        shapeGrab = nil
+        radiiPanStart = nil
+        guard let element = editingShape(), let draft = shapeDraft else {
+            dropShapeDraft()
+            return
+        }
+        if draft == element.shape {
+            dropShapeDraft()
+            return
+        }
+        Haptics.landed()
+        onShapeEdit?(element.id, draft)
+    }
+
+    private func showShapeEditing() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let element = editingShape(), let shape = shapeDraft ?? element.shape else {
+            shapeGuideLayer.path = nil
+            shapeAnchorLayer.path = nil
+            shapeRadiusLayer.path = nil
+            return
+        }
+        let guide = CGMutablePath()
+        let anchors = CGMutablePath()
+        let handles = CGMutablePath()
+        let anchorRadius = Self.shapeAnchorRadius
+        let handleRadius = Self.shapeHandleRadius
+        for anchor in shape.anchors {
+            let screen = camera.toScreen(anchor)
+            anchors.addEllipse(in: CGRect(x: screen.x - anchorRadius, y: screen.y - anchorRadius, width: anchorRadius * 2, height: anchorRadius * 2))
+        }
+        switch shape.outline {
+        case .curve:
+            for (index, handle) in (shape.handles ?? []).enumerated() {
+                let screen = camera.toScreen(handle)
+                guide.move(to: camera.toScreen(shape.anchors[shape.handleAnchor(index)]))
+                guide.addLine(to: screen)
+                handles.addEllipse(in: CGRect(x: screen.x - handleRadius, y: screen.y - handleRadius, width: handleRadius * 2, height: handleRadius * 2))
+            }
+        case .polygon:
+            for index in shape.anchors.indices {
+                guard let handle = shape.radiusHandle(at: index, inset: shapeInset) else { continue }
+                let screen = camera.toScreen(handle)
+                let reach = handleRadius + 1
+                guide.move(to: camera.toScreen(shape.anchors[index]))
+                guide.addLine(to: screen)
+                handles.addLines(between: [CGPoint(x: screen.x, y: screen.y - reach), CGPoint(x: screen.x + reach, y: screen.y), CGPoint(x: screen.x, y: screen.y + reach), CGPoint(x: screen.x - reach, y: screen.y)])
+                handles.closeSubpath()
+            }
+        }
+        shapeGuideLayer.path = guide
+        shapeAnchorLayer.path = anchors
+        shapeRadiusLayer.path = handles
     }
 }

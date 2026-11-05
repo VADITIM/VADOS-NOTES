@@ -108,7 +108,7 @@ export function distance(first, second) {
     return Math.hypot(first[0] - second[0], first[1] - second[1])
 }
 
-function distanceToSegment(point, start, end) {
+export function distanceToSegment(point, start, end) {
     const segmentX = end[0] - start[0]
     const segmentY = end[1] - start[1]
     const lengthSquared = segmentX * segmentX + segmentY * segmentY
@@ -186,7 +186,7 @@ function gaussianSmoothed(points, sigmaSamples) {
     })
 }
 
-function simplified(points, tolerance) {
+export function simplified(points, tolerance) {
     if (points.length < 3) {
         return points
     }
@@ -213,7 +213,7 @@ function simplified(points, tolerance) {
     return points.filter((point, index) => keep[index])
 }
 
-function cleaned(points) {
+export function cleaned(points) {
     const rounded = []
     for (const point of points) {
         const next = roundedPoint(point)
@@ -722,7 +722,21 @@ export function translatedElement(element, offset) {
     if (element.placement) {
         moved.placement = { ...element.placement, x: element.placement.x + offset[0], y: element.placement.y + offset[1] }
     }
+    if (element.shape) {
+        moved.shape = mappedShapePoints(element.shape, (point) => [point[0] + offset[0], point[1] + offset[1]], 1)
+    }
     return moved
+}
+
+function mappedShapePoints(shape, transform, radiusFactor) {
+    const mapped = { ...shape, anchors: shape.anchors.map((point) => roundedPoint(transform(point))) }
+    if (shape.handles) {
+        mapped.handles = shape.handles.map((point) => roundedPoint(transform(point)))
+    }
+    if (shape.radii) {
+        mapped.radii = shape.radii.map((radius) => radius * radiusFactor)
+    }
+    return mapped
 }
 
 export function cellSwap(elements, first, second, centre) {
@@ -859,6 +873,9 @@ export function scaledElement(element, anchor, factor) {
     const scaled = { ...element }
     if (element.points) {
         scaled.points = element.points.map((point) => roundedPoint(scale(point[0], point[1])))
+    }
+    if (element.shape) {
+        scaled.shape = mappedShapePoints(element.shape, (point) => scale(point[0], point[1]), factor)
     }
     if (Number.isFinite(element.width)) {
         scaled.width = element.width * factor

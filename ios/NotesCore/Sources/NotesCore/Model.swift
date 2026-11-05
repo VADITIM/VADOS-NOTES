@@ -138,6 +138,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
     public var placement: Placement?
     public var fit: Fit?
     public var inverted: Bool?
+    public var shape: ShapeGeometry?
     public var updated: Date
     public var device: String
     public var deleted: Bool
@@ -161,6 +162,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         case placement
         case fit
         case inverted
+        case shape
         case updated
         case device
         case deleted
@@ -193,6 +195,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         placement: Placement? = nil,
         fit: Fit? = nil,
         inverted: Bool? = nil,
+        shape: ShapeGeometry? = nil,
         updated: Date,
         device: String,
         deleted: Bool = false
@@ -215,6 +218,7 @@ public struct Element: Codable, Equatable, Identifiable, Sendable {
         self.placement = placement
         self.fit = fit
         self.inverted = inverted
+        self.shape = shape
         self.updated = updated
         self.device = device
         self.deleted = deleted

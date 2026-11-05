@@ -642,6 +642,35 @@ final class Library: ObservableObject {
         record(UndoStep(before: [], after: added), on: pageId)
     }
 
+    func addShape(to pageId: String, tool: Tool, color: String, width: Double, shape: ShapeGeometry) {
+        guard let current = page(pageId), !isReadOnly(pageId), shape.isValid else { return }
+        let now = store.timestamp()
+        var element = Element.stroke(
+            id: Identifier.make(prefix: Identifier.elementPrefix, date: now),
+            tool: tool,
+            color: color,
+            width: width,
+            points: shape.outlinePoints(),
+            order: current.nextOrder(in: tool.layer),
+            updated: now,
+            device: device
+        )
+        element.shape = shape
+        apply(.element(pageId: pageId, element: element), page: pageId)
+        record(UndoStep(before: [], after: [element]), on: pageId)
+    }
+
+    func updateShape(_ elementId: String, on pageId: String, to shape: ShapeGeometry) {
+        guard let page = page(pageId), !isReadOnly(pageId), var element = page.element(withId: elementId), !element.deleted, element.shape != nil, shape.isValid, element.shape != shape else { return }
+        let before = element
+        element.shape = shape
+        element.points = shape.outlinePoints()
+        element.updated = store.timestamp()
+        element.device = device
+        apply(.element(pageId: pageId, element: element), page: pageId)
+        record(UndoStep(before: [before], after: [element]), on: pageId)
+    }
+
     func erase(_ elementIds: [String], on pageId: String) {
         guard let page = page(pageId), !isReadOnly(pageId) else { return }
         let now = store.timestamp()
@@ -675,6 +704,7 @@ final class Library: ObservableObject {
                     var piece = element
                     piece.id = Identifier.make(prefix: Identifier.elementPrefix, date: now)
                     piece.points = points
+                    piece.shape = nil
                     piece.updated = now
                     piece.device = device
                     piece.deleted = false

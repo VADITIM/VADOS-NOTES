@@ -15,6 +15,8 @@ struct SelectionCommand: Equatable {
 struct CanvasCallbacks {
     var onCameraChange: (CanvasCamera) -> Void
     var onStroke: (Tool, String, [[Point]], Double) -> Void
+    var onShape: (Tool, String, ShapeGeometry, Double) -> Void
+    var onShapeEdit: (String, ShapeGeometry) -> Void
     var onErase: ([String]) -> Void
     var onEraseArea: ([StrokeReplacement]) -> Void
     var onTextTap: (Point, String?) -> Void
@@ -82,6 +84,8 @@ struct CanvasView: UIViewRepresentable {
         view.selectionCommand = selectionCommand
         view.onCameraChange = callbacks.onCameraChange
         view.onStroke = callbacks.onStroke
+        view.onShape = callbacks.onShape
+        view.onShapeEdit = callbacks.onShapeEdit
         view.onErase = callbacks.onErase
         view.onEraseArea = callbacks.onEraseArea
         view.onTextTap = callbacks.onTextTap

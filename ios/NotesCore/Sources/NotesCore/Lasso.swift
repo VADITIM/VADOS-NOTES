@@ -67,6 +67,7 @@ public enum Lasso {
         if let placement = element.placement {
             moved.placement = Placement(x: placement.x + offset.x, y: placement.y + offset.y, scale: placement.scale)
         }
+        moved.shape = element.shape?.mapped { Point(x: $0.x + offset.x, y: $0.y + offset.y) }
         return moved
     }
 
@@ -86,6 +87,7 @@ public enum Lasso {
             let origin = scale(placement.x, placement.y)
             scaled.placement = Placement(x: origin.x, y: origin.y, scale: placement.scale * factor)
         }
+        scaled.shape = element.shape?.mapped({ scale($0.x, $0.y) }, radiusFactor: factor)
         return scaled
     }
 }

@@ -1,4 +1,5 @@
 import { elementBounds } from "./canvas.js"
+import { isValidShape, outlinePoints, sameShape } from "./shapeGeometry.js"
 import {
     addingCell,
     cellCountAlong,
@@ -570,6 +571,42 @@ export class Library {
         return added.map((element) => element.id)
     }
 
+    addShape(pageId, tool, color, shape, width = tokens.tools[tool].width) {
+        const page = this.page(pageId)
+        if (!page || this.isReadOnly(pageId) || !isValidShape(shape)) {
+            return
+        }
+        const now = this.timestamp()
+        const layer = layerForTool(tool)
+        const element = {
+            id: makeIdentifier("e", timestampMilliseconds(now)),
+            type: "stroke",
+            layer,
+            order: nextOrder(this.pagesById.get(pageId), layer),
+            tool,
+            color,
+            width,
+            points: outlinePoints(shape),
+            shape,
+            updated: now,
+            device: this.device,
+            deleted: false,
+        }
+        this.applyElement(pageId, element)
+        this.record({ before: [], after: [element] }, pageId)
+    }
+
+    updateShape(elementId, pageId, shape) {
+        const page = this.page(pageId)
+        const element = page?.elements.find((candidate) => candidate.id === elementId)
+        if (!page || this.isReadOnly(pageId) || !element || element.deleted || !element.shape || !isValidShape(shape) || sameShape(element.shape, shape)) {
+            return
+        }
+        const updated = { ...element, shape, points: outlinePoints(shape), updated: this.timestamp(), device: this.device }
+        this.applyElement(pageId, updated)
+        this.record({ before: [element], after: [updated] }, pageId)
+    }
+
     addStrokes(pageId, tool, color, pieces, width = tokens.tools[tool].width) {
         const page = this.page(pageId)
         const shown = pieces.filter((points) => points.length > 0)
@@ -638,6 +675,7 @@ export class Library {
             step.after.push(removed)
             for (const points of pieces) {
                 const piece = { ...element, id: makeIdentifier("e", timestampMilliseconds(now)), points, updated: now, device: this.device, deleted: false }
+                delete piece.shape
                 this.applyElement(pageId, piece)
                 step.after.push(piece)
             }

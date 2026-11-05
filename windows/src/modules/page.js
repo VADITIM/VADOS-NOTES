@@ -195,6 +195,8 @@ export class PageScreen {
                 this.placeEditor()
             },
             onStroke: (tool, color, pieces, width) => this.library.addStrokes(this.pageId, tool, color, pieces, width),
+            onShape: (tool, color, shape, width) => this.library.addShape(this.pageId, tool, color, shape, width),
+            onShapeEdit: (elementId, shape) => this.library.updateShape(elementId, this.pageId, shape),
             onErase: (ids) => this.library.erase(ids, this.pageId),
             onEraseArea: (replacements) => this.library.replaceStrokes(this.pageId, replacements),
             onTextTap: (point, elementId) => {
