@@ -186,6 +186,7 @@ struct ToolNav<PanelContent: View>: View {
     let onReorderSubNavigation: ([String]) -> Void
     @ViewBuilder var panel: (String, NavOrientation) -> PanelContent
 
+    @Environment(\.screenInsets) private var insets
     @Namespace private var washSpace
     @StateObject private var navigationMotion = PillMotion()
     @StateObject private var subNavigationMotion = PillMotion()
@@ -982,11 +983,22 @@ struct ToolNav<PanelContent: View>: View {
         return blocked
     }
 
+    private func safeMargins(layer: CGSize) -> EdgeInsets {
+        let margin = NavMetrics.edgeMargin
+        return EdgeInsets(
+            top: margin + max(0, insets.top - carryOrigin.y),
+            leading: margin + max(0, insets.leading - carryOrigin.x),
+            bottom: margin,
+            trailing: margin + insets.trailing
+        )
+    }
+
     private func clamped(_ point: CGPoint, size: CGSize, layer: CGSize) -> CGPoint {
-        func clamp(_ value: CGFloat, _ half: CGFloat, _ total: CGFloat) -> CGFloat {
-            total - NavMetrics.edgeMargin * 2 < half * 2 ? total / 2 : min(total - NavMetrics.edgeMargin - half, max(NavMetrics.edgeMargin + half, value))
+        let margins = safeMargins(layer: layer)
+        func clamp(_ value: CGFloat, _ half: CGFloat, _ total: CGFloat, _ low: CGFloat, _ high: CGFloat) -> CGFloat {
+            total - low - high < half * 2 ? max(half, min(total - half, low + (total - low - high) / 2)) : min(total - high - half, max(low + half, value))
         }
-        return CGPoint(x: clamp(point.x, size.width / 2, layer.width), y: clamp(point.y, size.height / 2, layer.height))
+        return CGPoint(x: clamp(point.x, size.width / 2, layer.width, margins.leading, margins.trailing), y: clamp(point.y, size.height / 2, layer.height, margins.top, margins.bottom))
     }
 
     private func avoiding(_ center: CGPoint, size: CGSize, layer: CGSize, blocked: [CGRect]) -> CGPoint {
@@ -1072,13 +1084,13 @@ struct ToolNav<PanelContent: View>: View {
 
     private func dockSpot(_ edge: NavEdge?, from point: CGPoint) -> CGPoint {
         let layer = carryLayer
-        let margin = NavMetrics.edgeMargin
+        let margins = safeMargins(layer: layer)
         var spot = point
         switch edge {
-        case .left: spot.x = margin + navSize.width / 2
-        case .right: spot.x = layer.width - margin - navSize.width / 2
-        case .top: spot.y = margin + navSize.height / 2
-        case .bottom: spot.y = layer.height - margin - navSize.height / 2
+        case .left: spot.x = margins.leading + navSize.width / 2
+        case .right: spot.x = layer.width - margins.trailing - navSize.width / 2
+        case .top: spot.y = margins.top + navSize.height / 2
+        case .bottom: spot.y = layer.height - margins.bottom - navSize.height / 2
         case nil: break
         }
         return avoiding(spot, size: navSize, layer: layer, blocked: localObstacles(origin: carryOrigin, layer: layer))
@@ -1086,9 +1098,9 @@ struct ToolNav<PanelContent: View>: View {
 
     private func cornerSpot(_ corner: String, layer: CGSize, blocked: [CGRect]) -> CGPoint {
         let diameter = NavMetrics.bubbleDiameter
-        let reach = NavMetrics.edgeMargin + diameter / 2
+        let margins = safeMargins(layer: layer)
         let parts = corner.split(separator: "-")
-        let point = CGPoint(x: parts.last == "left" ? reach : layer.width - reach, y: parts.first == "top" ? reach : layer.height - reach)
+        let point = CGPoint(x: parts.last == "left" ? margins.leading + diameter / 2 : layer.width - margins.trailing - diameter / 2, y: parts.first == "top" ? margins.top + diameter / 2 : layer.height - margins.bottom - diameter / 2)
         return avoiding(point, size: CGSize(width: diameter, height: diameter), layer: layer, blocked: blocked)
     }
 

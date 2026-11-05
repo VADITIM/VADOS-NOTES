@@ -221,6 +221,11 @@ struct RootView: View {
         return navCovers.filter { $0.intersects(title) }.map { $0.offsetBy(dx: -title.minX, dy: -title.minY) }
     }
 
+    private var coveredChrome: Set<String> {
+        guard navigator.route.isPage else { return [] }
+        return Set(chromeLayout.frames.filter { _, frame in navCovers.contains { $0.intersects(frame) } }.keys)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ZStack {
@@ -239,7 +244,7 @@ struct RootView: View {
                     .onPreferenceChange(NavCoverKey.self) { navCovers = $0 }
                     .offset(pushOffset(fullSize(proxy)))
                 VStack {
-                    TopBar(titleCutouts: titleCutouts)
+                    TopBar(titleCutouts: titleCutouts, coveredChrome: coveredChrome)
                         .onPreferenceChange(TopBarHeightKey.self) { chromeLayout.bottom = $0 - pushOffset(fullSize(proxy)).height }
                         .onPreferenceChange(BackButtonFrameKey.self) { chromeLayout.back = $0 }
                         .onPreferenceChange(ChromeFramesKey.self) { chromeLayout.frames = $0 }
@@ -425,6 +430,7 @@ struct TopBar: View {
     @State private var headFolderId: String?
     @State private var pageTitleWidth: CGFloat = 0
     var titleCutouts: [CGRect] = []
+    var coveredChrome: Set<String> = []
 
     static let controlHeight: CGFloat = 48
 
@@ -472,7 +478,7 @@ struct TopBar: View {
                         .reportsChrome("title", isActive: isHeadShown)
                 }
                 pageTitles
-                    .allowsHitTesting(isPage && !isTransferring)
+                    .allowsHitTesting(isPage && !isTransferring && !isPageTitleCovered)
                     .reportsChrome("title", isActive: isPage)
             }
             Spacer(minLength: 12)
@@ -507,6 +513,7 @@ struct TopBar: View {
                 }
                 .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: isTransferring)
                 .animation(Motion.powerTwoOut(Motion.stateMilliseconds), value: transferBar.state)
+                .allowsHitTesting(!coveredChrome.contains("controls"))
                 .reportsChrome("controls")
             }
         }
@@ -518,6 +525,12 @@ struct TopBar: View {
                 headFolderId = next
             }
         }
+    }
+
+    private var isPageTitleCovered: Bool {
+        let backdrop = Tokens.shared.title
+        let shown = CGRect(x: 0, y: 0, width: pageTitleWidth + CGFloat(backdrop.backdropPaddingHorizontal) * 2, height: Self.controlHeight + CGFloat(backdrop.backdropPaddingVertical) * 2)
+        return titleCutouts.contains { $0.intersects(shown) }
     }
 
     private func control(_ face: ControlFace) -> some View {
