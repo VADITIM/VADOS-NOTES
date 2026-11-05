@@ -30,6 +30,45 @@ final class KeyboardObserver: ObservableObject {
     }
 }
 
+private enum ColorTarget: Equatable {
+    case tool(Tool)
+    case text
+    case selection
+
+    init?(key: String) {
+        switch key {
+        case "text-color": self = .text
+        case "selection-color": self = .selection
+        default:
+            guard let tool = Tool(rawValue: key) else { return nil }
+            self = .tool(tool)
+        }
+    }
+
+    var key: String {
+        switch self {
+        case .tool(let tool): return tool.rawValue
+        case .text: return "text-color"
+        case .selection: return "selection-color"
+        }
+    }
+
+    var groupPrefix: String {
+        switch self {
+        case .tool(let tool): return tool.rawValue
+        case .text: return "text"
+        case .selection: return "selection"
+        }
+    }
+
+    var presetTool: Tool {
+        if case .tool(let tool) = self {
+            return tool
+        }
+        return .pen
+    }
+}
+
 struct PageScreen: View {
     let notebookId: String
     let pageId: String
@@ -50,6 +89,7 @@ struct PageScreen: View {
     @State private var variationColors: [String] = []
     @State private var variationMain: String?
     @State private var variationSlot: String?
+    @State private var selectionColorIds: [String] = []
     @State private var eraserReturn: ActiveTool?
     @State private var previousTool: ActiveTool?
     @State private var textStyleState = TextStyleState()
@@ -304,6 +344,9 @@ struct PageScreen: View {
             onMoveElements: { ids, offset in library.moveElements(ids, on: pageId, by: offset) },
             onScaleElements: { ids, anchor, factor in library.scaleElements(ids, on: pageId, about: anchor, by: factor) },
             onSelectionMenu: { request in
+                if subNavKey == ColorTarget.selection.key {
+                    closeSubNav()
+                }
                 if let request {
                     showSelectionMenu(request)
                 } else if selectionMenu != nil {
@@ -448,37 +491,63 @@ struct PageScreen: View {
         panelKey?.hasPrefix("wheel-") ?? false
     }
 
-    private static func variationsKey(_ tool: Tool) -> String {
-        NavMetrics.pillPanelPrefix + tool.rawValue
+    private static func variationsKey(_ target: ColorTarget) -> String {
+        NavMetrics.pillPanelPrefix + target.key
     }
 
-    private func isVariationAnchor(_ color: String, for tool: Tool) -> Bool {
-        panelKey == Self.variationsKey(tool) && variationSlot == color.uppercased()
+    private func isVariationAnchor(_ color: String, for target: ColorTarget) -> Bool {
+        panelKey == Self.variationsKey(target) && variationSlot == color.uppercased()
     }
 
-    private func chooseColor(_ color: String, for tool: Tool) {
-        preferences.setColor(color, for: tool)
+    private func currentColor(_ target: ColorTarget) -> String {
+        switch target {
+        case .tool(let tool):
+            return preferences.color(tool).uppercased()
+        case .text:
+            return (session?.element.color ?? Tokens.shared.text.color).uppercased()
+        case .selection:
+            let element = library.page(pageId)?.liveElements.first { selectionColorIds.contains($0.id) && $0.type != .importPage }
+            return (element?.color ?? Tokens.shared.text.color).uppercased()
+        }
+    }
+
+    private func applyColor(_ color: String, to target: ColorTarget) {
         let normalized = color.uppercased()
-        guard !isVariationAnchor(normalized, for: tool) else {
+        switch target {
+        case .tool(let tool):
+            preferences.setColor(normalized, for: tool)
+        case .text:
+            library.styleText(color: normalized)
+        case .selection:
+            guard !selectionColorIds.isEmpty else { return }
+            library.setColor(selectionColorIds, on: pageId, to: normalized)
+        }
+    }
+
+    private func chooseColor(_ color: String, for target: ColorTarget) {
+        applyColor(color, to: target)
+        let normalized = color.uppercased()
+        guard !isVariationAnchor(normalized, for: target) else {
             closePanel()
             return
         }
-        let isOpen = panelKey == Self.variationsKey(tool)
+        let isOpen = panelKey == Self.variationsKey(target)
         withAnimation(isOpen ? Motion.placement : nil) {
             variationMain = normalized
             variationSlot = normalized
             variationColors = ColorVariations.around(normalized)
         }
         withAnimation(Motion.powerTwoOut(Motion.overlayEnterMilliseconds)) {
-            panelKey = Self.variationsKey(tool)
+            panelKey = Self.variationsKey(target)
         }
     }
 
-    private func pickVariation(_ variation: String, for tool: Tool) {
+    private func pickVariation(_ variation: String, for target: ColorTarget) {
+        let tool = target.presetTool
         guard let slot = variationSlot, variation != slot, !preferences.colorPresets(tool).contains(variation) else { return }
         Haptics.tick()
         preferences.replaceColorPreset(slot, with: variation, for: tool)
-        preferences.setColor(variation, for: tool)
+        applyColor(variation, to: target)
         variationSlot = variation
     }
 
@@ -597,39 +666,20 @@ struct PageScreen: View {
 
     @ViewBuilder
     private func panel(_ shownKey: String, _ orientation: NavOrientation) -> some View {
-        if shownKey.hasPrefix(NavMetrics.pillPanelPrefix), let tool = Tool(rawValue: String(shownKey.dropFirst(NavMetrics.pillPanelPrefix.count))), let main = variationMain {
+        if shownKey.hasPrefix(NavMetrics.pillPanelPrefix), let target = ColorTarget(key: String(shownKey.dropFirst(NavMetrics.pillPanelPrefix.count))), let main = variationMain {
             VariationPanel(colors: variationColors, main: main, selected: variationSlot ?? main, orientation: orientation, display: { Color(hex: Palette.inkOnPaper($0, style: preferences.paperStyle)) }) { variation in
-                pickVariation(variation, for: tool)
+                pickVariation(variation, for: target)
             }
-        } else if let key = subNavKey {
-            switch key {
-            case "pen", "marker":
-                if let tool = Tool(rawValue: key) {
-                    ColorPanel(color: displayColor(tool), isPicking: isColorPicking, onPick: { isColorPicking.toggle() }) { hex in
-                        preferences.setColor(Palette.inkOnPaper(hex, style: preferences.paperStyle), for: tool)
-                    }
-                }
-            case "text-color":
-                ColorPanel(color: Palette.inkOnPaper(session?.element.color ?? Tokens.shared.text.color, style: preferences.paperStyle), isPicking: isColorPicking, onPick: { isColorPicking.toggle() }) { hex in
-                    library.styleText(color: Palette.inkOnPaper(hex, style: preferences.paperStyle))
-                }
-            default:
-                EmptyView()
+        } else if let key = subNavKey, let target = ColorTarget(key: key) {
+            ColorPanel(color: Palette.inkOnPaper(currentColor(target), style: preferences.paperStyle), isPicking: isColorPicking, onPick: { isColorPicking.toggle() }) { hex in
+                applyColor(Palette.inkOnPaper(hex, style: preferences.paperStyle), to: target)
             }
         }
     }
 
     private func applyPickedColor(_ hex: String) {
-        switch subNavKey {
-        case "pen", "marker":
-            if let key = subNavKey, let tool = Tool(rawValue: key) {
-                preferences.setColor(Palette.inkOnPaper(hex, style: preferences.paperStyle), for: tool)
-            }
-        case "text-color":
-            library.styleText(color: Palette.inkOnPaper(hex, style: preferences.paperStyle))
-        default:
-            break
-        }
+        guard let key = subNavKey, let target = ColorTarget(key: key) else { return }
+        applyColor(Palette.inkOnPaper(hex, style: preferences.paperStyle), to: target)
     }
 
     private static func share(_ value: Double, _ range: [Double]) -> Double {
@@ -676,7 +726,9 @@ struct PageScreen: View {
         case "eraser":
             return eraserGroups()
         case "text-color":
-            return textColorGroups()
+            return colourGroups(.text)
+        case "selection-color":
+            return colourGroups(.selection)
         case "text-style":
             return textStyleGroups()
         case "text-code":
@@ -693,23 +745,11 @@ struct PageScreen: View {
     private func inkGroups(_ tool: Tool) -> [SubNavigationGroup] {
         let range = Preferences.inkTokens(tool).widthRange ?? [0.2, 2]
         let width = preferences.width(tool)
-        let current = preferences.color(tool).uppercased()
         let inkColor = Color(hex: displayColor(tool)).opacity(max(0.6, Preferences.inkTokens(tool).opacity))
         let presets = preferences.widthPresets(tool)
-        let colors = preferences.colorPresets(tool)
         let sizesId = "\(tool.rawValue)-sizes"
-        let coloursId = "\(tool.rawValue)-colours"
         let areSizesCollapsed = isCollapsed(sizesId, count: presets.count)
-        let areColoursCollapsed = isCollapsed(coloursId, count: colors.count)
         let shownPresets = areSizesCollapsed ? Array(presets.prefix(Self.collapsedGroupCount)) : presets
-        let shownColors = areColoursCollapsed ? Array(colors.prefix(Self.collapsedGroupCount)) : colors
-        let collapseColours = { (isCollapsing: Bool) -> Bool in
-            guard setCollapsed(isCollapsing, id: coloursId, count: colors.count) else { return false }
-            if isCollapsing, panelKey == Self.variationsKey(tool) {
-                closePanel()
-            }
-            return true
-        }
         return [
             group(sizesId, onCollapse: { isCollapsing in setCollapsed(isCollapsing, id: sizesId, count: presets.count) }) { orientation in
                 let layout = stack(orientation)
@@ -729,13 +769,31 @@ struct PageScreen: View {
                     }
                 }
             },
+        ] + colourGroups(.tool(tool))
+    }
+
+    private func colourGroups(_ target: ColorTarget) -> [SubNavigationGroup] {
+        let tool = target.presetTool
+        let current = currentColor(target)
+        let colors = preferences.colorPresets(tool)
+        let coloursId = "\(target.groupPrefix)-colours"
+        let areColoursCollapsed = isCollapsed(coloursId, count: colors.count)
+        let shownColors = areColoursCollapsed ? Array(colors.prefix(Self.collapsedGroupCount)) : colors
+        let collapseColours = { (isCollapsing: Bool) -> Bool in
+            guard setCollapsed(isCollapsing, id: coloursId, count: colors.count) else { return false }
+            if isCollapsing, panelKey == Self.variationsKey(target) {
+                closePanel()
+            }
+            return true
+        }
+        return [
             group(coloursId, onCollapse: collapseColours) { orientation in
                 let layout = stack(orientation)
                 layout {
                     PresetStrip(items: shownColors, orientation: orientation, isKeyedByPosition: true, onReorder: { reordered in
                         preferences.setColorPresets(reordered + colors.dropFirst(shownColors.count), for: tool)
                     }) { color, lift in
-                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(tool.rawValue)-colour-ring", ringSpace), isPanelAnchor: isVariationAnchor(color, for: tool), onSelect: { chooseColor(color, for: tool) }, onRemove: { preferences.removeColorPreset(color, for: tool) }, isMoving: lift.isMoving)
+                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("\(target.groupPrefix)-colour-ring", ringSpace), isPanelAnchor: isVariationAnchor(color, for: target), onSelect: { chooseColor(color, for: target) }, onRemove: { preferences.removeColorPreset(color, for: tool) }, isMoving: lift.isMoving)
                             .transition(.elementLeave)
                     }
                     GroupEndButton(isCollapsed: areColoursCollapsed, isEnabled: areColoursCollapsed || !colors.contains(current), orientation: orientation) {
@@ -747,7 +805,7 @@ struct PageScreen: View {
                     }
                 }
             },
-            group("\(tool.rawValue)-wheel") { orientation in
+            group("\(target.groupPrefix)-wheel") { orientation in
                 WheelButton(isOpen: isWheelOpen, orientation: orientation, action: togglePanel)
             },
         ]
@@ -848,23 +906,6 @@ struct PageScreen: View {
         ]
     }
 
-    private func textColorGroups() -> [SubNavigationGroup] {
-        let current = (session?.element.color ?? Tokens.shared.text.color).uppercased()
-        return [
-            group("text-colours") { orientation in
-                let layout = stack(orientation)
-                layout {
-                    ForEach(Tokens.shared.text.colors, id: \.self) { color in
-                        SwatchButton(color: Color(hex: Palette.inkOnPaper(color, style: preferences.paperStyle)), isSelected: color.uppercased() == current, orientation: orientation, ring: ("text-colour-ring", ringSpace), onSelect: { library.styleText(color: color.uppercased()) })
-                    }
-                }
-            },
-            group("text-wheel") { orientation in
-                WheelButton(isOpen: isWheelOpen, orientation: orientation, action: togglePanel)
-            },
-        ]
-    }
-
     private func select(_ ids: [String]) {
         guard !ids.isEmpty else { return }
         selectionCommand = SelectionCommand(ids: ids, serial: (selectionCommand?.serial ?? 0) + 1)
@@ -902,7 +943,7 @@ struct PageScreen: View {
                 case "duplicate":
                     select(library.duplicate(request.ids, on: pageId))
                 case "color":
-                    showColorMenu(for: selected, at: point)
+                    showSelectionColors(for: selected)
                 case "equal_width":
                     withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                         selectionMenu = request
@@ -915,15 +956,12 @@ struct PageScreen: View {
         menu.present(slots, at: point, title: "Selection")
     }
 
-    private func showColorMenu(for elements: [Element], at point: CGPoint) {
-        let ids = elements.map(\.id)
-        let first = elements.first { $0.type != .importPage }
-        let colors = first?.tool.map { preferences.colorPresets($0) } ?? Tokens.shared.text.colors
-        let slots = MenuSlot.swatches(colors, current: first?.color) { color in
-            library.setColor(ids, on: pageId, to: color.uppercased())
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Motion.seconds(Motion.overlayLeaveMilliseconds)) {
-            menu.present(slots, at: point, title: "Colour")
+    private func showSelectionColors(for elements: [Element]) {
+        selectionColorIds = elements.filter { $0.type != .importPage }.map(\.id)
+        guard !selectionColorIds.isEmpty else { return }
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            panelKey = nil
+            subNavKey = ColorTarget.selection.key
         }
     }
 

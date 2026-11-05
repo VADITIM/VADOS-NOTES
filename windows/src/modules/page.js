@@ -14,7 +14,7 @@ import {
     variationPanel,
     wheelButton,
 } from "./controls.js"
-import { slotsFromTokens, swatchSlots } from "./menu.js"
+import { slotsFromTokens } from "./menu.js"
 import { purgeThumbnails } from "./grid.js"
 import { isImportInverted, purgeImports } from "./imports.js"
 import { cellContaining, liveElements } from "./model.js"
@@ -96,6 +96,7 @@ export class PageScreen {
         this.variationColors = []
         this.variationMain = null
         this.variationSlot = null
+        this.selectionColorIds = []
         this.eraserReturn = null
         this.previousTool = null
         this.selectionMenu = null
@@ -215,7 +216,18 @@ export class PageScreen {
             onTextMove: (elementId, box) => this.library.moveText(elementId, this.pageId, box),
             onMoveElements: (ids, offset) => this.library.moveElements(ids, this.pageId, offset),
             onScaleElements: (ids, anchor, factor) => this.library.scaleElements(ids, this.pageId, anchor, factor),
-            onSelectionMenu: (request) => (request ? this.showSelectionMenu(request) : this.setSelectionMenu(null)),
+            onSelectionMenu: (request) => {
+                if (this.subNavKey === "selection-color") {
+                    this.subNavKey = null
+                    this.panelKey = null
+                    this.refresh()
+                }
+                if (request) {
+                    this.showSelectionMenu(request)
+                } else {
+                    this.setSelectionMenu(null)
+                }
+            },
             onInput: () => {
                 this.library.noteInput(this.pageId)
                 this.closePanel()
@@ -446,36 +458,75 @@ export class PageScreen {
         return Boolean(this.panelKey?.startsWith("wheel-"))
     }
 
-    variationsKey(tool) {
-        return `${navMetrics.pillPanelPrefix}${tool}`
+    variationsKey(target) {
+        return `${navMetrics.pillPanelPrefix}${target}`
     }
 
-    isVariationAnchor(color, tool) {
-        return this.panelKey === this.variationsKey(tool) && this.variationSlot === color.toUpperCase()
+    isVariationAnchor(color, target) {
+        return this.panelKey === this.variationsKey(target) && this.variationSlot === color.toUpperCase()
     }
 
-    chooseColor(color, tool) {
+    presetTool(target) {
+        return target === "marker" ? "marker" : "pen"
+    }
+
+    isColorTarget(key) {
+        return key === "pen" || key === "marker" || key === "text-color" || key === "selection-color"
+    }
+
+    currentColor(target) {
+        switch (target) {
+        case "text-color":
+            return (this.session?.element.color ?? tokens.text.color).toUpperCase()
+        case "selection-color": {
+            const page = this.library.page(this.pageId)
+            const element = page ? liveElements(page).find((candidate) => this.selectionColorIds.includes(candidate.id) && candidate.type !== "import") : null
+            return (element?.color ?? tokens.text.color).toUpperCase()
+        }
+        default:
+            return preferences.toolColor(target).toUpperCase()
+        }
+    }
+
+    applyColor(target, color) {
         const normalized = color.toUpperCase()
-        if (this.isVariationAnchor(normalized, tool)) {
-            preferences.setToolColor(tool, color)
+        switch (target) {
+        case "text-color":
+            this.library.styleText({ color: normalized })
+            break
+        case "selection-color":
+            if (this.selectionColorIds.length) {
+                this.library.setColor(this.selectionColorIds, this.pageId, normalized)
+            }
+            break
+        default:
+            preferences.setToolColor(target, color)
+        }
+    }
+
+    chooseColor(color, target) {
+        const normalized = color.toUpperCase()
+        if (this.isVariationAnchor(normalized, target)) {
+            this.applyColor(target, color)
             this.closePanel()
             return
         }
         this.variationMain = normalized
         this.variationSlot = normalized
         this.variationColors = colorVariations(normalized)
-        this.panelKey = this.variationsKey(tool)
-        preferences.setToolColor(tool, color)
+        this.panelKey = this.variationsKey(target)
+        this.applyColor(target, color)
     }
 
-    pickVariation(variation, tool) {
+    pickVariation(variation, target) {
+        const tool = this.presetTool(target)
         const slot = this.variationSlot
         if (!slot || variation === slot || preferences.colorPresets(tool).includes(variation)) {
             return
         }
         this.variationSlot = variation
         preferences.replaceColorPreset(tool, slot, variation)
-        preferences.setToolColor(tool, variation)
+        this.applyColor(target, variation)
     }
 
     panelAnchorElement() {
@@ -490,8 +541,8 @@ export class PageScreen {
 
     makePanel(key, orientation) {
         if (key.startsWith(navMetrics.pillPanelPrefix)) {
-            const tool = key.slice(navMetrics.pillPanelPrefix.length)
-            const panel = variationPanel({ orientation, onPick: (variation) => this.pickVariation(variation, tool) })
+            const target = key.slice(navMetrics.pillPanelPrefix.length)
+            const panel = variationPanel({ orientation, onPick: (variation) => this.pickVariation(variation, target) })
             this.updatePanel(panel, key)
             return panel
         }
@@ -512,10 +563,7 @@ export class PageScreen {
 
     wheelColor() {
         const key = this.subNavKey ?? this.lastSubNavKey
-        if (key === "text-color") {
-            return inkOnPaper(this.session?.element.color ?? tokens.text.color, preferences.paperStyle())
-        }
-        return key === "pen" || key === "marker" ? this.displayColor(key) : "#FFFFFF"
+        return this.isColorTarget(key) ? inkOnPaper(this.currentColor(key), preferences.paperStyle()) : "#FFFFFF"
     }
 
     startColorPick(panel) {
@@ -542,10 +590,8 @@ export class PageScreen {
 
     applyWheel(hex) {
         const key = this.subNavKey
-        if (key === "pen" || key === "marker") {
-            preferences.setToolColor(key, inkOnPaper(hex, preferences.paperStyle()))
-        } else if (key === "text-color") {
-            this.library.styleText({ color: inkOnPaper(hex, preferences.paperStyle()) })
+        if (this.isColorTarget(key)) {
+            this.applyColor(key, inkOnPaper(hex, preferences.paperStyle()))
         }
     }
 
@@ -571,7 +617,8 @@ export class PageScreen {
         case "text-code":
             return this.textCodeGroups()
         case "text-color":
-            return this.textColorGroups()
+        case "selection-color":
+            return this.colourGroups(key)
         default:
             return []
         }
@@ -611,7 +658,6 @@ export class PageScreen {
     inkGroups(tool) {
         const range = tokens.tools[tool].width_range ?? [0.2, 2]
         const sizesId = `${tool}-sizes`
-        const coloursId = `${tool}-colours`
         const sizes = this.group(sizesId, (orientation) => {
             const row = this.row(orientation)
             const ring = new SelectionRing(row, "selection-ring is-size")
@@ -669,6 +715,13 @@ export class PageScreen {
             row.afterLayout = () => row.ring.moveTo(selected)
             requestAnimationFrame(() => row.afterLayout())
         }, (isCollapsing) => this.setGroupCollapsed(isCollapsing, sizesId, preferences.widthPresets(tool).length))
+        return [sizes, ...this.colourGroups(tool)]
+    }
+
+    colourGroups(target) {
+        const tool = this.presetTool(target)
+        const prefix = { "text-color": "text", "selection-color": "selection" }[target] ?? target
+        const coloursId = `${prefix}-colours`
         const colours = this.group(coloursId, (orientation) => {
             const row = this.row(orientation)
             const ring = new SelectionRing(row, "selection-ring")
@@ -677,14 +730,14 @@ export class PageScreen {
                 if (this.isGroupCollapsed(coloursId, count)) {
                     this.setGroupCollapsed(false, coloursId, count)
                 } else {
-                    preferences.addColorPreset(tool, preferences.toolColor(tool))
+                    preferences.addColorPreset(tool, this.currentColor(target))
                 }
             } })
             plus.dataset.revealedElement = ""
             row.append(plus)
             const list = new KeyedList(row, {
                 make: (entry) => {
-                    const swatch = swatchButton({ color: "#000", orientation, onSelect: () => this.chooseColor(row.colors[entry.index], tool), onRemove: () => preferences.removeColorPreset(tool, row.colors[entry.index]), onHold: ({ pointerId, point }) => this.app.nav.liftPreset({
+                    const swatch = swatchButton({ color: "#000", orientation, onSelect: () => this.chooseColor(row.colors[entry.index], target), onRemove: () => preferences.removeColorPreset(tool, row.colors[entry.index]), onHold: ({ pointerId, point }) => this.app.nav.liftPreset({
                         pointerId,
                         point,
                         element: swatch,
@@ -704,7 +757,7 @@ export class PageScreen {
             row.plus = plus
             return row
         }, (row) => {
-            const current = preferences.toolColor(tool).toUpperCase()
+            const current = this.currentColor(target)
             const allColors = preferences.colorPresets(tool)
             const isCollapsed = this.isGroupCollapsed(coloursId, allColors.length)
             const colors = isCollapsed ? allColors.slice(0, collapsedGroupCount) : allColors
@@ -722,7 +775,7 @@ export class PageScreen {
                     swatch.querySelector(".swatch-dot").animate([{ background: previous }, { background: shown }], { duration: 160 })
                 }
                 swatch.dataset.color = shown
-                swatch.classList.toggle("is-panel-anchor", this.isVariationAnchor(color, tool))
+                swatch.classList.toggle("is-panel-anchor", this.isVariationAnchor(color, target))
                 if (isSelected) {
                     selected = swatch
                 }
@@ -734,17 +787,17 @@ export class PageScreen {
             if (!this.setGroupCollapsed(isCollapsing, coloursId, preferences.colorPresets(tool).length)) {
                 return false
             }
-            if (isCollapsing && this.panelKey === this.variationsKey(tool)) {
+            if (isCollapsing && this.panelKey === this.variationsKey(target)) {
                 this.closePanel()
             }
             return true
         })
-        const wheel = this.group(`${tool}-wheel`, (orientation) => {
+        const wheel = this.group(`${prefix}-wheel`, (orientation) => {
             const button = wheelButton({ orientation, action: () => this.togglePanel() })
             button.dataset.revealedElement = ""
             return button
         }, (button) => button.update({ isOpen: this.isWheelOpen() }))
-        return [sizes, colours, wheel]
+        return [colours, wheel]
     }
 
     eraserGroup() {
@@ -868,39 +921,6 @@ export class PageScreen {
         return [languages, plain]
     }
 
-    textColorGroups() {
-        const colours = this.group("text-colours", (orientation) => {
-            const row = this.row(orientation)
-            row.ring = new SelectionRing(row, "selection-ring")
-            row.swatches = tokens.text.colors.map((color) => {
-                const swatch = swatchButton({ color, orientation, onSelect: () => this.library.styleText({ color: color.toUpperCase() }) })
-                swatch.dataset.revealedElement = ""
-                swatch.color = color
-                row.append(swatch)
-                return swatch
-            })
-            return row
-        }, (row) => {
-            const current = (this.session?.element.color ?? tokens.text.color).toUpperCase()
-            let selected = null
-            for (const swatch of row.swatches) {
-                const isSelected = swatch.color.toUpperCase() === current
-                swatch.update({ color: inkOnPaper(swatch.color, preferences.paperStyle()), isSelected })
-                if (isSelected) {
-                    selected = swatch
-                }
-            }
-            row.afterLayout = () => row.ring.moveTo(selected)
-            requestAnimationFrame(() => row.afterLayout())
-        })
-        const wheel = this.group("text-wheel", (orientation) => {
-            const button = wheelButton({ orientation, action: () => this.togglePanel() })
-            button.dataset.revealedElement = ""
-            return button
-        }, (button) => button.update({ isOpen: this.isWheelOpen() }))
-        return [colours, wheel]
-    }
-
     selectPlaced(ids) {
         this.canvas.select(ids, this.library.page(this.pageId))
     }
@@ -929,7 +949,7 @@ export class PageScreen {
                 case "cut": this.library.cutElements(request.ids, this.pageId); break
                 case "copy": this.library.copyElements(request.ids, this.pageId); break
                 case "duplicate": this.selectPlaced(this.library.duplicate(request.ids, this.pageId)); break
-                case "color": this.showColorMenu(selected, point); break
+                case "color": this.showSelectionColors(selected); break
                 case "equal_width": this.setSelectionMenu(request); break
                 default: break
                 }
@@ -938,12 +958,14 @@ export class PageScreen {
         this.app.menu.present(slots, point, "Selection")
     }
 
-    showColorMenu(elements, point) {
-        const ids = elements.map((element) => element.id)
-        const first = elements.find((element) => element.type !== "import")
-        const colors = first?.tool ? preferences.colorPresets(first.tool) : tokens.text.colors
-        const slots = swatchSlots(colors, first?.color, (color) => this.library.setColor(ids, this.pageId, color.toUpperCase()))
-        setTimeout(() => this.app.menu.present(slots, point, "Colour"), duration("overlay_leave"))
+    showSelectionColors(elements) {
+        this.selectionColorIds = elements.filter((element) => element.type !== "import").map((element) => element.id)
+        if (!this.selectionColorIds.length) {
+            return
+        }
+        this.panelKey = null
+        this.subNavKey = "selection-color"
+        this.refresh()
     }
 
     showPageMenu(point, isPointer, pagePoint) {
