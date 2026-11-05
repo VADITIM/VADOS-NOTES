@@ -603,7 +603,7 @@ struct GridScreen: View {
             switch action {
             case "rename": navigator.show(.renameFolder(folderId))
             case "appearance": navigator.show(.appearance(.folder(folderId)))
-            case "move": navigator.show(.move(.folder(folderId)))
+            case "move": navigator.openExplorer(moving: .folder(folderId))
             case "delete_notebook": library.deleteNotebook(folderId)
             case "group": toggleGroup(.folder(folderId), memberId: folderId)
             default: break
@@ -619,7 +619,7 @@ struct GridScreen: View {
             switch action {
             case "rename": navigator.show(.renameNote(pageId))
             case "appearance": navigator.show(.appearance(.note(pageId)))
-            case "move": navigator.show(.move(.note(pageId)))
+            case "move": navigator.openExplorer(moving: .note(pageId))
             case "delete_page": library.deletePage(pageId)
             case "group": toggleGroup(.note(pageId), memberId: pageId)
             default: break

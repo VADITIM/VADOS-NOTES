@@ -76,7 +76,7 @@ final class TileTouchView: UIView, UIGestureRecognizerDelegate {
         case .changed:
             if !isDragging, hypot(location.x - pressStart.x, location.y - pressStart.y) > Self.dragTolerance, let onDragBegin = callbacks?.onDragBegin {
                 isDragging = true
-                onDragBegin(pressStart)
+                onDragBegin(location)
             }
             if isDragging {
                 callbacks?.onDragMove?(location)

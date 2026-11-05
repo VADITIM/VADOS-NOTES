@@ -30,6 +30,8 @@ struct ExplorerEntry: Identifiable, Equatable {
 struct ExplorerDrag: Equatable {
     var entry: ExplorerEntry
     var location: CGPoint
+    var grab: CGSize
+    var size: CGSize
     var targetKey: String?
 }
 
@@ -48,6 +50,7 @@ final class ExplorerModel: ObservableObject {
     @Published var renameText = ""
     @Published var drag: ExplorerDrag?
     @Published var flashedKey: String?
+    @Published var revealKey: String?
     var rowFrames: [String: CGRect] = [:]
     var hoverWork: DispatchWorkItem?
 }
@@ -65,6 +68,7 @@ struct ExplorerOverlay: View {
     static let panelMargin: CGFloat = 12
     static let rowHeight: CGFloat = 40
     static let hoverExpandSeconds: Double = 0.6
+    static let smallCircleSize: CGFloat = 36
 
     private var panelWidth: CGFloat {
         min(Self.panelWidth, screenSize.width - Self.panelMargin * 2)
@@ -88,7 +92,7 @@ struct ExplorerOverlay: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .topLeading) {
             Color.black.opacity(isOpen ? 0.42 : 0)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
@@ -100,8 +104,8 @@ struct ExplorerOverlay: View {
                 .frame(maxHeight: .infinity)
                 .padding(.top, Self.panelMargin + insets.top)
                 .padding(.bottom, Self.panelMargin + insets.bottom)
-                .padding(.trailing, Self.panelMargin + insets.trailing)
-                .offset(x: isOpen ? 0 : panelWidth + Self.panelMargin * 2 + insets.trailing)
+                .padding(.leading, Self.panelMargin + insets.leading)
+                .offset(x: isOpen ? 0 : -(panelWidth + Self.panelMargin * 2 + insets.leading))
                 .animation(isOpen ? Motion.backOut(Motion.explorerEnterMilliseconds) : Motion.powerTwoIn(Motion.explorerLeaveMilliseconds), value: isOpen)
                 .allowsHitTesting(isOpen)
             if let drag = model.drag {
@@ -112,6 +116,7 @@ struct ExplorerOverlay: View {
         .onChange(of: isOpen) { _, open in
             if open {
                 revealCurrent()
+                startRequestedMove()
             } else {
                 finishRename(committing: true)
                 model.moving = nil
@@ -121,6 +126,11 @@ struct ExplorerOverlay: View {
         .onChange(of: navigator.route) { _, _ in
             if isOpen {
                 revealCurrent()
+            }
+        }
+        .onChange(of: navigator.explorerMove) { _, target in
+            if isOpen, target != nil {
+                startRequestedMove()
             }
         }
     }
@@ -148,18 +158,26 @@ struct ExplorerOverlay: View {
                 .onPreferenceChange(ExplorerRowFramesKey.self) { model.rowFrames = $0 }
                 .onChange(of: isOpen) { _, open in
                     guard open else { return }
+                    let key = model.revealKey ?? currentKey
                     DispatchQueue.main.async {
-                        reader.scrollTo(currentKey, anchor: .center)
+                        reader.scrollTo(key, anchor: .center)
+                    }
+                }
+                .onChange(of: model.revealKey) { _, key in
+                    guard let key, isOpen else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+                            reader.scrollTo(key, anchor: .center)
+                        }
+                        model.revealKey = nil
                     }
                 }
             }
-            Rectangle().fill(Palette.border).frame(height: 1)
-            footer
         }
         .background(RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Palette.panelSolid))
         .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).stroke(Palette.border, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .shadow(color: .black.opacity(0.5), radius: 24, x: -12)
+        .shadow(color: .black.opacity(0.5), radius: 24, x: 12)
     }
 
     private var currentKey: String {
@@ -181,6 +199,12 @@ struct ExplorerOverlay: View {
                 .background(Capsule().fill(Palette.accent))
                 .contentTransition(.numericText())
             Spacer(minLength: 0)
+            smallCircle(glyph: "folder_add", tint: Palette.create, label: "New folder") { createFolder(in: currentFolderId) }
+            smallCircle(glyph: "note_add", tint: Palette.create, label: "New note", isEnabled: currentFolderId != nil) {
+                if let currentFolderId {
+                    createNote(in: currentFolderId)
+                }
+            }
             RoundIconButton(glyph: "close") { navigator.closeExplorer() }
                 .accessibilityLabel("Close explorer")
         }
@@ -249,21 +273,18 @@ struct ExplorerOverlay: View {
         .transition(.popTogether)
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
-            pill(glyph: "folder_add", title: "Folder", tint: Palette.create) { createFolder(in: currentFolderId) }
-            pill(glyph: "note_add", title: "Note", tint: Palette.create) {
-                if let currentFolderId {
-                    createNote(in: currentFolderId)
-                }
-            }
-            .disabled(currentFolderId == nil)
-            .opacity(currentFolderId == nil ? 0.35 : 1)
-            Spacer(minLength: 0)
+    private func smallCircle(glyph: String, tint: Color, label: String, isEnabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            GlyphView(name: glyph, color: tint, size: 16)
+                .frame(width: Self.smallCircleSize, height: Self.smallCircleSize)
+                .background(Circle().fill(Palette.sunken))
+                .overlay(Circle().stroke(Palette.borderControl, lineWidth: 1))
+                .contentShape(Circle())
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 14)
+        .buttonStyle(PressableStyle())
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.35)
+        .accessibilityLabel(label)
     }
 
     private func pill(glyph: String, title: String, tint: Color, height: CGFloat = 40, action: @escaping () -> Void) -> some View {
@@ -530,16 +551,42 @@ struct ExplorerOverlay: View {
                 .font(Typography.mono(14))
                 .foregroundColor(Palette.textBright)
                 .lineLimit(1)
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
-        .frame(height: Self.rowHeight)
-        .background(Capsule().fill(Palette.raised))
-        .overlay(Capsule().stroke(Palette.accent, lineWidth: 1))
+        .frame(width: drag.size.width, height: drag.size.height)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.raised))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.accent, lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 20, y: 16)
-        .scaleEffect(CGFloat(Motion.scales.held))
-        .position(drag.location)
+        .scaleEffect(CGFloat(Motion.scales.held), anchor: UnitPoint(x: drag.grab.width / max(1, drag.size.width), y: drag.grab.height / max(1, drag.size.height)))
+        .position(x: drag.location.x - drag.grab.width + drag.size.width / 2, y: drag.location.y - drag.grab.height + drag.size.height / 2)
         .allowsHitTesting(false)
-        .transition(.popTogether)
+    }
+
+    private func startRequestedMove() {
+        guard let target = navigator.explorerMove else { return }
+        navigator.explorerMove = nil
+        let entry: ExplorerEntry
+        var folder: String?
+        switch target {
+        case .folder(let folderId):
+            folder = library.parent(of: folderId)
+            entry = ExplorerEntry(kind: .folder, targetId: folderId, parentId: folder, groupTitle: nil, depth: 0, guide: "")
+        case .note(let pageId):
+            folder = library.page(pageId)?.notebook
+            entry = ExplorerEntry(kind: .note, targetId: pageId, parentId: folder, groupTitle: nil, depth: 0, guide: "")
+        }
+        var visited: Set<String> = []
+        while let folderId = folder, !visited.contains(folderId) {
+            visited.insert(folderId)
+            model.expanded.insert(folderId)
+            folder = library.parent(of: folderId)
+        }
+        withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
+            model.moving = entry
+        }
+        model.revealKey = nil
+        model.revealKey = entry.id
     }
 
     private func revealCurrent() {
@@ -655,6 +702,8 @@ struct ExplorerOverlay: View {
             withAnimation(Motion.powerTwoOut(Motion.stateMilliseconds)) {
                 model.moving = entry
             }
+            model.revealKey = nil
+            model.revealKey = entry.id
         case "delete_notebook":
             guard let folderId = entry.targetId else { return }
             let parentId = library.parent(of: folderId)
@@ -712,9 +761,8 @@ struct ExplorerOverlay: View {
 
     private func beginDrag(_ entry: ExplorerEntry, at point: CGPoint) {
         menu.dismiss()
-        withAnimation(Motion.backOut(Motion.stateMilliseconds)) {
-            model.drag = ExplorerDrag(entry: entry, location: point, targetKey: nil)
-        }
+        let frame = model.rowFrames[entry.id] ?? CGRect(x: point.x - panelWidth / 2, y: point.y - Self.rowHeight / 2, width: panelWidth, height: Self.rowHeight)
+        model.drag = ExplorerDrag(entry: entry, location: point, grab: CGSize(width: point.x - frame.minX, height: point.y - frame.minY), size: frame.size, targetKey: nil)
     }
 
     private func moveDrag(to point: CGPoint) {
@@ -767,7 +815,7 @@ private struct ExplorerRowArrival: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(isShown ? 1 : 0)
-            .offset(x: isShown ? 0 : 24)
+            .offset(x: isShown ? 0 : -24)
             .onAppear {
                 if isOpen {
                     isShown = true

@@ -96,6 +96,7 @@ final class Navigator: ObservableObject {
     @Published var query = ""
     @Published var windowPush: CGFloat = 0
     @Published private(set) var isExplorerOpen = false
+    @Published var explorerMove: TileTarget?
     private(set) var isReturningFromPage = false
     private(set) var lastPage: (notebookId: String, pageId: String)?
     var openingTile: CGRect?
@@ -151,6 +152,11 @@ final class Navigator: ObservableObject {
 
     func closeExplorer() {
         isExplorerOpen = false
+    }
+
+    func openExplorer(moving target: TileTarget) {
+        explorerMove = target
+        isExplorerOpen = true
     }
 
     func showPageChrome(_ shown: Bool) {

@@ -162,7 +162,7 @@ export function tileGestures(element, { onTap, onMenu, onDragBegin, onDragMove, 
         }
         if (!press.isDragging && distance > dragTolerance && onDragBegin) {
             press.isDragging = true
-            onDragBegin(press.start)
+            onDragBegin([event.clientX, event.clientY])
         }
         if (press.isDragging) {
             onDragMove?.([event.clientX, event.clientY])
@@ -1112,7 +1112,7 @@ export class GridScreen {
                 switch (action) {
                 case "rename": this.app.navigator.show({ kind: "renameFolder", notebookId: folderId }); break
                 case "appearance": this.app.navigator.show({ kind: "appearance", target: { kind: "folder", id: folderId } }); break
-                case "move": this.app.navigator.show({ kind: "move", target: { kind: "folder", id: folderId } }); break
+                case "move": this.app.explorer.openMoving({ kind: "folder", id: folderId }); break
                 case "delete_notebook": this.library.deleteNotebook(folderId); break
                 case "group": this.toggleGroup({ kind: "folder", id: folderId }, folderId); break
                 default: break
@@ -1135,7 +1135,7 @@ export class GridScreen {
                 switch (action) {
                 case "rename": this.app.navigator.show({ kind: "renameNote", pageId }); break
                 case "appearance": this.app.navigator.show({ kind: "appearance", target: { kind: "note", id: pageId } }); break
-                case "move": this.app.navigator.show({ kind: "move", target: { kind: "note", id: pageId } }); break
+                case "move": this.app.explorer.openMoving({ kind: "note", id: pageId }); break
                 case "delete_page": this.library.deletePage(pageId); break
                 case "group": this.toggleGroup({ kind: "note", id: pageId }, pageId); break
                 default: break

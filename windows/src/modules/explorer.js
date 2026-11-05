@@ -102,7 +102,9 @@ export class Explorer {
         const depthChip = create("span", "explorer-depth-chip")
         const close = roundIconButton({ glyphName: "close", label: "Close explorer", action: () => this.close() })
         close.classList.add("explorer-close")
-        const header = create("div", "explorer-header", create("div", "explorer-heading", title, depthChip), close)
+        const newFolder = this.headerCircle("folder_add", "New folder", tokens.semantic.create, () => this.createFolder(this.currentFolderId()))
+        const newNote = this.headerCircle("note_add", "New note", tokens.semantic.create, () => this.createNote(this.currentFolderId()))
+        const header = create("div", "explorer-header", create("div", "explorer-heading", title, depthChip), create("div", "explorer-actions", newFolder, newNote, close))
         const crumbs = create("div", "explorer-crumbs")
         const banner = create("div", "explorer-banner")
         banner.hidden = true
@@ -115,18 +117,38 @@ export class Explorer {
                 this.showMenu(row.entry, [event.clientX, event.clientY])
             }
         })
-        const newFolder = this.footerPill("folder_add", "Folder", tokens.semantic.create, () => this.createFolder(this.currentFolderId()))
-        const newNote = this.footerPill("note_add", "Note", tokens.semantic.create, () => this.createNote(this.currentFolderId()))
-        const footer = create("div", "explorer-footer", newFolder, newNote)
-        panel.append(header, crumbs, banner, list, footer)
+        panel.append(header, crumbs, banner, list)
         this.element = create("div", "explorer", scrim, panel)
         this.parts = { scrim, panel, depthChip, crumbs, banner, list, newNote }
         this.app.overlayHost.prepend(this.element)
         this.paintPanel()
         this.render(true)
         fadeIn(scrim, duration("explorer_enter"))
-        animate(panel, [{ transform: `translateX(calc(100% + ${panelMargin * 2}px))` }, { transform: "translateX(0)" }], { milliseconds: duration("explorer_enter"), curveName: "back_out" })
+        animate(panel, [{ transform: `translateX(calc(-100% - ${panelMargin * 2}px))` }, { transform: "translateX(0)" }], { milliseconds: duration("explorer_enter"), curveName: "back_out" })
         requestAnimationFrame(() => this.scrollToCurrent())
+    }
+
+    openMoving(target) {
+        const library = this.app.library
+        let folder = target.kind === "folder" ? library.parentOf(target.id) : library.page(target.id)?.notebook ?? null
+        const visited = new Set()
+        while (folder && !visited.has(folder)) {
+            visited.add(folder)
+            this.expanded.add(folder)
+            folder = library.parentOf(folder)
+        }
+        const key = `${target.kind}-${target.id}`
+        if (this.isOpen) {
+            this.render(false)
+        } else {
+            this.open()
+        }
+        const entry = this.entries().find((candidate) => candidate.key === key)
+        if (!entry) {
+            return
+        }
+        this.beginMove(entry)
+        requestAnimationFrame(() => this.rowElements.get(key)?.scrollIntoView({ block: "center" }))
     }
 
     close() {
@@ -143,7 +165,7 @@ export class Explorer {
         this.leaving = element
         element.style.pointerEvents = "none"
         fadeOut(scrim, duration("explorer_leave"))
-        animate(panel, [{ transform: "translateX(0)" }, { transform: `translateX(calc(100% + ${panelMargin * 2}px))` }], { milliseconds: duration("explorer_leave"), curveName: "power_two_in", fill: "forwards" }).finished.then(() => {
+        animate(panel, [{ transform: "translateX(0)" }, { transform: `translateX(calc(-100% - ${panelMargin * 2}px))` }], { milliseconds: duration("explorer_leave"), curveName: "power_two_in", fill: "forwards" }).finished.then(() => {
             element.remove()
             if (this.leaving === element) {
                 this.leaving = null
@@ -151,8 +173,9 @@ export class Explorer {
         })
     }
 
-    footerPill(glyphName, title, color, action) {
-        const button = create("button", "explorer-pill", glyph(glyphName, { color, size: 16 }), create("span", "explorer-pill-title", title.toUpperCase()))
+    headerCircle(glyphName, label, color, action) {
+        const button = create("button", "explorer-circle", glyph(glyphName, { color, size: 16 }))
+        button.setAttribute("aria-label", label)
         button.style.setProperty("--pill-tint", color)
         button.addEventListener("click", () => {
             if (!button.disabled) {
@@ -255,7 +278,7 @@ export class Explorer {
             list.append(row)
             this.rowElements.set(entry.key, row)
             if (isEntering && index < staggeredRows) {
-                animate(row, [{ opacity: 0, transform: "translateX(24px)" }, { opacity: 1, transform: "translateX(0)" }], { milliseconds: duration("state"), curveName: "power_two_out", delay: duration("rise_delay") + index * duration("explorer_row_stagger") })
+                animate(row, [{ opacity: 0, transform: "translateX(-24px)" }, { opacity: 1, transform: "translateX(0)" }], { milliseconds: duration("state"), curveName: "power_two_out", delay: duration("rise_delay") + index * duration("explorer_row_stagger") })
             }
         })
         list.scrollTop = scroll
