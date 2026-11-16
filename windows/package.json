@@ -1,7 +1,7 @@
 {
   "name": "vados-notes-windows",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.4.0",
   "type": "module",
   "scripts": {
     "tauri": "tauri",
